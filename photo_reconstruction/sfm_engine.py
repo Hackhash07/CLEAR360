@@ -240,9 +240,14 @@ class SfMEngine:
         for img_id, image in best_recon.images.items():
             registered_names.add(image.name)
             # cam_from_world transforms world -> camera
-            # We want world_from_cam: inverse of cam_from_world
-            R = image.cam_from_world.rotation.matrix()
-            t = image.cam_from_world.translation
+            # In pycolmap 0.6+, cam_from_world is a method returning Rigid3d
+            if hasattr(image, "cam_from_world"):
+                cfw = image.cam_from_world() if callable(image.cam_from_world) else image.cam_from_world
+                R = cfw.rotation.matrix()
+                t = np.asarray(cfw.translation, dtype=np.float64)
+            else:
+                R = pycolmap.qvec_to_rotmat(image.qvec)
+                t = np.asarray(image.tvec, dtype=np.float64)
 
             T_cam_world = np.eye(4, dtype=np.float64)
             T_cam_world[:3, :3] = R

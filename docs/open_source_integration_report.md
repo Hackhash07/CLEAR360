@@ -62,3 +62,4 @@ This report establishes the architectural roadmap and concrete integration strat
 - **Regression Test Suite**: Full `pytest photo_reconstruction/tests/` passes with **22/22 tests passing (100%)**.
 - **Automotive Scenarios**: M1–M8 benchmark scenarios in `data/m8_scenarios/` remain completely operational and unregressed.
 - **Apple Silicon M2**: Validated on macOS 14.5 ARM64 with Apple Metal / MPS PyTorch acceleration.
+
