@@ -83,7 +83,7 @@ class DenseReconstructor:
                 cx = W / 2.0
                 cy = H / 2.0
 
-                s = 4  # Stride for dense cloud sampling
+                s = 6  # High-density stride for detailed point cloud generation
                 v_grid, u_grid = np.mgrid[0:H:s, 0:W:s]
                 d = depth[v_grid, u_grid]
 

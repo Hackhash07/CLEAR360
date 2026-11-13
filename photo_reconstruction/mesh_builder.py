@@ -62,12 +62,25 @@ class MeshBuilder:
             mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
                 pcd, depth=self.poisson_depth
             )
-            # Filter low density vertices to remove envelope bubbles
+            # 1. Filter low density vertices to remove outer boundary envelope
             dens = np.asarray(densities)
             if len(dens) > 0:
-                thresh = np.quantile(dens, self.density_quantile)
-                vertices_to_remove = dens < thresh
-                mesh.remove_vertices_by_mask(vertices_to_remove)
+                thresh = np.quantile(dens, max(0.12, self.density_quantile))
+                mesh.remove_vertices_by_mask(dens < thresh)
+
+            # 2. Prune phantom Poisson bubble extrapolation far from actual point cloud
+            if len(mesh.vertices) > 0 and len(pcd.points) > 10:
+                pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+                mesh_v = np.asarray(mesh.vertices)
+                nn_dist = float(np.mean(pcd.compute_nearest_neighbor_distance()))
+                max_allowed_dist = max(0.08, nn_dist * 3.5)
+
+                remove_phantom = np.zeros(len(mesh_v), dtype=bool)
+                for i, v in enumerate(mesh_v):
+                    [k, idx, dist_sq] = pcd_tree.search_knn_vector_3d(v, 1)
+                    if k == 0 or np.sqrt(dist_sq[0]) > max_allowed_dist:
+                        remove_phantom[i] = True
+                mesh.remove_vertices_by_mask(remove_phantom)
         else:
             # Ball-Pivoting Algorithm
             distances = pcd.compute_nearest_neighbor_distance()
