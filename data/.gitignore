@@ -1,0 +1,4 @@
+sim_frames/
+gt_depth/
+gt_position/
+gt_semantic/

@@ -1,0 +1,85 @@
+# CLEAR360 Camera Calibration File
+# Authoritative calibration file for CLEAR360 4-camera surround rig.
+# Coordinate convention: world=X_right_Y_forward_Z_up; camera=OpenCV(x_right,y_down,z_forward)
+# T_cam_world transforms a world-frame homogeneous point [X,Y,Z,1] to camera frame [x,y,z,1]
+# depth_convention: camera_z_depth_metres (NOT euclidean ray distance)
+
+coordinate_convention: "world=X_right_Y_forward_Z_up; camera=OpenCV(x_right,y_down,z_forward)"
+depth_convention: "camera_z_depth_metres"
+
+cameras:
+  front:
+    intrinsics:
+      width: 1280
+      height: 720
+      fx: 369.4
+      fy: 369.4
+      cx: 640.0
+      cy: 360.0
+      focal_length_mm: 10.39
+      sensor_width_mm: 36.0
+    position_world: [0.0, 2.15, 0.90]
+    T_cam_world:
+      - [1.0, 0.0, 0.0, 0.0]
+      - [0.0, -0.139173, -0.990268, 1.190463]
+      - [0.0, 0.990268, -0.139173, -2.003821]
+      - [0.0, 0.0, 0.0, 1.0]
+    depth_convention: camera_z_depth_metres
+    source: blender_simulation
+
+  rear:
+    intrinsics:
+      width: 1280
+      height: 720
+      fx: 369.4
+      fy: 369.4
+      cx: 640.0
+      cy: 360.0
+      focal_length_mm: 10.39
+      sensor_width_mm: 36.0
+    position_world: [0.0, -2.15, 0.90]
+    T_cam_world:
+      - [-1.0, 0.0, 0.0, 0.0]
+      - [0.0, 0.139173, -0.990268, 1.190463]
+      - [0.0, -0.990268, -0.139173, -2.003821]
+      - [0.0, 0.0, 0.0, 1.0]
+    depth_convention: camera_z_depth_metres
+    source: blender_simulation
+
+  left:
+    intrinsics:
+      width: 1280
+      height: 720
+      fx: 369.4
+      fy: 369.4
+      cx: 640.0
+      cy: 360.0
+      focal_length_mm: 10.39
+      sensor_width_mm: 36.0
+    position_world: [-1.09, 0.30, 1.25]
+    T_cam_world:
+      - [0.0, 1.0, 0.0, -0.3]
+      - [0.104528, 0.0, -0.994522, 1.357088]
+      - [-0.994522, 0.0, -0.104528, -0.953368]
+      - [0.0, 0.0, 0.0, 1.0]
+    depth_convention: camera_z_depth_metres
+    source: blender_simulation
+
+  right:
+    intrinsics:
+      width: 1280
+      height: 720
+      fx: 369.4
+      fy: 369.4
+      cx: 640.0
+      cy: 360.0
+      focal_length_mm: 10.39
+      sensor_width_mm: 36.0
+    position_world: [1.09, 0.30, 1.25]
+    T_cam_world:
+      - [0.0, -1.0, 0.0, 0.3]
+      - [-0.104528, 0.0, -0.994522, 1.357088]
+      - [0.994522, 0.0, -0.104528, -0.953368]
+      - [0.0, 0.0, 0.0, 1.0]
+    depth_convention: camera_z_depth_metres
+    source: blender_simulation

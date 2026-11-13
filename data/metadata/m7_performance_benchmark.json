@@ -1,0 +1,13 @@
+{
+  "hardware": "Apple Silicon M2 / Metal OpenGL",
+  "resolution": "2496x1612",
+  "point_count": 136751,
+  "total_frames_tested": 100,
+  "avg_frame_time_ms": 9.672297459619585,
+  "min_frame_time_ms": 6.552375009050593,
+  "max_frame_time_ms": 20.73924998694565,
+  "p95_frame_time_ms": 15.547756252635736,
+  "effective_fps": 103.3880527532215,
+  "process_memory_mb": 541.875,
+  "target_met_60fps": true
+}

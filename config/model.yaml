@@ -1,0 +1,14 @@
+# CLEAR360 Depth Model Configuration
+depth_model:
+  name: "depth_anything_v2_metric"
+  variant: "vit_small"
+  dataset: "vkitti"           # Virtual KITTI 2 outdoor metric
+  weights_path: "weights/depth_anything_v2_metric_vkitti_vits.pth"
+  max_depth: 80.0             # metres
+  input_size: 518             # canonical input size (px)
+  device_preference: ["mps", "cuda", "cpu"]   # Apple Silicon MPS first
+  output_type: "metric_depth" # already metric, no scale recovery needed from GT
+  notes: >
+    Metric variant of Depth Anything V2 (ViT-Small backbone), trained on
+    Virtual KITTI 2. Outputs metric depth directly for outdoor scenes.
+    Evaluate ViT-Base for accuracy later (Phase M4 benchmark).

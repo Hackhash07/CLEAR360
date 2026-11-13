@@ -1,0 +1,11 @@
+# CLEAR360 Fusion Engine Configuration
+fusion:
+  method: "extrinsic_direct"       # M1–M5: direct transform using calibrated extrinsics
+  icp_enabled: false               # ICP is optional refinement, NOT mandatory
+  icp_threshold: 0.05              # metres — only used when icp_enabled: true
+  voxel_size: 0.05                 # metres — downsampling for ICP only
+  coordinate_frame: "vehicle"      # all merged clouds in vehicle/world frame
+  notes: >
+    For M5, four camera-frame clouds are transformed to world frame using
+    their calibrated T_cam_world (inverted). No ICP needed unless significant
+    residual misalignment is observed in overlap regions.

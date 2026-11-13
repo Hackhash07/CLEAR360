@@ -1,0 +1,14 @@
+depth_affine:
+  a: 0.17239271104335785
+  b: -0.021624291315674782
+depth_calibration_version: '1.0'
+disparity_affine:
+  alpha: 6.0027947425842285
+  beta: 0.00477977842092514
+global_scale: 6.273141860961914
+per_camera_scales:
+  front: 7.153936386108398
+  left: 5.206286430358887
+  rear: 6.782412528991699
+  right: 5.18678617477417
+reference_checkpoint: depth_anything_v2_metric_vkitti_vits.pth

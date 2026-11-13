@@ -1,0 +1,24 @@
+# CLEAR360 Interactive Viewer Configuration
+viewer:
+  default_fov_deg: 60.0
+  background_color: [0.1, 0.1, 0.12]   # dark grey
+  point_size: 2.0
+  depth_source_colors:
+    ground_truth_blender: [0.7, 0.7, 0.7]   # neutral grey
+    ai_depth_anything_v2: [0.9, 0.5, 0.2]   # warm orange — estimated
+    unknown: [0.4, 0.4, 0.9]                # blue — unverified
+  semantic_colors:
+    0: [0.5, 0.5, 0.5]    # unknown / background
+    1: [0.3, 0.3, 0.3]    # ground / road
+    2: [0.2, 0.6, 1.0]    # ego vehicle
+    3: [0.9, 0.7, 0.1]    # parked vehicle
+    4: [0.8, 0.8, 0.8]    # wall
+    5: [1.0, 0.4, 0.4]    # pillar / post
+    6: [0.2, 0.9, 0.4]    # pedestrian / cyclist
+    7: [0.6, 0.4, 0.1]    # kerb / speed breaker
+  orbit_speed: 1.0
+  zoom_speed: 0.1
+  show_vehicle_model: true
+  vehicle_model_path: "assets/vehicle/creta_placeholder.obj"
+  show_distance_labels: true
+  show_depth_source_legend: true

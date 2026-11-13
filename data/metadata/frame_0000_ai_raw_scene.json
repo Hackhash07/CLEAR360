@@ -1,0 +1,49 @@
+{
+  "frame_id": 0,
+  "pipeline_type": "ai_raw",
+  "total_processing_time_s": 9.8725890420028,
+  "timing_breakdown_s": {
+    "fusion": 1.0567569580016425,
+    "filter": 2.738036416005343,
+    "semantic": 0.0025375409895787016,
+    "occupancy": 0.07790624999324791,
+    "tsdf": 5.482449625007575,
+    "clustering": 0.2514543750003213
+  },
+  "points": {
+    "initial_raw": 3182368,
+    "after_filter": 31314,
+    "ground_points": 1441,
+    "non_ground_points": 29873
+  },
+  "ground_plane": {
+    "elevation_z_m": -0.28854364803746213,
+    "tilt_deg": 1.0855860276945164,
+    "rmse_m": 0.0352551267082541,
+    "normal": [
+      -0.001760931904681171,
+      0.018863904296382482,
+      0.9998205100084335
+    ]
+  },
+  "occupancy_grid": {
+    "total_voxels": 18432000,
+    "nx": 480,
+    "ny": 480,
+    "nz": 80,
+    "resolution_m": 0.05,
+    "memory_mb": 17.578125,
+    "unknown_voxels": 18432000,
+    "free_voxels": 0,
+    "occupied_voxels": 0,
+    "unknown_pct": 100.0,
+    "free_pct": 0.0,
+    "occupied_pct": 0.0
+  },
+  "tsdf": {
+    "surface_points_count": 0,
+    "voxel_size_m": 0.05
+  },
+  "obstacles_detected": 4,
+  "closest_obstacle_clearance_m": 24.95846576618172
+}

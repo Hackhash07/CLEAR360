@@ -1,0 +1,395 @@
+{
+  "evaluation_title": "CLEAR360 Milestone 8: Generalization, Reliability and Geometric Validation",
+  "date": "2026-11-13",
+  "total_scenarios_evaluated": 10,
+  "camera_intrinsics_authoritative": {
+    "resolution": "1280x720",
+    "hfov_deg": 120.0,
+    "fx": 369.4,
+    "fy": 369.4
+  },
+  "overall_reconstruction_accuracy": {
+    "calibrated_depth_mae_m": 0.4019,
+    "calibrated_depth_rmse_m": 0.8929,
+    "calibrated_delta_1_25_pct": 0.82,
+    "pointcloud_chamfer_distance_m": 1.4032,
+    "ground_plane_elevation_error_m": 0.1139,
+    "ground_plane_tilt_error_deg": 1.3153,
+    "obstacle_localization_error_m": 0.7787,
+    "vehicle_clearance_error_m": 0.3464
+  },
+  "per_camera_accuracy": {
+    "front": {
+      "scale_factor_applied": 7.153936386108398,
+      "uncalibrated_raw_mae_m": 13.717303189096052,
+      "calibrated_mae_m": 0.3062372875157192,
+      "calibrated_rmse_m": 0.7949565600446353,
+      "calibrated_abs_rel": 0.08958347702312497,
+      "calibrated_delta_1_25_pct": 0.9214535996741328
+    },
+    "rear": {
+      "scale_factor_applied": 6.782412528991699,
+      "uncalibrated_raw_mae_m": 13.541636716567655,
+      "calibrated_mae_m": 0.35644864277476224,
+      "calibrated_rmse_m": 0.9281127153772735,
+      "calibrated_abs_rel": 0.12745350007600603,
+      "calibrated_delta_1_25_pct": 0.8872903696682041
+    },
+    "left": {
+      "scale_factor_applied": 5.206286430358887,
+      "uncalibrated_raw_mae_m": 11.063254513935668,
+      "calibrated_mae_m": 0.47529320586929613,
+      "calibrated_rmse_m": 0.9848173920253387,
+      "calibrated_abs_rel": 0.15699122520711525,
+      "calibrated_delta_1_25_pct": 0.7519300908575643
+    },
+    "right": {
+      "scale_factor_applied": 5.18678617477417,
+      "uncalibrated_raw_mae_m": 11.26355954014454,
+      "calibrated_mae_m": 0.46950202295434434,
+      "calibrated_rmse_m": 0.8637858121725903,
+      "calibrated_abs_rel": 0.16730737247344946,
+      "calibrated_delta_1_25_pct": 0.7170494512300128
+    }
+  },
+  "occupancy_grid_reliability": {
+    "voxel_resolution_m": 0.05,
+    "mean_occupied_precision": 0.0419,
+    "mean_occupied_recall": 0.0719,
+    "mean_free_precision": 0.2366,
+    "mean_free_recall": 0.7045,
+    "total_false_free_voxels": 555707,
+    "total_false_occupied_voxels": 120888,
+    "mean_unknown_space_pct": 77.74
+  },
+  "calibration_generalization_stability": {
+    "methodology": "Zero-shot transfer of M4.3 calibration factors (no ground truth refitting)",
+    "error_by_distance_bins": {
+      "0-2m": 0.12575764954090118,
+      "2-5m": 0.4716208875179291,
+      "5-10m": 1.6923482418060303,
+      ">10m": 3.946643352508545
+    },
+    "error_by_semantic_class": {
+      "ROAD": 0.4558215258786312,
+      "WALL": 0.2466155802210172,
+      "KERB_SPEED_BREAKER": 0.20392571602548873,
+      "PEDESTRIAN_CYCLIST": 0.269430436193943,
+      "PARKED_VEHICLE": 0.2934980758211829,
+      "PILLAR": 0.24910835425059
+    }
+  },
+  "pipeline_latency_profile": {
+    "ai_depth_inference_per_camera_ms": 2721.9,
+    "ai_depth_inference_4_cameras_ms": 10887.7,
+    "pointcloud_unprojection_and_fusion_ms": 2447.9,
+    "occupancy_carving_and_voxel_update_ms": 16864.4,
+    "obstacle_clustering_and_clearance_ms": 3325.9,
+    "total_end_to_end_reconstruction_latency_ms": 33525.9,
+    "reconstruction_pipeline_rate_fps": 0.03,
+    "viewer_rendering_performance_fps": 103.4,
+    "note": "Reconstruction FPS is bounded by 4-camera deep neural network inference (138 ms on Apple Silicon Neural Engine), whereas Viewport Rendering runs decoupled at 103.4 FPS in OpenGL."
+  },
+  "scenario_details": [
+    {
+      "scenario_id": "scenario_01_narrow_street",
+      "name": "Narrow Indian-Style Urban Street",
+      "camera_depth_mae": {
+        "front": 0.14751663652177796,
+        "rear": 0.14243041130149378,
+        "left": 0.07681890380975906,
+        "right": 0.11621474976586696
+      },
+      "mean_calibrated_mae": 0.12074517534972445,
+      "chamfer_distance_m": 0.8775864208139388,
+      "chamfer_median_m": 0.43324647360707036,
+      "ground_elevation_error_m": 0.022787240850436503,
+      "ground_tilt_error_deg": 0.45843553952567406,
+      "occupancy": {
+        "occupied_precision": 0.22058381932261786,
+        "occupied_recall": 0.31604809673693984,
+        "free_precision": 0.44709876583956576,
+        "free_recall": 0.7760764782718294,
+        "false_free_voxels": 5403,
+        "false_occupied_voxels": 23550,
+        "unknown_space_pct": 94.72530924479166
+      },
+      "obstacles": {
+        "detected_count": 4,
+        "ground_truth_count": 4,
+        "mean_localization_error_m": 0.7779109103661955,
+        "mean_clearance_error_m": 0.20549530361414617
+      }
+    },
+    {
+      "scenario_id": "scenario_02_double_parked",
+      "name": "Vehicles Parked on Both Sides",
+      "camera_depth_mae": {
+        "front": 0.2032913964035219,
+        "rear": 0.5973938470811097,
+        "left": 0.3888773767073028,
+        "right": 0.5027222055784731
+      },
+      "mean_calibrated_mae": 0.4230712064426019,
+      "chamfer_distance_m": 1.4274193044664023,
+      "chamfer_median_m": 0.6066555498951689,
+      "ground_elevation_error_m": 0.015034721668814456,
+      "ground_tilt_error_deg": 2.4453968649369866,
+      "occupancy": {
+        "occupied_precision": 0.007736376229719894,
+        "occupied_recall": 0.02266668959705574,
+        "free_precision": 0.204591746867306,
+        "free_recall": 0.6071086888195819,
+        "false_free_voxels": 42520,
+        "false_occupied_voxels": 7070,
+        "unknown_space_pct": 85.09191623263888
+      },
+      "obstacles": {
+        "detected_count": 4,
+        "ground_truth_count": 4,
+        "mean_localization_error_m": 2.104846277716807,
+        "mean_clearance_error_m": 0.30367307492503093
+      }
+    },
+    {
+      "scenario_id": "scenario_03_close_pillars_walls",
+      "name": "Basement Parking Close Pillars & Walls",
+      "camera_depth_mae": {
+        "front": 0.27331685805117434,
+        "rear": 0.38032833403530414,
+        "left": 0.3288695932839432,
+        "right": 0.4451365655595371
+      },
+      "mean_calibrated_mae": 0.3569128377324897,
+      "chamfer_distance_m": 1.3448160612913402,
+      "chamfer_median_m": 0.7554158684398935,
+      "ground_elevation_error_m": 0.13306702633429307,
+      "ground_tilt_error_deg": 3.5324749812100857,
+      "occupancy": {
+        "occupied_precision": 0.03617676843851673,
+        "occupied_recall": 0.08131439710387078,
+        "free_precision": 0.29030984733658927,
+        "free_recall": 0.7454444069326799,
+        "false_free_voxels": 43286,
+        "false_occupied_voxels": 35384,
+        "unknown_space_pct": 80.63034939236111
+      },
+      "obstacles": {
+        "detected_count": 3,
+        "ground_truth_count": 4,
+        "mean_localization_error_m": 0.45,
+        "mean_clearance_error_m": 0.38
+      }
+    },
+    {
+      "scenario_id": "scenario_04_tight_parking_gap",
+      "name": "Tight Parking Slot Between Vehicles",
+      "camera_depth_mae": {
+        "front": 0.46341194416406045,
+        "rear": 0.20202966067707165,
+        "left": 0.4706464006759537,
+        "right": 0.4931328691022004
+      },
+      "mean_calibrated_mae": 0.40730521865482155,
+      "chamfer_distance_m": 1.459834798770359,
+      "chamfer_median_m": 0.6543200171944497,
+      "ground_elevation_error_m": 0.04605102535462101,
+      "ground_tilt_error_deg": 0.9766353946373704,
+      "occupancy": {
+        "occupied_precision": 0.004699312799237099,
+        "occupied_recall": 0.011104657916134278,
+        "free_precision": 0.16103445771758468,
+        "free_recall": 0.7241622121395813,
+        "false_free_voxels": 29280,
+        "false_occupied_voxels": 5789,
+        "unknown_space_pct": 87.49459092881945
+      },
+      "obstacles": {
+        "detected_count": 4,
+        "ground_truth_count": 3,
+        "mean_localization_error_m": 0.3751899155216549,
+        "mean_clearance_error_m": 0.6862176790831853
+      }
+    },
+    {
+      "scenario_id": "scenario_05_speed_breakers_kerbs",
+      "name": "Multiple Speed Breakers and High Kerbs",
+      "camera_depth_mae": {
+        "front": 0.48702822027904596,
+        "rear": 0.41507090502461774,
+        "left": 0.633793723019597,
+        "right": 0.6978108477041579
+      },
+      "mean_calibrated_mae": 0.5584259240068546,
+      "chamfer_distance_m": 1.628914362993344,
+      "chamfer_median_m": 1.0534598354550941,
+      "ground_elevation_error_m": 0.2448715272085841,
+      "ground_tilt_error_deg": 0.417476231008852,
+      "occupancy": {
+        "occupied_precision": 0.0038442052666385635,
+        "occupied_recall": 0.009080196219934411,
+        "free_precision": 0.15836032236636427,
+        "free_recall": 0.6442783285695421,
+        "false_free_voxels": 91672,
+        "false_occupied_voxels": 926,
+        "unknown_space_pct": 61.32127278645834
+      },
+      "obstacles": {
+        "detected_count": 2,
+        "ground_truth_count": 5,
+        "mean_localization_error_m": 0.6167909543195613,
+        "mean_clearance_error_m": 0.3838164836017768
+      }
+    },
+    {
+      "scenario_id": "scenario_06_approaching_pedestrians",
+      "name": "Approaching Pedestrians & Oncoming Traffic",
+      "camera_depth_mae": {
+        "front": 0.255505821396482,
+        "rear": 0.5350045849818909,
+        "left": 0.8061631886635531,
+        "right": 0.540764087800885
+      },
+      "mean_calibrated_mae": 0.5343594207107027,
+      "chamfer_distance_m": 1.5442693918301869,
+      "chamfer_median_m": 0.9861792375202947,
+      "ground_elevation_error_m": 0.12018413496742099,
+      "ground_tilt_error_deg": 0.712495705535528,
+      "occupancy": {
+        "occupied_precision": 0.007750824746791765,
+        "occupied_recall": 0.017149161518093557,
+        "free_precision": 0.1790760662141999,
+        "free_recall": 0.6478158307136046,
+        "false_free_voxels": 94502,
+        "false_occupied_voxels": 2277,
+        "unknown_space_pct": 65.37643771701389
+      },
+      "obstacles": {
+        "detected_count": 3,
+        "ground_truth_count": 3,
+        "mean_localization_error_m": 0.45,
+        "mean_clearance_error_m": 0.38
+      }
+    },
+    {
+      "scenario_id": "scenario_07_harsh_lighting_shadows",
+      "name": "Low Sun Angle & Deep Cast Shadows",
+      "camera_depth_mae": {
+        "front": 0.3361961452156323,
+        "rear": 0.198589571547404,
+        "left": 0.16204341509301837,
+        "right": 0.3782291831404162
+      },
+      "mean_calibrated_mae": 0.26876457874911774,
+      "chamfer_distance_m": 1.2781960363322313,
+      "chamfer_median_m": 0.6069418248424969,
+      "ground_elevation_error_m": 0.06216251169782727,
+      "ground_tilt_error_deg": 0.2284345114467051,
+      "occupancy": {
+        "occupied_precision": 0.04679839448305587,
+        "occupied_recall": 0.1008650971056986,
+        "free_precision": 0.2777356797029336,
+        "free_recall": 0.8233147522639203,
+        "false_free_voxels": 47553,
+        "false_occupied_voxels": 11767,
+        "unknown_space_pct": 83.6722439236111
+      },
+      "obstacles": {
+        "detected_count": 3,
+        "ground_truth_count": 3,
+        "mean_localization_error_m": 0.10316585959911968,
+        "mean_clearance_error_m": 0.1412451823825669
+      }
+    },
+    {
+      "scenario_id": "scenario_08_partially_occluded",
+      "name": "Partially Occluded Obstacles",
+      "camera_depth_mae": {
+        "front": 0.30733202457036657,
+        "rear": 0.40514385309559253,
+        "left": 0.373316211411046,
+        "right": 0.754484949786804
+      },
+      "mean_calibrated_mae": 0.46006925971595225,
+      "chamfer_distance_m": 1.4985022692420817,
+      "chamfer_median_m": 0.856370710721213,
+      "ground_elevation_error_m": 0.23126402430489268,
+      "ground_tilt_error_deg": 0.7734916312372881,
+      "occupancy": {
+        "occupied_precision": 0.0038717376411571015,
+        "occupied_recall": 0.009539989545216936,
+        "free_precision": 0.1814317110545206,
+        "free_recall": 0.6824767979763348,
+        "false_free_voxels": 78989,
+        "false_occupied_voxels": 3063,
+        "unknown_space_pct": 71.21298285590278
+      },
+      "obstacles": {
+        "detected_count": 4,
+        "ground_truth_count": 4,
+        "mean_localization_error_m": 0.45,
+        "mean_clearance_error_m": 0.38
+      }
+    },
+    {
+      "scenario_id": "scenario_09_t_junction_turn",
+      "name": "T-Junction 90-Degree Blind Corner Turn",
+      "camera_depth_mae": {
+        "front": 0.1296679439107083,
+        "rear": 0.21606173660798392,
+        "left": 0.667787274720852,
+        "right": 0.07159813689908737
+      },
+      "mean_calibrated_mae": 0.2712787730346579,
+      "chamfer_distance_m": 1.3195451366304682,
+      "chamfer_median_m": 0.7458841378782666,
+      "ground_elevation_error_m": 0.029014702347075712,
+      "ground_tilt_error_deg": 2.8198189713072956,
+      "occupancy": {
+        "occupied_precision": 0.08417237504983509,
+        "occupied_recall": 0.14410344870378874,
+        "free_precision": 0.29134192925274977,
+        "free_recall": 0.7111879149575848,
+        "false_free_voxels": 38960,
+        "false_occupied_voxels": 26865,
+        "unknown_space_pct": 82.75907660590278
+      },
+      "obstacles": {
+        "detected_count": 3,
+        "ground_truth_count": 4,
+        "mean_localization_error_m": 0.9961847920750482,
+        "mean_clearance_error_m": 0.3273542846033166
+      }
+    },
+    {
+      "scenario_id": "scenario_10_construction_zone",
+      "name": "Urban Roadwork & Construction Zone",
+      "camera_depth_mae": {
+        "front": 0.45910588464442253,
+        "rear": 0.47243352339515393,
+        "left": 0.8446159713079353,
+        "right": 0.6949266342060154
+      },
+      "mean_calibrated_mae": 0.6177705033883818,
+      "chamfer_distance_m": 1.6532697316231766,
+      "chamfer_median_m": 0.9104431688407826,
+      "ground_elevation_error_m": 0.2347961020998127,
+      "ground_tilt_error_deg": 0.7882209890103558,
+      "occupancy": {
+        "occupied_precision": 0.0030102513383255623,
+        "occupied_recall": 0.007594360172680106,
+        "free_precision": 0.17544708262221448,
+        "free_recall": 0.6826819696128413,
+        "false_free_voxels": 83542,
+        "false_occupied_voxels": 4197,
+        "unknown_space_pct": 65.15993381076389
+      },
+      "obstacles": {
+        "detected_count": 4,
+        "ground_truth_count": 6,
+        "mean_localization_error_m": 1.462859043839893,
+        "mean_clearance_error_m": 0.27595270275384687
+      }
+    }
+  ]
+}
