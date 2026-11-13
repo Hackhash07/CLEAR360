@@ -174,6 +174,12 @@ class Clear360Viewport(QtWidgets.QWidget):
     # -------------------------------------------------------------------------
     # Scene Data Updating & Visualization Modes (M7.1)
     # -------------------------------------------------------------------------
+    def request_update(self):
+        """Request immediate redraw on VisPy scene canvas and Qt native widget."""
+        self.canvas.update()
+        if hasattr(self.canvas, "native") and self.canvas.native is not None:
+            self.canvas.native.update()
+
     def set_scene_data(self, scene_data: SceneData):
         """Update viewport with new frame / source data."""
         self.current_scene = scene_data
@@ -191,7 +197,7 @@ class Clear360Viewport(QtWidgets.QWidget):
             # Auto-select closest obstacle by default
             self.select_obstacle(scene_data.obstacles[0]["obstacle_id"])
 
-        self.canvas.update()
+        self.request_update()
 
     def set_visualization_mode(self, mode: str):
         """
@@ -203,7 +209,7 @@ class Clear360Viewport(QtWidgets.QWidget):
         """
         self.vis_mode = mode
         self._apply_mode_visibilities()
-        self.canvas.update()
+        self.request_update()
 
     def _apply_mode_visibilities(self):
         """Enforce visibility rules for active visualization mode."""
@@ -222,8 +228,15 @@ class Clear360Viewport(QtWidgets.QWidget):
             self.visual_surface_mesh.visible = (not has_tex) and has_surf
             self.visual_vehicle.visible = self.show_vehicle
 
-            # Driver View: Clean automotive cockpit view, hide all engineering debug clutter
-            self.visual_cloud.visible = False
+            # Driver View: Clean automotive cockpit view
+            # If meshes exist, hide point cloud; if no mesh exists, show point cloud as fallback
+            if not has_tex and not has_surf:
+                self.visual_cloud.visible = (self.point_cloud_mode != "none")
+                self.visual_grid.visible = self.show_grid
+            else:
+                self.visual_cloud.visible = False
+                self.visual_grid.visible = False
+
             self.visual_occ_occupied.visible = False
             self.visual_occ_free.visible = False
             self.visual_occ_unknown.visible = False
@@ -232,7 +245,6 @@ class Clear360Viewport(QtWidgets.QWidget):
             self.visual_clearance_line.visible = False
             self.visual_clearance_markers.visible = False
             self.visual_envelope.visible = False
-            self.visual_grid.visible = False
             self.visual_axes.visible = False
             self.canvas.bgcolor = "#0a0a0e"
 
@@ -604,7 +616,7 @@ class Clear360Viewport(QtWidgets.QWidget):
         self.view.camera.azimuth = cfg["azimuth"]
         self.view.camera.distance = cfg["distance"]
         self.view.camera.center = cfg["center"]
-        self.canvas.update()
+        self.request_update()
 
     def render_offscreen(self) -> np.ndarray:
         """Render high-resolution frame image (RGBA uint8)."""
@@ -656,5 +668,5 @@ class Clear360Viewport(QtWidgets.QWidget):
         self.view.camera.distance = max(4.0, extent * 2.2)
         self.view.camera.elevation = 25.0
         self.view.camera.azimuth = -45.0
-        self.canvas.update()
+        self.request_update()
 

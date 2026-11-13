@@ -322,8 +322,6 @@ class ViewerControlPanel(QtWidgets.QWidget):
     # -------------------------------------------------------------------------
     def _on_vis_mode_changed(self, index: int):
         mode = self.combo_vis_mode.currentData()
-        if hasattr(self, "grp_layers"):
-            self.grp_layers.setEnabled(mode != "driver")
         if hasattr(self, "vis_hint"):
             if mode == "driver":
                 self.vis_hint.setText("M7.2 Driver View: Clean photorealistic cockpit experience.")

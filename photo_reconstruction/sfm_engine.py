@@ -127,14 +127,14 @@ class SfMEngine:
             extract_opts.max_image_size = 1000
             extract_opts.sift.max_num_features = 1500
         elif self.quality_preset == "high":
+            extract_opts.max_image_size = 1800
+            extract_opts.sift.max_num_features = 5000
+        elif self.quality_preset == "maximum":
             extract_opts.max_image_size = 2400
             extract_opts.sift.max_num_features = 8000
-        elif self.quality_preset == "maximum":
-            extract_opts.max_image_size = 3200
-            extract_opts.sift.max_num_features = 12000
         else:  # standard
-            extract_opts.max_image_size = 1600
-            extract_opts.sift.max_num_features = 4000
+            extract_opts.max_image_size = 1200
+            extract_opts.sift.max_num_features = 2500
 
         try:
             pycolmap.extract_features(

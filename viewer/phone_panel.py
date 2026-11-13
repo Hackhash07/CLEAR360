@@ -247,6 +247,10 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.lbl_status.setStyleSheet("font-size: 10px; color: #38bdf8;")
         grp_exec_layout.addWidget(self.lbl_status)
 
+        self.lbl_elapsed = QtWidgets.QLabel("")
+        self.lbl_elapsed.setStyleSheet("font-size: 10px; color: #a5f3fc; font-weight: bold;")
+        grp_exec_layout.addWidget(self.lbl_elapsed)
+
         layout.addWidget(grp_exec)
 
         # ---------------------------------------------------------------------
@@ -422,6 +426,15 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         preset = self.combo_quality.currentData() or "standard"
         ref_dist = self.spin_scale.value() if self.chk_scale.isChecked() else None
 
+        # Start live elapsed timer
+        import time
+        self._recon_start_time = time.time()
+        if not hasattr(self, "elapsed_timer"):
+            self.elapsed_timer = QtCore.QTimer(self)
+            self.elapsed_timer.setInterval(250)
+            self.elapsed_timer.timeout.connect(self._update_elapsed_ui)
+        self.elapsed_timer.start()
+
         # Start managed QThread worker
         self.worker = ReconstructionWorker(
             pipeline=self.pipeline,
@@ -435,6 +448,13 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.worker.failed.connect(self._on_reconstruction_failed)
         self.worker.start()
 
+    def _update_elapsed_ui(self):
+        if hasattr(self, "_recon_start_time") and self._recon_start_time > 0:
+            import time
+            elapsed = time.time() - self._recon_start_time
+            dots = "." * (int(elapsed * 2) % 4)
+            self.lbl_elapsed.setText(f"Elapsed: {elapsed:.1f} s {dots}")
+
     @QtCore.Slot(int, str)
     def _update_progress_ui(self, pct: int, msg: str):
         self.prog_bar.setValue(pct)
@@ -442,6 +462,9 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
 
     @QtCore.Slot(dict)
     def _on_reconstruction_success(self, res: dict):
+        if hasattr(self, "elapsed_timer") and self.elapsed_timer.isActive():
+            self.elapsed_timer.stop()
+        self.lbl_elapsed.setText("")
         self.btn_start.setEnabled(True)
         self.btn_add_photos.setEnabled(True)
         self.prog_bar.setValue(100)
@@ -466,6 +489,9 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
 
     @QtCore.Slot(str, str)
     def _on_reconstruction_failed(self, error_msg: str, tb_str: str):
+        if hasattr(self, "elapsed_timer") and self.elapsed_timer.isActive():
+            self.elapsed_timer.stop()
+        self.lbl_elapsed.setText("")
         self.btn_start.setEnabled(True)
         self.btn_add_photos.setEnabled(True)
         self.prog_bar.setValue(0)
