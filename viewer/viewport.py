@@ -650,7 +650,26 @@ class Clear360Viewport(QtWidgets.QWidget):
         self.visual_surface_mesh.visible = True
         self.visual_textured_mesh.visible = False
         self.visual_vehicle.visible = False  # Independent photogrammetry environment
-        self.visual_cloud.visible = False
+
+        # Load and display authentic dense colored point cloud if available in session
+        session_dir = p.parent.parent
+        dense_p = session_dir / "dense_cloud" / "dense_cloud.ply"
+        if dense_p.exists():
+            pcd = o3d.io.read_point_cloud(str(dense_p))
+            if len(pcd.points) > 0:
+                p_pts = np.asarray(pcd.points, dtype=np.float32)
+                p_cols = np.asarray(pcd.colors, dtype=np.float32)
+                if len(p_cols) == len(p_pts):
+                    p_rgba = np.hstack([p_cols, np.ones((len(p_cols), 1), dtype=np.float32)])
+                else:
+                    p_rgba = np.ones((len(p_pts), 4), dtype=np.float32) * 0.8
+                self.visual_cloud.set_data(p_pts, edge_color=p_rgba, face_color=p_rgba, size=3.5)
+                self.visual_cloud.visible = True
+            else:
+                self.visual_cloud.visible = False
+        else:
+            self.visual_cloud.visible = False
+
         self.visual_occ_occupied.visible = False
         self.visual_occ_free.visible = False
         self.visual_occ_unknown.visible = False

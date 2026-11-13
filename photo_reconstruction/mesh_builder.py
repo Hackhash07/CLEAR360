@@ -102,8 +102,20 @@ class MeshBuilder:
         mesh_cols = np.asarray(mesh.vertex_colors, dtype=np.float32)
         mesh_norms = np.asarray(mesh.vertex_normals, dtype=np.float32)
 
-        if len(mesh_cols) == 0:
-            mesh_cols = np.ones((len(verts), 3), dtype=np.float32) * 0.7
+        # Ensure authentic photographic colors are transferred from dense point cloud
+        if len(verts) > 0 and (len(mesh_cols) == 0 or len(mesh_cols) != len(verts) or np.all(mesh_cols == 0.7)):
+            if len(pcd.points) > 0 and len(pcd.colors) > 0:
+                pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+                pcd_colors = np.asarray(pcd.colors, dtype=np.float32)
+                mesh_cols = np.zeros((len(verts), 3), dtype=np.float32)
+                for i, v in enumerate(verts):
+                    [k, idx, _] = pcd_tree.search_knn_vector_3d(v.astype(np.float64), 1)
+                    if k > 0 and idx[0] < len(pcd_colors):
+                        mesh_cols[i] = pcd_colors[idx[0]]
+                    else:
+                        mesh_cols[i] = [0.7, 0.7, 0.7]
+            else:
+                mesh_cols = np.ones((len(verts), 3), dtype=np.float32) * 0.7
 
         alpha = np.ones((len(mesh_cols), 1), dtype=np.float32)
         rgba_cols = np.hstack([mesh_cols, alpha])

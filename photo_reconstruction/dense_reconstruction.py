@@ -83,7 +83,8 @@ class DenseReconstructor:
                 cx = W / 2.0
                 cy = H / 2.0
 
-                s = 6  # High-density stride for detailed point cloud generation
+                # Adaptive sampling stride: yields ~30k-60k points per view regardless of 12MP-48MP resolution
+                s = max(6, int(max(W, H) / 200))
                 v_grid, u_grid = np.mgrid[0:H:s, 0:W:s]
                 d = depth[v_grid, u_grid]
 
@@ -140,7 +141,12 @@ class DenseReconstructor:
                     radius=self.voxel_size * 2.5, max_nn=30
                 )
             )
-            pcd.orient_normals_consistent_tangent_plane(k=15)
+            if camera_poses:
+                cam_centers = [pose[:3, 3] for pose in camera_poses.values()]
+                avg_cam = np.mean(cam_centers, axis=0)
+                pcd.orient_normals_towards_camera_location(avg_cam)
+            elif len(pcd.points) > 15:
+                pcd.orient_normals_consistent_tangent_plane(k=min(15, len(pcd.points) - 1))
             normals = np.asarray(pcd.normals, dtype=np.float32)
         else:
             normals = np.zeros((len(pcd.points), 3), dtype=np.float32)
