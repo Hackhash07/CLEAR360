@@ -181,9 +181,15 @@ class SfMEngine:
         if progress_cb:
             progress_cb(60, "Running incremental Structure-from-Motion bundle adjustment...")
 
-        # 3. Incremental Mapping
+        # 3. Incremental Mapping with robust indoor smartphone thresholds
         inc_opts = pycolmap.IncrementalPipelineOptions()
-        inc_opts.min_num_matches = 15
+        inc_opts.min_num_matches = 10
+        inc_opts.min_model_size = 2
+        # Relaxed indoor initialization thresholds (default 16.0 deg & 100 inliers fail on indoor walls)
+        inc_opts.mapper.init_min_num_inliers = 15
+        inc_opts.mapper.init_min_tri_angle = 4.0
+        inc_opts.mapper.abs_pose_min_num_inliers = 12
+        inc_opts.mapper.abs_pose_min_inlier_ratio = 0.15
         out_recon_dir = self.sparse_dir / "0"
         if out_recon_dir.exists():
             shutil.rmtree(out_recon_dir)
