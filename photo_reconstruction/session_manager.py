@@ -61,7 +61,9 @@ class SessionManager:
             return []
         sessions = [
             d.name for d in self.root_dir.iterdir()
-            if d.is_dir() and d.name.startswith("session_")
+            if d.is_dir() and not d.name.startswith(".") and (
+                d.name.startswith("session_") or (d / "mesh" / "scene_mesh.ply").exists()
+            )
         ]
         return sorted(sessions)
 
