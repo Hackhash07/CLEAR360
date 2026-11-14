@@ -12,7 +12,9 @@ from typing import List, Dict, Tuple, Any, Optional, Callable
 import shutil
 import time
 import json
+import cv2
 import numpy as np
+import open3d as o3d
 
 from photo_reconstruction.image_loader import ImageLoader
 from photo_reconstruction.exif_reader import ExifReader
@@ -365,7 +367,6 @@ class PhoneReconstructionPipeline:
         # 7. Visibility-Aware Photogrammetric Texturing (if not already textured by modular assembler)
         if not textured_ok and img_dict and len(mesh_f) > 0 and camera_models:
             update_progress(92, "Synthesizing visibility-aware UV texture mapping and packed texture atlas...")
-            import cv2
             from photo_reconstruction.texture_engine import VisibilityAwareTextureEngine
             tex_engine = VisibilityAwareTextureEngine(atlas_size=4096)
             try:
@@ -387,9 +388,6 @@ class PhoneReconstructionPipeline:
                         "atlas_height": tex_rep.atlas_height,
                         "camera_face_distribution": tex_rep.camera_face_distribution,
                     }, f_tex, indent=2)
-                textured_ok = True
-            except Exception as e:
-                print(f"Warning: Visibility texturing fallback: {e}")
                 textured_ok = True
             except Exception as e:
                 print(f"Warning: Visibility texturing fallback: {e}")
