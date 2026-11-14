@@ -319,3 +319,106 @@ class PhoneReconstructionPipeline:
             "quality_preset": active_preset,
             "report": report,
         }
+
+
+def main():
+    """Terminal CLI entrypoint for CLEAR360 Phone Photogrammetry Pipeline."""
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        description="CLEAR360 CLI: Multi-View Smartphone Photogrammetry & 3D Reconstruction Pipeline"
+    )
+    parser.add_argument(
+        "images",
+        nargs="+",
+        help="Directory containing images or individual image file paths to reconstruct.",
+    )
+    parser.add_argument(
+        "--preset",
+        "-p",
+        choices=["draft", "quick", "standard", "high", "maximum"],
+        default="standard",
+        help="Quality preset (default: standard).",
+    )
+    parser.add_argument(
+        "--session",
+        "-s",
+        default=None,
+        help="Custom session identifier for output folder.",
+    )
+    parser.add_argument(
+        "--distance",
+        "-d",
+        type=float,
+        default=None,
+        help="Optional known physical reference distance in metres for metric scale calibration.",
+    )
+
+    args = parser.parse_args()
+
+    # Collect image paths
+    raw_inputs = [Path(p).expanduser().resolve() for p in args.images]
+    image_paths = []
+
+    valid_exts = {".jpg", ".jpeg", ".png", ".bmp", ".heic"}
+    for item in raw_inputs:
+        if item.is_dir():
+            for f in sorted(item.iterdir()):
+                if f.suffix.lower() in valid_exts:
+                    image_paths.append(f)
+        elif item.is_file() and item.suffix.lower() in valid_exts:
+            image_paths.append(item)
+
+    if len(image_paths) < 2:
+        print(f"❌ Error: At least 2 photographic views are required for 3D SfM. Found {len(image_paths)}.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"================================================================")
+    print(f" CLEAR360 PHOTOGRAMMETRY & 3D RECONSTRUCTION ENGINE (CLI)")
+    print(f"================================================================")
+    print(f"  Images Found    : {len(image_paths)}")
+    print(f"  Quality Preset  : {args.preset.upper()}")
+    print(f"  Session ID      : {args.session or '(auto-generated)'}")
+    print(f"  Known Distance  : {f'{args.distance:.2f} m' if args.distance else 'Uncalibrated photogrammetry scale'}")
+    print(f"================================================================\n")
+
+    def cli_progress(pct: int, msg: str):
+        bar_len = 30
+        filled = int(bar_len * pct / 100)
+        bar = "█" * filled + "░" * (bar_len - filled)
+        print(f"\r[{bar}] {pct:3d}% — {msg:<50}", end="", flush=True)
+        if pct >= 100:
+            print()
+
+    pipeline = PhoneReconstructionPipeline(quality_preset=args.preset)
+    result = pipeline.run_pipeline(
+        image_paths=image_paths,
+        session_id=args.session,
+        reference_distance_m=args.distance,
+        progress_cb=cli_progress,
+    )
+
+    print("\n----------------------------------------------------------------")
+    if result["success"]:
+        rep = result["report"]
+        print("✅ RECONSTRUCTION SUCCESSFUL")
+        print(f"  Session Directory   : {result['session_dir']}")
+        print(f"  Reconstruction Grade: {rep.get('reconstruction_grade', 'N/A')}")
+        print(f"  Registered Cameras  : {rep['image_counts']['registered']} / {rep['image_counts']['uploaded']}")
+        print(f"  Sparse Points       : {rep['geometric_metrics']['sparse_points']:,}")
+        print(f"  Dense Points        : {rep['geometric_metrics']['dense_points']:,}")
+        print(f"  Mesh Triangles      : {rep['geometric_metrics']['mesh_triangles']:,}")
+        print(f"  Reprojection Error  : {rep['geometric_metrics']['mean_reprojection_error_px']:.3f} px")
+        print(f"  Mesh OBJ Path       : {result['mesh_obj']}")
+        print(f"  Mesh PLY Path       : {result['mesh_ply']}")
+    else:
+        print("❌ RECONSTRUCTION FAILED")
+        print(f"  Reason: {result.get('error', 'Unknown failure')}")
+        sys.exit(1)
+    print("----------------------------------------------------------------\n")
+
+
+if __name__ == "__main__":
+    main()
+
