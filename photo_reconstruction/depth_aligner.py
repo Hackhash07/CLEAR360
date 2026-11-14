@@ -259,3 +259,4 @@ class SfMDepthAligner:
             report.aligned_depth_maps[name] = (d_map * chosen_scale).astype(np.float32)
 
         return report
+

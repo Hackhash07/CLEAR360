@@ -353,3 +353,4 @@ class VisibilityAwareTextureEngine:
             report.obj_path = str(obj_path)
 
         return new_verts, new_faces, new_uvs, atlas_img, report
+
