@@ -255,6 +255,24 @@ class SfMEngine:
             T_world_cam = np.linalg.inv(T_cam_world)
             camera_poses[image.name] = T_world_cam
 
+        # Reject spatial camera pose outliers (bundle adjustment divergence)
+        if len(camera_poses) >= 4:
+            centers = np.array([p[:3, 3] for p in camera_poses.values()])
+            c_names = list(camera_poses.keys())
+            med_center = np.median(centers, axis=0)
+            dists = np.linalg.norm(centers - med_center, axis=1)
+            q25, q75 = np.percentile(dists, 25), np.percentile(dists, 75)
+            iqr = q75 - q25
+            outlier_thresh = max(15.0, q75 + 5.0 * iqr)
+
+            valid_poses = {}
+            for name, d in zip(c_names, dists):
+                if d < outlier_thresh:
+                    valid_poses[name] = camera_poses[name]
+                else:
+                    registered_names.discard(name)
+            camera_poses = valid_poses
+
         all_names = set(img.name for img in images)
         failed_names = sorted(list(all_names - registered_names))
 
@@ -517,6 +535,17 @@ class SfMEngine:
                     break
                 if registered_this_iter:
                     break
+
+        # Reject spatial camera pose outliers (bundle adjustment divergence)
+        if len(camera_poses) >= 4:
+            centers = np.array([p[:3, 3] for p in camera_poses.values()])
+            c_names = list(camera_poses.keys())
+            med_center = np.median(centers, axis=0)
+            dists = np.linalg.norm(centers - med_center, axis=1)
+            q25, q75 = np.percentile(dists, 25), np.percentile(dists, 75)
+            iqr = q75 - q25
+            outlier_thresh = max(15.0, q75 + 5.0 * iqr)
+            camera_poses = {name: camera_poses[name] for name, d in zip(c_names, dists) if d < outlier_thresh}
 
         failed_names = [n for n in names if n not in camera_poses]
         sparse_pts = np.vstack(all_pts3d) if all_pts3d else np.zeros((0, 3), dtype=np.float32)
