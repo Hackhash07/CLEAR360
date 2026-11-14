@@ -308,11 +308,45 @@ class PhoneReconstructionPipeline:
         dense_ply = dense_dir / "dense_cloud.ply"
         DenseReconstructor.save_point_cloud_ply(dense_pts, dense_cols, dense_ply, normals=dense_norms)
 
-        # 5. 3D Surface Meshing
-        chosen_method = mesh_method if mesh_method is not None else preset_cfg.get("mesh_method", "poisson")
-        update_progress(80, f"Building 3D surface mesh using {chosen_method.upper()} meshing algorithm...")
-        mesh_builder = MeshBuilder(method=chosen_method, poisson_depth=preset_cfg["poisson_depth"])
-        mesh_v, mesh_f, mesh_c, mesh_n = mesh_builder.build_mesh(dense_pts, dense_cols, dense_norms)
+        # 5. 3D Surface Meshing (M7.3.3 / M7.3.4 Modular Scene Assembly)
+        img_dict = {}
+        for p in copied_paths:
+            if p.name in camera_models:
+                bgr = cv2.imread(str(p))
+                if bgr is not None:
+                    img_dict[p.name] = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+        mesh_ply = mesh_dir / "scene_mesh.ply"
+        mesh_obj = mesh_dir / "scene_mesh.obj"
+        textured_ok = False
+
+        if camera_models and img_dict:
+            try:
+                from photo_reconstruction.scene_assembly import RegionSceneAssembler
+                update_progress(80, "Building modular 3D surface mesh and outward-facing normal assembly...")
+                assembler = RegionSceneAssembler(session_dir)
+                scene_regions, final_obj, final_ply, _ = assembler.assemble_scene_graph(
+                    points=dense_pts,
+                    colors=dense_cols,
+                    normals=dense_norms,
+                    camera_models=camera_models,
+                    images_rgb=img_dict,
+                    depth_maps=depth_maps if depth_maps else None,
+                )
+                mesh_unified = o3d.io.read_triangle_mesh(str(final_ply))
+                mesh_v = np.asarray(mesh_unified.vertices, dtype=np.float32)
+                mesh_f = np.asarray(mesh_unified.triangles, dtype=np.uint32)
+                mesh_c = np.ones((len(mesh_v), 4), dtype=np.float32) * 0.7
+                mesh_n = np.asarray(mesh_unified.vertex_normals, dtype=np.float32)
+                textured_ok = True
+            except Exception as e:
+                print(f"Notice: Modular assembly fallback: {e}")
+
+        if not textured_ok:
+            chosen_method = mesh_method if mesh_method is not None else preset_cfg.get("mesh_method", "poisson")
+            update_progress(80, f"Building 3D surface mesh using {chosen_method.upper()} meshing algorithm...")
+            mesh_builder = MeshBuilder(method=chosen_method, poisson_depth=preset_cfg["poisson_depth"])
+            mesh_v, mesh_f, mesh_c, mesh_n = mesh_builder.build_mesh(dense_pts, dense_cols, dense_norms)
 
         # 6. Metric Scale Recovery (if reference distance provided)
         if reference_distance_m is not None and reference_distance_m > 0 and len(mesh_v) >= 2:
@@ -328,23 +362,12 @@ class PhoneReconstructionPipeline:
                         camera_models[c_name].T_world_cam = camera_poses[c_name]
                         camera_models[c_name].T_cam_world = np.linalg.inv(camera_poses[c_name])
 
-        # 7. Visibility-Aware Photogrammetric Texturing
-        mesh_ply = mesh_dir / "scene_mesh.ply"
-        mesh_obj = mesh_dir / "scene_mesh.obj"
-        update_progress(92, "Synthesizing visibility-aware UV texture mapping and packed texture atlas...")
-
-        import cv2
-        from photo_reconstruction.texture_engine import VisibilityAwareTextureEngine
-        tex_engine = VisibilityAwareTextureEngine(atlas_size=4096)
-        img_dict = {}
-        for p in copied_paths:
-            if p.name in camera_models:
-                bgr = cv2.imread(str(p))
-                if bgr is not None:
-                    img_dict[p.name] = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-
-        textured_ok = False
-        if img_dict and len(mesh_f) > 0 and camera_models:
+        # 7. Visibility-Aware Photogrammetric Texturing (if not already textured by modular assembler)
+        if not textured_ok and img_dict and len(mesh_f) > 0 and camera_models:
+            update_progress(92, "Synthesizing visibility-aware UV texture mapping and packed texture atlas...")
+            import cv2
+            from photo_reconstruction.texture_engine import VisibilityAwareTextureEngine
+            tex_engine = VisibilityAwareTextureEngine(atlas_size=4096)
             try:
                 tex_v, tex_f, tex_uv, tex_atlas, tex_rep = tex_engine.texture_mesh(
                     vertices=mesh_v,
@@ -364,6 +387,9 @@ class PhoneReconstructionPipeline:
                         "atlas_height": tex_rep.atlas_height,
                         "camera_face_distribution": tex_rep.camera_face_distribution,
                     }, f_tex, indent=2)
+                textured_ok = True
+            except Exception as e:
+                print(f"Warning: Visibility texturing fallback: {e}")
                 textured_ok = True
             except Exception as e:
                 print(f"Warning: Visibility texturing fallback: {e}")

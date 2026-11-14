@@ -271,3 +271,4 @@ class M734DiagnosticRenderer:
         rendered_paths["mode_H"] = path_h
 
         return rendered_paths
+

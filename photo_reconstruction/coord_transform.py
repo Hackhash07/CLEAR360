@@ -198,3 +198,4 @@ class Clear360CoordinateTransformer:
             is_upright=is_upright,
             errors=errors,
         )
+
