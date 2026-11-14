@@ -48,7 +48,7 @@ QUALITY_PRESETS: Dict[str, Dict[str, Any]] = {
         "voxel_size": 0.03,
         "poisson_depth": 8,
         "cv_sift_features": 2500,
-        "use_mvs_verification": True,
+        "use_mvs_verification": False,
     },
     "high": {
         "max_image_size": 2400,
@@ -56,7 +56,7 @@ QUALITY_PRESETS: Dict[str, Dict[str, Any]] = {
         "voxel_size": 0.02,
         "poisson_depth": 9,
         "cv_sift_features": 4000,
-        "use_mvs_verification": True,
+        "use_mvs_verification": False,
     },
     "maximum": {
         "max_image_size": 3200,
@@ -64,7 +64,7 @@ QUALITY_PRESETS: Dict[str, Dict[str, Any]] = {
         "voxel_size": 0.015,
         "poisson_depth": 10,
         "cv_sift_features": 6000,
-        "use_mvs_verification": True,
+        "use_mvs_verification": False,
     },
 }
 
