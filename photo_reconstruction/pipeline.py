@@ -334,11 +334,15 @@ class PhoneReconstructionPipeline:
                     camera_models=camera_models,
                     images_rgb=img_dict,
                     depth_maps=depth_maps if depth_maps else None,
+                    sparse_points=sparse_pts,
                 )
                 mesh_unified = o3d.io.read_triangle_mesh(str(final_ply))
                 mesh_v = np.asarray(mesh_unified.vertices, dtype=np.float32)
                 mesh_f = np.asarray(mesh_unified.triangles, dtype=np.uint32)
-                mesh_c = np.ones((len(mesh_v), 4), dtype=np.float32) * 0.7
+                if len(mesh_unified.vertex_colors) > 0:
+                    mesh_c = np.asarray(mesh_unified.vertex_colors, dtype=np.float32)
+                else:
+                    mesh_c = np.ones((len(mesh_v), 4), dtype=np.float32) * 0.7
                 mesh_n = np.asarray(mesh_unified.vertex_normals, dtype=np.float32)
                 textured_ok = True
             except Exception as e:
@@ -394,8 +398,7 @@ class PhoneReconstructionPipeline:
 
         if not textured_ok:
             MeshBuilder.save_mesh_obj(mesh_v, mesh_f, mesh_c, mesh_obj)
-
-        MeshBuilder.save_mesh_ply(mesh_v, mesh_f, mesh_c, mesh_ply, normals=mesh_n)
+            MeshBuilder.save_mesh_ply(mesh_v, mesh_f, mesh_c, mesh_ply, normals=mesh_n)
 
         # 7. Quality Report Compilation
         update_progress(95, "Compiling reconstruction quality report...")

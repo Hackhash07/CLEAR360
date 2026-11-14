@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import open3d as o3d
+import cv2
 
 from photo_reconstruction.camera_model import PhoneCameraModel
 
@@ -118,7 +119,6 @@ class CameraOverlapFusion:
             if images_rgb and name in images_rgb:
                 img = images_rgb[name]
                 if img.shape[:2] != (H, W):
-                    import cv2
                     img = cv2.resize(img, (W, H), interpolation=cv2.INTER_LINEAR)
                 cols = img[v_val, u_val].astype(np.float32) / 255.0
             else:

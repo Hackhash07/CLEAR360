@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Tuple, Any
 import json
 import numpy as np
 import open3d as o3d
+import cv2
 
 
 @dataclass
@@ -339,7 +340,6 @@ class ViewerDataLoader:
             return None, None, None, None
 
         try:
-            import cv2
             from mesh.rgbd_mesher import RGBDSurfaceMesher
             verts, faces, cols, norms = RGBDSurfaceMesher.load_mesh_ply(ply_path)
             uvs = np.load(str(uv_path)).astype(np.float32)

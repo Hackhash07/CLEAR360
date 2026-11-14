@@ -209,7 +209,7 @@ def test_visibility_aware_texture_engine():
         [0.2, -0.2, 2.0],
         [0.0, 0.2, 2.0],
     ], dtype=np.float32)
-    f = np.array([[0, 1, 2]], dtype=np.uint32)
+    f = np.array([[0, 2, 1]], dtype=np.uint32)
 
     cam1 = PhoneCameraModel(
         name="cam1.jpg",

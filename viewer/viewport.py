@@ -19,6 +19,7 @@ Features:
 
 from typing import Optional, Dict, List, Any, Tuple
 import numpy as np
+import cv2
 from PySide6 import QtWidgets, QtCore, QtGui
 import vispy.scene
 from vispy.scene import visuals
@@ -133,6 +134,7 @@ class Clear360Viewport(QtWidgets.QWidget):
             vertices=dummy_v,
             faces=dummy_f,
             color="white",
+            shading="smooth",
         )
         self.visual_textured_mesh.visible = False
         self.view.add(self.visual_textured_mesh)
@@ -657,7 +659,6 @@ class Clear360Viewport(QtWidgets.QWidget):
         obj_file = session_dir / "mesh" / "scene_mesh.obj"
         if atlas_png.exists() and obj_file.exists():
             try:
-                import cv2
                 from vispy.visuals.filters import TextureFilter
                 tex_bgr = cv2.imread(str(atlas_png))
                 if tex_bgr is not None:

@@ -26,6 +26,11 @@ from typing import NamedTuple
 
 import numpy as np
 
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
 # ── Constants ─────────────────────────────────────────────────────────────────
 CAMERAS = ["front", "rear", "left", "right"]
 NUM_FRAMES = 20
@@ -145,8 +150,8 @@ def check_sample_frame(data_root: Path) -> list[CheckResult]:
         results.append(CheckResult("Sample RGB shape", "FAIL", f"File not found: {rgb_path}"))
     else:
         try:
-            import cv2  # type: ignore
-
+            if cv2 is None:
+                raise ImportError("OpenCV cv2 not installed")
             img = cv2.imread(str(rgb_path))
             if img is None:
                 results.append(CheckResult("Sample RGB shape", "FAIL", "cv2.imread returned None"))

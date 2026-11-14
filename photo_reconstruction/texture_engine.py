@@ -32,19 +32,22 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 import cv2
 import numpy as np
+import open3d as o3d
 
 from photo_reconstruction.camera_model import PhoneCameraModel
 
 
 @dataclass
 class TexturingReport:
-    """Diagnostic metrics for visibility-aware texturing."""
+    """Diagnostic metrics for visibility-aware texturing (M7.3.8 Issue 4)."""
     total_faces: int
     textured_faces: int
     untextured_faces: int
     coverage_percentage: float
     atlas_width: int
     atlas_height: int
+    rear_facing_faces: int = 0
+    occluded_faces: int = 0
     camera_face_distribution: Dict[str, int] = field(default_factory=dict)
     atlas_png_path: Optional[str] = None
     obj_path: Optional[str] = None
@@ -119,17 +122,7 @@ class VisibilityAwareTextureEngine:
 
         verts = vertices.astype(np.float64)
 
-        # Ensure face normals consistently point outward towards cameras
-        from photo_reconstruction.normal_orientation import NormalOrientationEngine
-        norm_engine = NormalOrientationEngine()
-        cam_centers_list = [cam.camera_center for cam in camera_models.values()]
-        faces, face_normals, num_flipped = norm_engine.orient_faces_towards_cameras(
-            vertices, faces, cam_centers_list
-        )
-        if num_flipped > 0:
-            print(f"[TextureEngine] Aligned {num_flipped:,}/{num_faces:,} face normals towards camera line-of-sight.")
-
-        # 1. Compute Face Geometry (Normals and Centroids)
+        # 1. Compute Face Geometry (Normals and Centroids) from genuine mesh winding
         v0 = verts[faces[:, 0]]
         v1 = verts[faces[:, 1]]
         v2 = verts[faces[:, 2]]
@@ -223,18 +216,26 @@ class VisibilityAwareTextureEngine:
             best_scores[replace_f] = scores[better]
             best_cam_idx[replace_f] = c_idx
 
-        # Fallback for untextured faces: assign closest front-facing camera
-        untextured = best_cam_idx == -1
-        if np.any(untextured):
-            # Assign first valid camera whose optical axis has positive dot product
-            for f_i in np.where(untextured)[0]:
-                for c_idx, name in enumerate(cam_names):
-                    if name in images:
-                        best_cam_idx[f_i] = c_idx
-                        break
+        # M7.3.8 Issue 4: Strict Visibility Enforcement (ZERO invalid first-camera fallback)
+        # Any face that is rear-facing, out-of-bounds, or occluded is strictly left untextured
+        untextured_mask = best_cam_idx == -1
+        untextured_count = int(np.sum(untextured_mask))
+        textured_count = num_faces - untextured_count
 
-        # 3. Composite 2x3 or 3x2 Texture Atlas Layout
-        # Arrange registered camera images into an aligned grid atlas
+        # Count rear-facing faces relative to all observing cameras
+        # A face is strictly rear-facing if no camera sees it with positive cos(theta)
+        max_cos_all = np.zeros(num_faces, dtype=np.float32) - 1.0
+        for name in cam_names:
+            if name in camera_models:
+                cam = camera_models[name]
+                vec_to_c = cam.camera_center - face_centroids
+                d_c = np.maximum(np.linalg.norm(vec_to_c, axis=1), 1e-6)
+                cos_c = np.sum(face_normals * (vec_to_c / d_c[:, None]), axis=1)
+                max_cos_all = np.maximum(max_cos_all, cos_c)
+        rear_facing_count = int(np.sum(max_cos_all <= 0.0))
+        occluded_count = max(0, untextured_count - rear_facing_count)
+
+        # 3. Composite 2x3 or 3x2 Texture Atlas Layout with Dedicated Neutral Swatch
         active_cams = [name for name in cam_names if name in images]
         k_cams = len(active_cams)
         cols_grid = 3 if k_cams > 4 else (2 if k_cams > 1 else 1)
@@ -243,7 +244,17 @@ class VisibilityAwareTextureEngine:
         cell_w = self.atlas_size // cols_grid
         cell_h = self.atlas_size // rows_grid
 
-        atlas_img = np.zeros((rows_grid * cell_h, cols_grid * cell_w, 3), dtype=np.uint8)
+        total_atlas_w = cols_grid * cell_w
+        total_atlas_h = rows_grid * cell_h
+
+        atlas_img = np.zeros((total_atlas_h, total_atlas_w, 3), dtype=np.uint8)
+
+        # Draw dedicated 64x64 neutral gray swatch at (0, 0) for untextured / rear surfaces
+        swatch_size = min(64, cell_w // 4, cell_h // 4)
+        swatch_color = np.array([140, 140, 140], dtype=np.uint8) # Neutral architectural stone gray
+        atlas_img[0:swatch_size, 0:swatch_size] = swatch_color
+        u_neutral = float(swatch_size // 2) / float(total_atlas_w)
+        v_neutral = float(swatch_size // 2) / float(total_atlas_h)
 
         # Precompute camera cell rects and downscale images into cells
         cam_cell_offsets: Dict[int, Tuple[int, int, float, float]] = {}  # (x_off, y_off, scale_x, scale_y)
@@ -264,6 +275,10 @@ class VisibilityAwareTextureEngine:
             src_h, src_w = src_img.shape[:2]
 
             resized_cell = cv2.resize(src_img, (cell_w, cell_h), interpolation=cv2.INTER_AREA)
+            # If camera 0 overlaps swatch, preserve the swatch in the very top-left
+            if active_idx == 0:
+                resized_cell[0:swatch_size, 0:swatch_size] = swatch_color
+
             atlas_img[y_off : y_off + cell_h, x_off : x_off + cell_w] = resized_cell
 
             scale_x = float(cell_w) / float(src_w)
@@ -271,33 +286,31 @@ class VisibilityAwareTextureEngine:
             cam_cell_offsets[c_idx] = (x_off, y_off, scale_x, scale_y)
             cam_counts[name] = int(np.sum(best_cam_idx == c_idx))
 
-        total_atlas_w = cols_grid * cell_w
-        total_atlas_h = rows_grid * cell_h
-
         # 4. Generate Unwelded UV Vertices and Atlas UV Coordinates
-        # Because adjacent faces assigned to different cameras have UV seams,
-        # we duplicate vertices per face (unwelded OBJ geometry).
         new_verts = np.zeros((num_faces * 3, 3), dtype=np.float32)
         new_uvs = np.zeros((num_faces * 3, 2), dtype=np.float32)
         new_faces = np.arange(num_faces * 3, dtype=np.uint32).reshape(num_faces, 3)
 
         for f_i in range(num_faces):
             c_idx = best_cam_idx[f_i]
-            if c_idx not in cam_cell_offsets:
-                c_idx = 0
+            pts_3d = verts[faces[f_i]]  # (3, 3)
+            new_verts[f_i * 3 : f_i * 3 + 3] = pts_3d
+
+            if c_idx < 0 or c_idx not in cam_cell_offsets:
+                # Untextured / rear-facing / occluded face: map to neutral swatch
+                new_uvs[f_i * 3 : f_i * 3 + 3] = np.array([
+                    [u_neutral, v_neutral],
+                    [u_neutral, v_neutral],
+                    [u_neutral, v_neutral],
+                ], dtype=np.float32)
+                continue
 
             x_off, y_off, s_x, s_y = cam_cell_offsets[c_idx]
             cam = camera_models[cam_names[c_idx]]
 
-            pts_3d = verts[faces[f_i]]  # (3, 3)
-            new_verts[f_i * 3 : f_i * 3 + 3] = pts_3d
-
-            # Project the 3 vertices into the camera
+            # Project the 3 vertices into the valid observing camera
             pix_2d, _, _ = cam.project_world_to_image(pts_3d, check_bounds=False)
 
-            # Map from original image coordinates to atlas [0, 1] UV
-            # In VisPy and OpenGL Texture2D, row 0 of array is sampled at V = 0.0 (top of image).
-            # Row H-1 is sampled at V = 1.0 (bottom of image).
             u_atlas = (x_off + pix_2d[:, 0] * s_x) / float(total_atlas_w)
             v_atlas = (y_off + pix_2d[:, 1] * s_y) / float(total_atlas_h)
 
@@ -312,16 +325,17 @@ class VisibilityAwareTextureEngine:
 
             new_uvs[f_i * 3 : f_i * 3 + 3] = np.column_stack([u_atlas, v_atlas])
 
-        textured_count = int(np.sum(best_cam_idx >= 0))
-        coverage_pct = float(textured_count / float(num_faces) * 100.0)
+        coverage_pct = float(textured_count / float(num_faces) * 100.0) if num_faces > 0 else 0.0
 
         report = TexturingReport(
             total_faces=num_faces,
             textured_faces=textured_count,
-            untextured_faces=num_faces - textured_count,
+            untextured_faces=untextured_count,
             coverage_percentage=round(coverage_pct, 1),
             atlas_width=total_atlas_w,
             atlas_height=total_atlas_h,
+            rear_facing_faces=rear_facing_count,
+            occluded_faces=occluded_count,
             camera_face_distribution=cam_counts,
         )
 
@@ -345,6 +359,13 @@ class VisibilityAwareTextureEngine:
                 f_mtl.write("illum 1\n")
                 f_mtl.write(f"map_Kd {base_name}.png\n")
 
+            # Compute smooth vertex normals for Wavefront OBJ export
+            m_tmp = o3d.geometry.TriangleMesh()
+            m_tmp.vertices = o3d.utility.Vector3dVector(new_verts.astype(np.float64))
+            m_tmp.triangles = o3d.utility.Vector3iVector(new_faces.astype(np.int32))
+            m_tmp.compute_vertex_normals()
+            new_vn = np.asarray(m_tmp.vertex_normals, dtype=np.float32)
+
             obj_path = o_dir / f"{base_name}.obj"
             with open(obj_path, "w") as f_obj:
                 f_obj.write("# CLEAR360 Photogrammetric 3D Reconstructed Mesh\n")
@@ -357,9 +378,12 @@ class VisibilityAwareTextureEngine:
                 for vt in new_uvs:
                     f_obj.write(f"vt {vt[0]:.6f} {vt[1]:.6f}\n")
 
+                for vn in new_vn:
+                    f_obj.write(f"vn {vn[0]:.6f} {vn[1]:.6f} {vn[2]:.6f}\n")
+
                 for tri in new_faces:
-                    # 1-based indexing in Wavefront OBJ
-                    f_obj.write(f"f {tri[0]+1}/{tri[0]+1} {tri[1]+1}/{tri[1]+1} {tri[2]+1}/{tri[2]+1}\n")
+                    # 1-based indexing in Wavefront OBJ (v/vt/vn)
+                    f_obj.write(f"f {tri[0]+1}/{tri[0]+1}/{tri[0]+1} {tri[1]+1}/{tri[1]+1}/{tri[1]+1} {tri[2]+1}/{tri[2]+1}/{tri[2]+1}\n")
 
             report.obj_path = str(obj_path)
 

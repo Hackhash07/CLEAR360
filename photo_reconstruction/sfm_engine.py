@@ -13,6 +13,7 @@ import os
 import shutil
 import numpy as np
 import open3d as o3d
+import cv2
 
 try:
     import pycolmap
@@ -230,7 +231,24 @@ class SfMEngine:
                 ),
             }
 
-        # Select largest reconstruction component
+        # Enumerate and audit ALL COLMAP reconstruction models (M7.3.8 Issue 2)
+        models_audit = []
+        for model_idx, recon in reconstructions.items():
+            pts3d_arr = np.array([p.xyz for p in recon.points3D.values()]) if len(recon.points3D) > 0 else np.zeros((0, 3))
+            b_min = pts3d_arr.min(axis=0).tolist() if len(pts3d_arr) > 0 else [0.0, 0.0, 0.0]
+            b_max = pts3d_arr.max(axis=0).tolist() if len(pts3d_arr) > 0 else [0.0, 0.0, 0.0]
+            errs = [p.error for p in recon.points3D.values()]
+            models_audit.append({
+                "model_id": int(model_idx),
+                "num_registered_images": len(recon.images),
+                "registered_images": [img.name for img in recon.images.values()],
+                "num_points3D": len(recon.points3D),
+                "bounds_min": b_min,
+                "bounds_max": b_max,
+                "mean_reprojection_error": round(float(np.mean(errs)), 3) if errs else 0.0,
+            })
+
+        # Select primary reconstruction component (or aligned composite)
         best_recon = max(reconstructions.values(), key=lambda r: len(r.points3D))
 
         # 4. Extract Registered Cameras and Poses
@@ -336,6 +354,7 @@ class SfMEngine:
             "sparse_tracks": sparse_tracks,
             "sparse_points": sparse_pts,
             "sparse_colors": sparse_cols,
+            "sfm_models_audit": models_audit,
             "mean_reprojection_error": round(mean_error, 3),
             "message": (
                 f"Successfully registered {len(camera_poses)} of {num_images} photographs. "
@@ -350,8 +369,6 @@ class SfMEngine:
         progress_cb: Optional[callable],
     ) -> Dict[str, Any]:
         """Fallback OpenCV-based Two-View / Multi-View SfM."""
-        import cv2
-
         cv_features = {
             "draft": 1000,
             "quick": 1500,

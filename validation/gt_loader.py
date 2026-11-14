@@ -14,6 +14,11 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
 
 def load_depth_exr(path: Path) -> np.ndarray:
     """Load a single-channel depth map from an OpenEXR file.
@@ -62,7 +67,8 @@ def load_depth_exr(path: Path) -> np.ndarray:
         return depth
     except ImportError:
         # Fallback to OpenCV if OpenEXR bindings are not available
-        import cv2  # type: ignore
+        if cv2 is None:
+            raise RuntimeError(f"Neither OpenEXR nor OpenCV is available to read EXR: {path}")
 
         img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
         if img is None:
@@ -123,7 +129,8 @@ def load_position_exr(path: Path) -> np.ndarray:
         pos = np.stack([raw_x, raw_y, raw_z], axis=-1).copy()
         return pos
     except ImportError:
-        import cv2  # type: ignore
+        if cv2 is None:
+            raise RuntimeError(f"Neither OpenEXR nor OpenCV is available to read EXR: {path}")
 
         img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
         if img is None:
