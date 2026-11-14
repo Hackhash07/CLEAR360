@@ -336,13 +336,19 @@ class Clear360ViewerWindow(QtWidgets.QMainWindow):
         self.viewport.canvas.events.draw.connect(self._on_canvas_draw)
 
     def _on_phone_display_mode_changed(self, mode: str):
-        """Toggle between solid surface mesh and dense point cloud."""
+        """Toggle between textured mesh, solid surface mesh, and dense point cloud."""
         if mode == "mesh":
             self.viewport.visual_surface_mesh.visible = True
+            self.viewport.visual_textured_mesh.visible = False
             self.viewport.visual_cloud.visible = False
         elif mode == "cloud":
             self.viewport.visual_surface_mesh.visible = False
+            self.viewport.visual_textured_mesh.visible = False
             self.viewport.visual_cloud.visible = True
+        elif mode in ("textured", "texture"):
+            self.viewport.visual_surface_mesh.visible = False
+            self.viewport.visual_textured_mesh.visible = True
+            self.viewport.visual_cloud.visible = False
         self.viewport.request_update()
 
     def _on_phone_mesh_loaded(self, session_id: str, mesh_path: str):

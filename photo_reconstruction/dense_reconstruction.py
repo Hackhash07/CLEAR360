@@ -179,6 +179,7 @@ class DenseReconstructor:
         sparse_points: Optional[np.ndarray] = None,
         sparse_colors: Optional[np.ndarray] = None,
         use_mvs_verification: bool = False,
+        camera_models: Optional[Dict[str, Any]] = None,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Produce a dense 3D point cloud with genuine photographic colors.
@@ -195,6 +196,10 @@ class DenseReconstructor:
             Sparse SfM 3D points to include.
         sparse_colors : Optional[np.ndarray]
             Sparse point colors.
+        use_mvs_verification : bool
+            Whether to enforce multi-view forward-backward geometric consistency.
+        camera_models : Optional[Dict[str, Any]]
+            Calibrated PhoneCameraModel objects per view.
 
         Returns
         -------
@@ -220,12 +225,14 @@ class DenseReconstructor:
                 try:
                     from photo_reconstruction.mvs_consistency import MVSGeometricConsistencyFilter
                     mvs_filter = MVSGeometricConsistencyFilter(
-                        rel_depth_threshold=0.10,
+                        rel_depth_threshold=0.035,
+                        spatial_dist_threshold=0.20,
+                        reproj_threshold_px=2.5,
                         min_consistent_views=1,
                     )
-                    stride = max(4, int(self.voxel_size * 200))
+                    stride = max(4, int(self.voxel_size * 150))
                     mvs_pts, mvs_cols, _ = mvs_filter.filter_points_with_colors(
-                        camera_poses=camera_poses,
+                        camera_models=camera_models if camera_models else camera_poses,
                         depth_maps=depth_maps,
                         image_dir=image_dir,
                         stride=stride,
@@ -253,9 +260,13 @@ class DenseReconstructor:
                     depth = depth_maps[img_name]
 
                     H, W = depth.shape
-                    f = 1.20 * max(W, H)
-                    cx = W / 2.0
-                    cy = H / 2.0
+
+                    # Authoritative calibrated camera model
+                    cam = None
+                    if camera_models and img_name in camera_models:
+                        cam = camera_models[img_name]
+                        if (cam.height, cam.width) != (H, W):
+                            cam = cam.rescale(W, H)
 
                     # Detect outdoor sky mask to avoid turning clouds/sky into solid 3D geometry
                     sky_mask = self.detect_sky_mask(img_bgr)
@@ -283,12 +294,18 @@ class DenseReconstructor:
                     v_val = v_grid[valid]
                     d_val = d[valid]
 
-                    x_c = (u_val - cx) * d_val / f
-                    y_c = (v_val - cy) * d_val / f
-                    z_c = d_val
-
-                    pts_cam = np.column_stack([x_c, y_c, z_c, np.ones_like(z_c)])
-                    pts_world = (T_world_cam @ pts_cam.T).T[:, :3]
+                    if cam is not None:
+                        pix_2d = np.column_stack([u_val, v_val])
+                        pts_world = cam.unproject_image_to_world(pix_2d, d_val)
+                    else:
+                        f = 1.20 * max(W, H)
+                        cx = W / 2.0
+                        cy = H / 2.0
+                        x_c = (u_val - cx) * d_val / f
+                        y_c = (v_val - cy) * d_val / f
+                        z_c = d_val
+                        pts_cam = np.column_stack([x_c, y_c, z_c, np.ones_like(z_c)])
+                        pts_world = (T_world_cam @ pts_cam.T).T[:, :3]
 
                     cols = img_rgb[v_val, u_val].astype(np.float32) / 255.0
 

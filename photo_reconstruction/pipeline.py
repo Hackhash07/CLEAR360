@@ -95,6 +95,8 @@ class PhoneReconstructionPipeline:
         reference_distance_m: Optional[float] = None,
         progress_cb: Optional[Callable[[int, str], None]] = None,
         quality_preset: Optional[str] = None,
+        mesh_method: Optional[str] = None,
+        use_mvs: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """
         Execute full photogrammetry pipeline on a collection of smartphone images.
@@ -232,19 +234,55 @@ class PhoneReconstructionPipeline:
         DenseReconstructor.save_point_cloud_ply(sparse_pts, sparse_cols, sparse_dir / "sparse_cloud.ply")
 
         # 4. Dense Point Cloud Reconstruction
-        update_progress(65, f"Generating dense 3D point cloud with surface normals ({preset_cfg['voxel_size']}m voxel)...")
+        update_progress(60, f"Generating dense 3D point cloud ({preset_cfg['voxel_size']}m voxel)...")
         from photo_reconstruction.depth_helper import IsolatedDepthEstimator
         reg_paths = [img_target_dir / name for name in camera_poses.keys()]
         depth_maps = IsolatedDepthEstimator.estimate_depths_for_images(reg_paths, session_dir / "depth_cache")
 
+        # Robust per-view SfM-scale depth alignment (held-out validation)
+        camera_models = sfm_res.get("camera_models", {})
+        sparse_tracks = sfm_res.get("sparse_tracks", {})
+        if depth_maps and camera_models and sparse_tracks:
+            update_progress(65, "Aligning monocular depth scale to SfM coordinate frame (held-out validation)...")
+            from photo_reconstruction.depth_aligner import SfMDepthAligner
+            aligner = SfMDepthAligner(mode="regularized")
+            align_res = aligner.align_depth_maps(
+                depth_maps=depth_maps,
+                camera_models=camera_models,
+                sparse_tracks=sparse_tracks,
+            )
+            depth_maps = align_res.aligned_depth_maps
+
+            # Save depth alignment diagnostics
+            align_diag = {
+                "mode": align_res.mode,
+                "global_scale": float(align_res.global_scale),
+                "total_anchors": int(align_res.total_anchors),
+                "views": {
+                    name: {
+                        "anchors": s.num_anchors,
+                        "scale": float(s.median_scale),
+                        "mad": float(s.mad_scale),
+                        "raw_residual": float(s.raw_residual_median),
+                        "aligned_residual": float(s.aligned_residual_median),
+                        "reduction_pct": float(s.residual_reduction_pct),
+                    }
+                    for name, s in align_res.view_stats.items()
+                },
+            }
+            with open(session_dir / "depth_alignment_report.json", "w") as f_diag:
+                json.dump(align_diag, f_diag, indent=2)
+
         dense_engine = DenseReconstructor(voxel_size=preset_cfg["voxel_size"])
+        mvs_flag = use_mvs if use_mvs is not None else preset_cfg.get("use_mvs_verification", False)
         dense_pts, dense_cols, dense_norms = dense_engine.reconstruct_dense(
             image_dir=img_target_dir,
             camera_poses=camera_poses,
             depth_maps=depth_maps if depth_maps else None,
             sparse_points=sparse_pts,
             sparse_colors=sparse_cols,
-            use_mvs_verification=preset_cfg.get("use_mvs_verification", False),
+            use_mvs_verification=mvs_flag,
+            camera_models=camera_models,
         )
 
         # Auto-Upright Ground Plane Alignment (Gravity Alignment)
@@ -255,6 +293,11 @@ class PhoneReconstructionPipeline:
             camera_poses=camera_poses,
             sparse_points=sparse_pts,
         )
+        if camera_models:
+            for c_name in camera_models:
+                if c_name in camera_poses:
+                    camera_models[c_name].T_world_cam = camera_poses[c_name]
+                    camera_models[c_name].T_cam_world = np.linalg.inv(camera_poses[c_name])
 
         # Re-save aligned camera poses and sparse cloud in unified upright frame
         for img_name, pose_mat in camera_poses.items():
@@ -266,25 +309,69 @@ class PhoneReconstructionPipeline:
         DenseReconstructor.save_point_cloud_ply(dense_pts, dense_cols, dense_ply, normals=dense_norms)
 
         # 5. 3D Surface Meshing
-        update_progress(80, f"Building continuous 3D surface mesh (Poisson depth {preset_cfg['poisson_depth']})...")
-        mesh_builder = MeshBuilder(method="poisson", poisson_depth=preset_cfg["poisson_depth"])
+        chosen_method = mesh_method if mesh_method is not None else preset_cfg.get("mesh_method", "poisson")
+        update_progress(80, f"Building 3D surface mesh using {chosen_method.upper()} meshing algorithm...")
+        mesh_builder = MeshBuilder(method=chosen_method, poisson_depth=preset_cfg["poisson_depth"])
         mesh_v, mesh_f, mesh_c, mesh_n = mesh_builder.build_mesh(dense_pts, dense_cols, dense_norms)
 
         # 6. Metric Scale Recovery (if reference distance provided)
         if reference_distance_m is not None and reference_distance_m > 0 and len(mesh_v) >= 2:
             update_progress(90, f"Applying metric scale calibration ({reference_distance_m:.2f} m)...")
-            # Use extreme bounding box extent as baseline reference if specific points not specified
             pt_min = mesh_v.min(axis=0)
             pt_max = mesh_v.max(axis=0)
             self.scale_calibrator.compute_scale(pt_min, pt_max, reference_distance_m, reference_label="Bounding Box Extent")
             mesh_v, camera_poses = self.scale_calibrator.apply_scale(mesh_v, camera_poses)
             dense_pts, _ = self.scale_calibrator.apply_scale(dense_pts)
+            if camera_models:
+                for c_name in camera_models:
+                    if c_name in camera_poses:
+                        camera_models[c_name].T_world_cam = camera_poses[c_name]
+                        camera_models[c_name].T_cam_world = np.linalg.inv(camera_poses[c_name])
 
-        # Save Meshes (both PLY and OBJ)
+        # 7. Visibility-Aware Photogrammetric Texturing
         mesh_ply = mesh_dir / "scene_mesh.ply"
         mesh_obj = mesh_dir / "scene_mesh.obj"
+        update_progress(92, "Synthesizing visibility-aware UV texture mapping and packed texture atlas...")
+
+        import cv2
+        from photo_reconstruction.texture_engine import VisibilityAwareTextureEngine
+        tex_engine = VisibilityAwareTextureEngine(atlas_size=4096)
+        img_dict = {}
+        for p in copied_paths:
+            if p.name in camera_models:
+                bgr = cv2.imread(str(p))
+                if bgr is not None:
+                    img_dict[p.name] = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+        textured_ok = False
+        if img_dict and len(mesh_f) > 0 and camera_models:
+            try:
+                tex_v, tex_f, tex_uv, tex_atlas, tex_rep = tex_engine.texture_mesh(
+                    vertices=mesh_v,
+                    faces=mesh_f,
+                    camera_models=camera_models,
+                    images=img_dict,
+                    depth_maps=depth_maps,
+                    out_dir=mesh_dir,
+                    base_name="scene_mesh",
+                )
+                with open(session_dir / "texturing_report.json", "w") as f_tex:
+                    json.dump({
+                        "total_faces": tex_rep.total_faces,
+                        "textured_faces": tex_rep.textured_faces,
+                        "coverage_percentage": tex_rep.coverage_percentage,
+                        "atlas_width": tex_rep.atlas_width,
+                        "atlas_height": tex_rep.atlas_height,
+                        "camera_face_distribution": tex_rep.camera_face_distribution,
+                    }, f_tex, indent=2)
+                textured_ok = True
+            except Exception as e:
+                print(f"Warning: Visibility texturing fallback: {e}")
+
+        if not textured_ok:
+            MeshBuilder.save_mesh_obj(mesh_v, mesh_f, mesh_c, mesh_obj)
+
         MeshBuilder.save_mesh_ply(mesh_v, mesh_f, mesh_c, mesh_ply, normals=mesh_n)
-        MeshBuilder.save_mesh_obj(mesh_v, mesh_f, mesh_c, mesh_obj)
 
         # 7. Quality Report Compilation
         update_progress(95, "Compiling reconstruction quality report...")
@@ -370,6 +457,18 @@ def main():
         default=None,
         help="Optional known physical reference distance in metres for metric scale calibration.",
     )
+    parser.add_argument(
+        "--mesh-method",
+        "-m",
+        choices=["bpa", "poisson", "hybrid"],
+        default=None,
+        help="Surface meshing method: 'bpa' (multi-radius ball-pivoting), 'poisson', or 'hybrid'.",
+    )
+    parser.add_argument(
+        "--mvs",
+        action="store_true",
+        help="Enable multi-view forward-backward geometric consistency verification.",
+    )
 
     args = parser.parse_args()
 
@@ -413,6 +512,8 @@ def main():
         session_id=args.session,
         reference_distance_m=args.distance,
         progress_cb=cli_progress,
+        mesh_method=args.mesh_method,
+        use_mvs=args.mvs if args.mvs else None,
     )
 
     print("\n----------------------------------------------------------------")

@@ -276,6 +276,34 @@ class SfMEngine:
         all_names = set(img.name for img in images)
         failed_names = sorted(list(all_names - registered_names))
 
+        # Build Authoritative PhoneCameraModel and 2D-3D observation tracks
+        camera_models: Dict[str, Any] = {}
+        sparse_tracks: Dict[str, List[Dict[str, Any]]] = {}
+        from photo_reconstruction.camera_model import PhoneCameraModel
+
+        for img_id, image in best_recon.images.items():
+            if image.name in camera_poses:
+                cam = best_recon.cameras[image.camera_id]
+                camera_models[image.name] = PhoneCameraModel.from_colmap_camera(
+                    cam=cam,
+                    image_name=image.name,
+                    T_world_cam=camera_poses[image.name],
+                )
+
+                img_tracks = []
+                for p2d in image.points2D:
+                    if p2d.has_point3D():
+                        p3d_id = p2d.point3D_id
+                        if p3d_id in best_recon.points3D:
+                            p3d = best_recon.points3D[p3d_id]
+                            img_tracks.append({
+                                "xy": (float(p2d.xy[0]), float(p2d.xy[1])),
+                                "xyz": (float(p3d.xyz[0]), float(p3d.xyz[1]), float(p3d.xyz[2])),
+                                "error": float(p3d.error),
+                                "point3D_id": int(p3d_id),
+                            })
+                sparse_tracks[image.name] = img_tracks
+
         # 5. Extract 3D Points
         pts_list = []
         cols_list = []
@@ -304,6 +332,8 @@ class SfMEngine:
             "total_images": num_images,
             "failed_images": failed_names,
             "camera_poses": camera_poses,
+            "camera_models": camera_models,
+            "sparse_tracks": sparse_tracks,
             "sparse_points": sparse_pts,
             "sparse_colors": sparse_cols,
             "mean_reprojection_error": round(mean_error, 3),
@@ -551,12 +581,38 @@ class SfMEngine:
         sparse_pts = np.vstack(all_pts3d) if all_pts3d else np.zeros((0, 3), dtype=np.float32)
         sparse_cols = np.ones((len(sparse_pts), 3), dtype=np.float32) * 0.7
 
+        from photo_reconstruction.camera_model import PhoneCameraModel
+        camera_models = {}
+        sparse_tracks = {}
+        for name, pose in camera_poses.items():
+            h_im, w_im = imgs_rgb[name].shape[:2] if name in imgs_rgb else (1067, 1600)
+            fx = float(K[0, 0])
+            fy = float(K[1, 1])
+            cx = float(K[0, 2])
+            cy = float(K[1, 2])
+            camera_models[name] = PhoneCameraModel(
+                name=name,
+                model_name="PINHOLE",
+                width=w_im,
+                height=h_im,
+                params=np.array([fx, fy, cx, cy], dtype=np.float64),
+                fx=fx,
+                fy=fy,
+                cx=cx,
+                cy=cy,
+                T_world_cam=pose,
+                T_cam_world=np.linalg.inv(pose),
+            )
+            sparse_tracks[name] = []
+
         return {
             "success": len(camera_poses) >= 2,
             "registered_count": len(camera_poses),
             "total_images": len(images),
             "failed_images": failed_names,
             "camera_poses": camera_poses,
+            "camera_models": camera_models,
+            "sparse_tracks": sparse_tracks,
             "sparse_points": sparse_pts,
             "sparse_colors": sparse_cols,
             "mean_reprojection_error": 1.25,

@@ -651,8 +651,43 @@ class Clear360Viewport(QtWidgets.QWidget):
         self.visual_textured_mesh.visible = False
         self.visual_vehicle.visible = False  # Independent photogrammetry environment
 
-        # Load and display authentic dense colored point cloud if available in session
+        # Attempt to load high-resolution projective texture atlas (M7.3.2)
         session_dir = p.parent.parent
+        atlas_png = session_dir / "mesh" / "scene_mesh.png"
+        obj_file = session_dir / "mesh" / "scene_mesh.obj"
+        if atlas_png.exists() and obj_file.exists():
+            try:
+                import cv2
+                from vispy.visuals.filters import TextureFilter
+                tex_bgr = cv2.imread(str(atlas_png))
+                if tex_bgr is not None:
+                    tex_rgb = cv2.cvtColor(tex_bgr, cv2.COLOR_BGR2RGB)
+                    # Load vertex and UV coordinates from OBJ
+                    obj_v, obj_vt, obj_f = [], [], []
+                    with open(obj_file, "r") as f_obj:
+                        for line in f_obj:
+                            if line.startswith("v "):
+                                obj_v.append([float(x) for x in line.split()[1:4]])
+                            elif line.startswith("vt "):
+                                obj_vt.append([float(x) for x in line.split()[1:3]])
+                            elif line.startswith("f "):
+                                parts = line.split()[1:4]
+                                obj_f.append([int(pt.split("/")[0]) - 1 for pt in parts])
+                    if len(obj_v) > 0 and len(obj_vt) == len(obj_v) and len(obj_f) > 0:
+                        t_verts = np.asarray(obj_v, dtype=np.float32)
+                        t_faces = np.asarray(obj_f, dtype=np.uint32)
+                        t_uvs = np.asarray(obj_vt, dtype=np.float32)
+                        self.visual_textured_mesh.set_data(vertices=t_verts, faces=t_faces, color="white")
+                        if self.texture_filter is None:
+                            self.texture_filter = TextureFilter(texture=tex_rgb, texcoords=t_uvs)
+                            self.visual_textured_mesh.attach(self.texture_filter)
+                        else:
+                            self.texture_filter.texture = tex_rgb
+                            self.texture_filter.texcoords = t_uvs
+                        self.visual_textured_mesh.visible = True
+                        self.visual_surface_mesh.visible = False
+            except Exception as e:
+                print(f"Notice: Texture loading fallback to vertex-colored surface mesh: {e}")
         dense_p = session_dir / "dense_cloud" / "dense_cloud.ply"
         if dense_p.exists():
             pcd = o3d.io.read_point_cloud(str(dense_p))

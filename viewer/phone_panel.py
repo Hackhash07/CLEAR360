@@ -283,15 +283,23 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         grp_sess_layout.addWidget(lbl_display)
 
         display_row = QtWidgets.QHBoxLayout()
-        self.btn_view_mesh = QtWidgets.QPushButton("🧊 Surface Mesh")
+        self.btn_view_tex = QtWidgets.QPushButton("🎨 Textured")
+        self.btn_view_tex.setCheckable(True)
+        self.btn_view_tex.setChecked(True)
+        self.btn_view_tex.setStyleSheet(
+            "background-color: #10b981; color: #ffffff; font-weight: bold; padding: 6px; border-radius: 4px;"
+        )
+        self.btn_view_tex.clicked.connect(lambda: self._on_display_mode_clicked("textured"))
+
+        self.btn_view_mesh = QtWidgets.QPushButton("🧊 Surface")
         self.btn_view_mesh.setCheckable(True)
-        self.btn_view_mesh.setChecked(True)
+        self.btn_view_mesh.setChecked(False)
         self.btn_view_mesh.setStyleSheet(
-            "background-color: #8b5cf6; color: #ffffff; font-weight: bold; padding: 6px; border-radius: 4px;"
+            "background-color: #334155; color: #cbd5e1; font-weight: bold; padding: 6px; border-radius: 4px;"
         )
         self.btn_view_mesh.clicked.connect(lambda: self._on_display_mode_clicked("mesh"))
 
-        self.btn_view_cloud = QtWidgets.QPushButton("🔍 Point Cloud")
+        self.btn_view_cloud = QtWidgets.QPushButton("🔍 Cloud")
         self.btn_view_cloud.setCheckable(True)
         self.btn_view_cloud.setChecked(False)
         self.btn_view_cloud.setStyleSheet(
@@ -299,6 +307,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         )
         self.btn_view_cloud.clicked.connect(lambda: self._on_display_mode_clicked("cloud"))
 
+        display_row.addWidget(self.btn_view_tex)
         display_row.addWidget(self.btn_view_mesh)
         display_row.addWidget(self.btn_view_cloud)
         grp_sess_layout.addLayout(display_row)
@@ -593,21 +602,17 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.display_mode_changed.emit(mode)
 
     def set_display_mode(self, mode: str):
-        if mode == "mesh":
-            self.btn_view_mesh.setChecked(True)
-            self.btn_view_cloud.setChecked(False)
-            self.btn_view_mesh.setStyleSheet(
-                "background-color: #8b5cf6; color: #ffffff; font-weight: bold; padding: 6px; border-radius: 4px;"
-            )
-            self.btn_view_cloud.setStyleSheet(
-                "background-color: #334155; color: #cbd5e1; font-weight: bold; padding: 6px; border-radius: 4px;"
-            )
-        elif mode == "cloud":
-            self.btn_view_mesh.setChecked(False)
-            self.btn_view_cloud.setChecked(True)
-            self.btn_view_mesh.setStyleSheet(
-                "background-color: #334155; color: #cbd5e1; font-weight: bold; padding: 6px; border-radius: 4px;"
-            )
-            self.btn_view_cloud.setStyleSheet(
-                "background-color: #0284c7; color: #ffffff; font-weight: bold; padding: 6px; border-radius: 4px;"
-            )
+        active_style = "color: #ffffff; font-weight: bold; padding: 6px; border-radius: 4px;"
+        inactive_style = "background-color: #334155; color: #cbd5e1; font-weight: bold; padding: 6px; border-radius: 4px;"
+
+        is_tex = mode in ("textured", "texture")
+        is_mesh = mode == "mesh"
+        is_cloud = mode == "cloud"
+
+        self.btn_view_tex.setChecked(is_tex)
+        self.btn_view_mesh.setChecked(is_mesh)
+        self.btn_view_cloud.setChecked(is_cloud)
+
+        self.btn_view_tex.setStyleSheet(f"background-color: #10b981; {active_style}" if is_tex else inactive_style)
+        self.btn_view_mesh.setStyleSheet(f"background-color: #8b5cf6; {active_style}" if is_mesh else inactive_style)
+        self.btn_view_cloud.setStyleSheet(f"background-color: #0284c7; {active_style}" if is_cloud else inactive_style)
