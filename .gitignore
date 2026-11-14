@@ -13,6 +13,7 @@ data/photoreal_ai_depth/
 data/photoreal_calib_depth/
 data/photoreal_gt_position/
 data/ai_depth/
+test_samples/
 *.obj
 *.ply
 *.npy

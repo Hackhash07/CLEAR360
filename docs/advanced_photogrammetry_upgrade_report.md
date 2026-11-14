@@ -258,3 +258,4 @@ PYTHONPATH=. pytest photo_reconstruction/tests/
 3. **Hardware-Accurate Pipeline Architecture**:
    - Upstream COLMAP's CUDA/HIP PatchMatch requirement on Apple Silicon is fully documented and bypassed through CPU-native multi-view geometric consistency filtering.
 4. **All 24 Tests Passing**: Zero regressions across automotive surround view and phone photogrammetry workflows.
+
