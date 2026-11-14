@@ -112,7 +112,13 @@ class DenseReconstructor:
                     v_grid, u_grid = np.mgrid[0:H:s, 0:W:s]
                     d = depth[v_grid, u_grid]
 
-                    valid = (d > 0.2) & (d < 30.0)
+                    valid_d = d[d > 0.2]
+                    if len(valid_d) == 0:
+                        continue
+                    med_d = float(np.median(valid_d))
+                    max_d = min(25.0, max(6.0, med_d * 3.5))
+
+                    valid = (d > 0.2) & (d < max_d)
                     if not np.any(valid):
                         continue
 

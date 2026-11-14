@@ -478,9 +478,36 @@ class SfMEngine:
                         continue
                     _, R_c, t_c, _ = cv2.recoverPose(E_c, cand_pts_reg, cand_pts_cand, K, mask=mask_c)
 
+                    # Scale consistency enforcement against existing triangulated scene points
+                    inliers_reg = cand_pts_reg[mask_c.ravel() > 0]
+                    inliers_cand = cand_pts_cand[mask_c.ravel() > 0]
+                    scale_factor = 1.0
+
+                    if len(inliers_reg) >= 8:
+                        P1 = K @ np.hstack([np.eye(3), np.zeros((3, 1))])
+                        P2 = K @ np.hstack([R_c, t_c])
+                        pts4d = cv2.triangulatePoints(P1, P2, inliers_reg.T, inliers_cand.T)
+                        w = pts4d[3]
+                        valid_w = np.abs(w) > 1e-5
+                        if np.any(valid_w):
+                            pts3d_pair = (pts4d[:3, valid_w] / w[valid_w]).T
+                            z_reg = pts3d_pair[:, 2]
+                            valid_z = (z_reg > 0.1) & (z_reg < 50.0)
+                            if np.sum(valid_z) >= 5:
+                                med_z_new = float(np.median(z_reg[valid_z]))
+                                if all_pts3d:
+                                    curr_pts = np.vstack(all_pts3d)
+                                    C_reg = camera_poses[reg_name][:3, 3]
+                                    dists = np.linalg.norm(curr_pts - C_reg, axis=1)
+                                    med_z_exist = float(np.median(dists)) if len(dists) > 0 else med_z_new
+                                    if med_z_new > 1e-3 and med_z_exist > 1e-3:
+                                        scale_factor = float(np.clip(med_z_exist / med_z_new, 0.05, 5.0))
+
+                    t_c_scaled = t_c.ravel() * scale_factor
+
                     T_cand_reg = np.eye(4, dtype=np.float64)
                     T_cand_reg[:3, :3] = R_c
-                    T_cand_reg[:3, 3] = t_c.ravel()
+                    T_cand_reg[:3, 3] = t_c_scaled
                     T_reg_cand = np.linalg.inv(T_cand_reg)
 
                     T_world_cand = camera_poses[reg_name] @ T_reg_cand
