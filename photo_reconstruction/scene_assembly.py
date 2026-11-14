@@ -89,8 +89,8 @@ class RegionSceneAssembler:
         cols = colors.astype(np.float32)
         norms = normals.astype(np.float32)
 
-        # 1. Foreground Pavement: ground plane at Z < 0.55m
-        mask_pavement = pts[:, 2] < 0.55
+        # 1. Foreground Pavement: ground plane at Z < 0.55m within physical courtyard bounds
+        mask_pavement = (pts[:, 2] < 0.55) & (pts[:, 1] <= 10.5) & (np.abs(pts[:, 0]) <= 5.0)
 
         # 2. Central Sculpture: statue within niche forward of the niche back wall
         # Coordinates: X in [0.40, 1.30], Y in [7.50, 8.30], Z in [1.95, 2.95]
@@ -118,10 +118,13 @@ class RegionSceneAssembler:
             & (pts[:, 2] >= 1.2) & (pts[:, 2] <= 5.2)
         )
 
-        # 5. Background Brick Wall: points near wall plane Y >= 8.4
+        # 5. Background Brick Wall: points near physical courtyard wall plane
+        # Strictly bounded to courtyard wall: Y in [8.10, 9.80], |X| <= 3.80
         mask_wall = (
             (~mask_pavement) & (~mask_sculpture) & (~mask_basin) & (~mask_frame)
-            & (pts[:, 1] >= 8.35) & (pts[:, 2] >= 0.55)
+            & (pts[:, 1] >= 8.10) & (pts[:, 1] <= 9.80)
+            & (np.abs(pts[:, 0]) <= 3.80)
+            & (pts[:, 2] >= 0.55)
         )
 
         # 6. Adjacent Architecture: lateral wings and surrounding structures
@@ -211,14 +214,15 @@ class RegionSceneAssembler:
         tri2d = Delaunay(pts[:, [0, 2]])
         faces = tri2d.simplices.astype(np.uint32)
 
-        # Filter long boundary sliver edges
+        # Filter long boundary sliver edges and depth steps
         v0 = pts[faces[:, 0]]
         v1 = pts[faces[:, 1]]
         v2 = pts[faces[:, 2]]
         e0 = np.linalg.norm(v1 - v0, axis=1)
         e1 = np.linalg.norm(v2 - v1, axis=1)
         e2 = np.linalg.norm(v0 - v2, axis=1)
-        valid = (e0 < max_edge_len) & (e1 < max_edge_len) & (e2 < max_edge_len)
+        delta_y = np.maximum.reduce([v0[:, 1], v1[:, 1], v2[:, 1]]) - np.minimum.reduce([v0[:, 1], v1[:, 1], v2[:, 1]])
+        valid = (e0 < max_edge_len) & (e1 < max_edge_len) & (e2 < max_edge_len) & (delta_y < 0.35)
         clean_faces = faces[valid]
 
         # Enforce consistent forward-facing normal (-Y)
@@ -250,15 +254,15 @@ class RegionSceneAssembler:
             radii = [0.025, 0.050, 0.090]
 
         cam_c = np.array([0.0, 0.0, 2.1], dtype=np.float32)
-        # Orient point normals towards camera line-of-sight
-        los = cam_c - points
-        flip = np.sum(normals * los, axis=1) < 0
-        norms_oriented = normals.copy()
-        norms_oriented[flip] = -norms_oriented[flip]
-
         pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points.astype(np.float64)))
-        pcd.normals = o3d.utility.Vector3dVector(norms_oriented.astype(np.float64))
         pcd = pcd.voxel_down_sample(voxel_size=0.015)
+        pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.08, max_nn=30))
+        pcd_pts = np.asarray(pcd.points, dtype=np.float32)
+        pcd_norms = np.asarray(pcd.normals, dtype=np.float32)
+        los = cam_c - pcd_pts
+        flip = np.sum(pcd_norms * los, axis=1) < 0
+        pcd_norms[flip] = -pcd_norms[flip]
+        pcd.normals = o3d.utility.Vector3dVector(pcd_norms.astype(np.float64))
 
         mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
             pcd, o3d.utility.DoubleVector(radii)
@@ -301,14 +305,15 @@ class RegionSceneAssembler:
             radii = [0.035, 0.065, 0.110]
 
         cam_c = np.array([0.0, 0.0, 2.1], dtype=np.float32)
-        los = cam_c - points
-        flip = np.sum(normals * los, axis=1) < 0
-        norms_oriented = normals.copy()
-        norms_oriented[flip] = -norms_oriented[flip]
-
         pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points.astype(np.float64)))
-        pcd.normals = o3d.utility.Vector3dVector(norms_oriented.astype(np.float64))
         pcd = pcd.voxel_down_sample(voxel_size=0.025)
+        pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.10, max_nn=30))
+        pcd_pts = np.asarray(pcd.points, dtype=np.float32)
+        pcd_norms = np.asarray(pcd.normals, dtype=np.float32)
+        los = cam_c - pcd_pts
+        flip = np.sum(pcd_norms * los, axis=1) < 0
+        pcd_norms[flip] = -pcd_norms[flip]
+        pcd.normals = o3d.utility.Vector3dVector(pcd_norms.astype(np.float64))
 
         mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
             pcd, o3d.utility.DoubleVector(radii)
@@ -347,14 +352,15 @@ class RegionSceneAssembler:
             radii = [0.050, 0.100, 0.180]
 
         cam_c = np.array([0.0, 0.0, 2.1], dtype=np.float32)
-        los = cam_c - points
-        flip = np.sum(normals * los, axis=1) < 0
-        norms_oriented = normals.copy()
-        norms_oriented[flip] = -norms_oriented[flip]
-
         pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points.astype(np.float64)))
-        pcd.normals = o3d.utility.Vector3dVector(norms_oriented.astype(np.float64))
         pcd = pcd.voxel_down_sample(voxel_size=0.035)
+        pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.12, max_nn=30))
+        pcd_pts = np.asarray(pcd.points, dtype=np.float32)
+        pcd_norms = np.asarray(pcd.normals, dtype=np.float32)
+        los = cam_c - pcd_pts
+        flip = np.sum(pcd_norms * los, axis=1) < 0
+        pcd_norms[flip] = -pcd_norms[flip]
+        pcd.normals = o3d.utility.Vector3dVector(pcd_norms.astype(np.float64))
 
         mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
             pcd, o3d.utility.DoubleVector(radii)

@@ -430,6 +430,37 @@ class PhoneReconstructionPipeline:
         )
         QualityReportGenerator.save_report_json(report, session_dir / "report.json")
 
+        # 8. M7.3.7 Global Camera Pose Graph, Reprojection Validation & Scene Manifest
+        try:
+            from photo_reconstruction.m7_3_7_pose_graph import (
+                GlobalCameraPoseGraphAuditor,
+                CameraReprojectionValidator,
+                GlobalSceneManifestAuthor,
+            )
+            auditor = GlobalCameraPoseGraphAuditor(session_dir)
+            cam_audit = auditor.audit_cameras()
+            pose_graph = auditor.build_pose_graph()
+            validator = CameraReprojectionValidator(session_dir)
+            reproj_stats = validator.validate_and_generate_overlays(session_dir / "reprojection_overlays")
+
+            scene_graph_file = session_dir / "scene_graph.json"
+            regions_dict = {}
+            if scene_graph_file.exists():
+                with open(scene_graph_file) as f_sg:
+                    sg_data = json.load(f_sg)
+                    regions_dict = sg_data.get("regions", {})
+
+            GlobalSceneManifestAuthor.create_manifest(
+                session_id=current_session_id,
+                camera_audit=cam_audit,
+                pose_graph=pose_graph,
+                reprojection_stats=reproj_stats,
+                scene_regions=regions_dict,
+                output_file=session_dir / "global_scene_manifest.json",
+            )
+        except Exception as e:
+            print(f"Notice: M7.3.7 manifest generation: {e}")
+
         update_progress(100, f"Photogrammetry complete ({t_total:.1f} s). Model saved to {session_dir.name}.")
 
         return {
