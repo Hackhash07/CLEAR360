@@ -57,34 +57,42 @@ class MeshBuilder:
         pcd.points = o3d.utility.Vector3dVector(points.astype(np.float64))
         pcd.colors = o3d.utility.Vector3dVector(colors.astype(np.float64))
         pcd.normals = o3d.utility.Vector3dVector(normals.astype(np.float64))
+        pcd.remove_non_finite_points()
+        pcd.normalize_normals()
 
+        mesh = None
         if self.method == "poisson":
-            mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-                pcd, depth=self.poisson_depth
-            )
-            # 1. Filter low density vertices to remove outer boundary envelope
-            dens = np.asarray(densities)
-            if len(dens) > 0:
-                thresh = np.quantile(dens, max(0.12, self.density_quantile))
-                mesh.remove_vertices_by_mask(dens < thresh)
+            try:
+                # Force n_threads=1 to prevent OpenMP POSIX mutex locking collisions on macOS ARM64
+                mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+                    pcd, depth=self.poisson_depth, n_threads=1
+                )
+                # 1. Filter low density vertices to remove outer boundary envelope
+                dens = np.asarray(densities)
+                if len(dens) > 0:
+                    thresh = np.quantile(dens, max(0.12, self.density_quantile))
+                    mesh.remove_vertices_by_mask(dens < thresh)
 
-            # 2. Prune phantom Poisson bubble extrapolation far from actual point cloud
-            if len(mesh.vertices) > 0 and len(pcd.points) > 10:
-                pcd_tree = o3d.geometry.KDTreeFlann(pcd)
-                mesh_v = np.asarray(mesh.vertices)
-                nn_dist = float(np.mean(pcd.compute_nearest_neighbor_distance()))
-                max_allowed_dist = max(0.08, nn_dist * 3.5)
+                # 2. Prune phantom Poisson bubble extrapolation far from actual point cloud
+                if len(mesh.vertices) > 0 and len(pcd.points) > 10:
+                    pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+                    mesh_v = np.asarray(mesh.vertices)
+                    nn_dist = float(np.mean(pcd.compute_nearest_neighbor_distance()))
+                    max_allowed_dist = max(0.08, nn_dist * 3.5)
 
-                remove_phantom = np.zeros(len(mesh_v), dtype=bool)
-                for i, v in enumerate(mesh_v):
-                    [k, idx, dist_sq] = pcd_tree.search_knn_vector_3d(v, 1)
-                    if k == 0 or np.sqrt(dist_sq[0]) > max_allowed_dist:
-                        remove_phantom[i] = True
-                mesh.remove_vertices_by_mask(remove_phantom)
-        else:
-            # Ball-Pivoting Algorithm
+                    remove_phantom = np.zeros(len(mesh_v), dtype=bool)
+                    for i, v in enumerate(mesh_v):
+                        [k, idx, dist_sq] = pcd_tree.search_knn_vector_3d(v, 1)
+                        if k == 0 or np.sqrt(dist_sq[0]) > max_allowed_dist:
+                            remove_phantom[i] = True
+                    mesh.remove_vertices_by_mask(remove_phantom)
+            except Exception:
+                mesh = None
+
+        if mesh is None or len(mesh.vertices) == 0:
+            # Robust Ball-Pivoting Algorithm (BPA) fallback
             distances = pcd.compute_nearest_neighbor_distance()
-            avg_dist = float(np.mean(distances))
+            avg_dist = float(np.mean(distances)) if len(distances) > 0 else 0.05
             radii = [avg_dist, avg_dist * 2.0, avg_dist * 4.0]
             mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
                 pcd, o3d.utility.DoubleVector(radii)
