@@ -246,6 +246,22 @@ class PhoneReconstructionPipeline:
             sparse_colors=sparse_cols,
             use_mvs_verification=preset_cfg.get("use_mvs_verification", False),
         )
+
+        # Auto-Upright Ground Plane Alignment (Gravity Alignment)
+        update_progress(75, "Auto-aligning ground plane and upright orientation...")
+        dense_pts, dense_norms, camera_poses, sparse_pts, T_align = DenseReconstructor.align_ground_upright(
+            points=dense_pts,
+            normals=dense_norms,
+            camera_poses=camera_poses,
+            sparse_points=sparse_pts,
+        )
+
+        # Re-save aligned camera poses and sparse cloud in unified upright frame
+        for img_name, pose_mat in camera_poses.items():
+            np.save(poses_dir / f"{Path(img_name).stem}_pose.npy", pose_mat)
+        if sparse_pts is not None and len(sparse_pts) > 0:
+            DenseReconstructor.save_point_cloud_ply(sparse_pts, sparse_cols, sparse_dir / "sparse_cloud.ply")
+
         dense_ply = dense_dir / "dense_cloud.ply"
         DenseReconstructor.save_point_cloud_ply(dense_pts, dense_cols, dense_ply, normals=dense_norms)
 

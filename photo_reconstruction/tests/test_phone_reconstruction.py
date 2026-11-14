@@ -220,3 +220,55 @@ def test_mvs_geometric_consistency_filter():
     assert np.all(counts >= 1)
 
 
+def test_sky_mask_detection():
+    """Verify outdoor sky detection correctly masks blue sky connected to top."""
+    from photo_reconstruction.dense_reconstruction import DenseReconstructor
+    # Create synthetic image with blue sky in top half and green grass in bottom half
+    img = np.zeros((200, 200, 3), dtype=np.uint8)
+    # BGR: blue sky is high B, medium G, low R (e.g. 235, 180, 70)
+    img[:100, :] = [235, 180, 70]
+    # Green grass in bottom half (e.g. 30, 160, 40)
+    img[100:, :] = [30, 160, 40]
+
+    mask = DenseReconstructor.detect_sky_mask(img)
+    assert mask.shape == (200, 200)
+    # Top 80 rows should be detected as sky
+    assert np.mean(mask[:80, :]) > 0.90
+    # Bottom half (grass) should NOT be detected as sky
+    assert np.mean(mask[120:, :]) < 0.05
+
+
+def test_align_ground_upright():
+    """Verify auto-upright ground plane alignment aligns tilted plane to +Z (Z=0)."""
+    from photo_reconstruction.dense_reconstruction import DenseReconstructor
+
+    # Create ground plane with some points at Y = 2.0 (tilted in COLMAP frame)
+    rng = np.random.RandomState(42)
+    x = rng.uniform(-5, 5, 200)
+    z = rng.uniform(-5, 5, 200)
+    y = np.ones(200) * 2.0 + rng.normal(0, 0.02, 200)
+    ground_pts = np.column_stack([x, y, z])
+
+    # Structure points extending above ground (in COLMAP, -Y is up, so Y in [0, 2])
+    struct_x = rng.uniform(-2, 2, 100)
+    struct_z = rng.uniform(-2, 2, 100)
+    struct_y = rng.uniform(0.0, 1.8, 100)
+    struct_pts = np.column_stack([struct_x, struct_y, struct_z])
+
+    pts = np.vstack([ground_pts, struct_pts]).astype(np.float32)
+    norms = np.tile([0.0, -1.0, 0.0], (len(pts), 1)).astype(np.float32)
+    cam_pose = {"cam1.jpg": np.eye(4)}
+
+    aligned_pts, aligned_norms, new_poses, _, T_align = DenseReconstructor.align_ground_upright(
+        points=pts, normals=norms, camera_poses=cam_pose
+    )
+
+    # After alignment, ground plane Z should be approximately 0.0
+    ground_z_aligned = aligned_pts[:200, 2]
+    assert np.allclose(np.median(ground_z_aligned), 0.0, atol=0.15)
+    # Structure points should rise above ground (Z > 0)
+    struct_z_aligned = aligned_pts[200:, 2]
+    assert np.mean(struct_z_aligned) > 0.2
+
+
+

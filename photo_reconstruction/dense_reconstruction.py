@@ -21,6 +21,146 @@ class DenseReconstructor:
         self.nb_neighbors = int(nb_neighbors)
         self.std_ratio = float(std_ratio)
 
+    @staticmethod
+    def detect_sky_mask(img_bgr: np.ndarray) -> np.ndarray:
+        """
+        Detect open sky and cloud regions connected to the top of an outdoor photograph
+        to prevent unprojecting sky/clouds as solid 3D geometry.
+        """
+        H, W = img_bgr.shape[:2]
+        hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+        H_c, S_c, V_c = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+
+        # Clear blue sky (Hue 85-135 in OpenCV 0-180 scale)
+        is_blue_sky = (H_c >= 85) & (H_c <= 135) & (S_c >= 20) & (V_c >= 70)
+        # Overcast / white cloud sky (high brightness, low saturation)
+        is_cloud_sky = (V_c >= 170) & (S_c <= 50)
+        candidate = is_blue_sky | is_cloud_sky
+
+        # Fast flood fill from top border only
+        scale = max(1, max(H, W) // 300)
+        small = cv2.resize(candidate.astype(np.uint8), (W // scale, H // scale), interpolation=cv2.INTER_NEAREST)
+        h_s, w_s = small.shape
+        ff_mask = np.zeros((h_s + 2, w_s + 2), dtype=np.uint8)
+        filled = small.copy() * 255
+
+        for x in range(0, w_s, max(1, w_s // 30)):
+            if filled[0, x] == 255:
+                cv2.floodFill(filled, ff_mask, (x, 0), 128)
+
+        sky_small = (filled == 128)
+        # If less than 2% of image connects to sky, treat as indoor/no-sky
+        if np.mean(sky_small) < 0.02:
+            return np.zeros((H, W), dtype=bool)
+
+        return cv2.resize(sky_small.astype(np.uint8), (W, H), interpolation=cv2.INTER_NEAREST) > 0
+
+    @staticmethod
+    def align_ground_upright(
+        points: np.ndarray,
+        normals: np.ndarray,
+        camera_poses: Dict[str, np.ndarray],
+        sparse_points: Optional[np.ndarray] = None,
+        distance_threshold: float = 0.25,
+    ) -> Tuple[np.ndarray, np.ndarray, Dict[str, np.ndarray], Optional[np.ndarray], np.ndarray]:
+        """
+        Automatically detect the ground plane and align the scene upright (+Z up, ground at Z=0).
+        Ensures consistent orientation in the CLEAR360 viewer.
+        """
+        if len(points) < 50:
+            return points, normals, camera_poses, sparse_points, np.eye(4)
+
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points.astype(np.float64))
+
+        try:
+            plane_model, inliers = pcd.segment_plane(
+                distance_threshold=distance_threshold,
+                ransac_n=3,
+                num_iterations=1000,
+            )
+        except Exception:
+            inliers = []
+
+        # If a dominant plane with >= 5% support is found
+        if len(inliers) >= max(30, int(len(points) * 0.05)):
+            a, b, c, d = plane_model
+            n = np.array([a, b, c], dtype=np.float64)
+            n_norm = np.linalg.norm(n)
+            if n_norm > 1e-6:
+                n = n / n_norm
+
+                # Determine upward direction from cameras relative to the ground plane
+                cam_centers = np.array([p[:3, 3] for p in camera_poses.values()]) if camera_poses else np.zeros((0, 3))
+                plane_pts = points[inliers]
+                mean_plane = np.mean(plane_pts, axis=0)
+
+                if len(cam_centers) > 0:
+                    mean_cam = np.mean(cam_centers, axis=0)
+                    up_dir = mean_cam - mean_plane
+                    if np.dot(n, up_dir) < 0:
+                        n = -n
+                        d = -d
+                elif n[1] > 0:  # In COLMAP, -Y is up
+                    n = -n
+                    d = -d
+
+                # Target normal is +Z [0, 0, 1]
+                target = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+                v = np.cross(n, target)
+                s = np.linalg.norm(v)
+                cos_val = float(np.dot(n, target))
+
+                if s > 1e-6:
+                    vx = np.array([
+                        [0, -v[2], v[1]],
+                        [v[2], 0, -v[0]],
+                        [-v[1], v[0], 0]
+                    ])
+                    R_align = np.eye(3) + vx + (vx @ vx) * ((1.0 - cos_val) / (s ** 2))
+                else:
+                    R_align = np.eye(3) if cos_val > 0 else -np.eye(3)
+
+                z_ground = -d
+                pts_rot = (R_align @ points.T).T
+                pts_rot[:, 2] -= z_ground
+
+                norms_rot = (R_align @ normals.T).T if normals is not None and len(normals) == len(points) else normals
+                sparse_rot = None
+                if sparse_points is not None and len(sparse_points) > 0:
+                    sparse_rot = (R_align @ sparse_points.T).T
+                    sparse_rot[:, 2] -= z_ground
+
+                T_align = np.eye(4, dtype=np.float64)
+                T_align[:3, :3] = R_align
+                T_align[:3, 3] = [0.0, 0.0, -z_ground]
+
+                new_poses = {}
+                for name, pose in camera_poses.items():
+                    new_poses[name] = T_align @ pose
+
+                return pts_rot.astype(np.float32), norms_rot.astype(np.float32), new_poses, sparse_rot, T_align
+
+        # Fallback: standard coordinate frame conversion from OpenCV/COLMAP to Vispy (+Z up)
+        R_cv_gl = np.array([
+            [1.0,  0.0,  0.0],
+            [0.0,  0.0,  1.0],
+            [0.0, -1.0,  0.0]
+        ], dtype=np.float64)
+
+        pts_rot = (R_cv_gl @ points.T).T
+        norms_rot = (R_cv_gl @ normals.T).T if normals is not None and len(normals) == len(points) else normals
+        sparse_rot = (R_cv_gl @ sparse_points.T).T if sparse_points is not None and len(sparse_points) > 0 else None
+
+        T_align = np.eye(4, dtype=np.float64)
+        T_align[:3, :3] = R_cv_gl
+
+        new_poses = {}
+        for name, pose in camera_poses.items():
+            new_poses[name] = T_align @ pose
+
+        return pts_rot.astype(np.float32), norms_rot.astype(np.float32), new_poses, sparse_rot, T_align
+
     def reconstruct_dense(
         self,
         image_dir: Path,
@@ -107,10 +247,16 @@ class DenseReconstructor:
                     cx = W / 2.0
                     cy = H / 2.0
 
+                    # Detect outdoor sky mask to avoid turning clouds/sky into solid 3D geometry
+                    sky_mask = self.detect_sky_mask(img_bgr)
+                    if sky_mask.shape[:2] != (H, W):
+                        sky_mask = cv2.resize(sky_mask.astype(np.uint8), (W, H), interpolation=cv2.INTER_NEAREST) > 0
+
                     # Adaptive sampling stride: yields ~30k-60k points per view regardless of 12MP-48MP resolution
                     s = max(6, int(max(W, H) / 200))
                     v_grid, u_grid = np.mgrid[0:H:s, 0:W:s]
                     d = depth[v_grid, u_grid]
+                    sky_sub = sky_mask[v_grid, u_grid]
 
                     valid_d = d[d > 0.2]
                     if len(valid_d) == 0:
@@ -118,7 +264,8 @@ class DenseReconstructor:
                     med_d = float(np.median(valid_d))
                     max_d = min(25.0, max(6.0, med_d * 3.5))
 
-                    valid = (d > 0.2) & (d < max_d)
+                    # Filter out depth outliers AND sky regions
+                    valid = (d > 0.2) & (d < max_d) & (~sky_sub)
                     if not np.any(valid):
                         continue
 
