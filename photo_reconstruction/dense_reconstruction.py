@@ -28,6 +28,7 @@ class DenseReconstructor:
         depth_maps: Optional[Dict[str, np.ndarray]] = None,
         sparse_points: Optional[np.ndarray] = None,
         sparse_colors: Optional[np.ndarray] = None,
+        use_mvs_verification: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Produce a dense 3D point cloud with genuine photographic colors.
@@ -64,49 +65,72 @@ class DenseReconstructor:
 
         # If dense depth maps are supplied (e.g. from Depth Anything V2 or stereo)
         if depth_maps:
-            for img_name, T_world_cam in camera_poses.items():
-                if img_name not in depth_maps:
-                    continue
+            mvs_done = False
+            if use_mvs_verification and len(camera_poses) >= 2:
+                try:
+                    from photo_reconstruction.mvs_consistency import MVSGeometricConsistencyFilter
+                    mvs_filter = MVSGeometricConsistencyFilter(
+                        rel_depth_threshold=0.10,
+                        min_consistent_views=1,
+                    )
+                    stride = max(4, int(self.voxel_size * 200))
+                    mvs_pts, mvs_cols, _ = mvs_filter.filter_points_with_colors(
+                        camera_poses=camera_poses,
+                        depth_maps=depth_maps,
+                        image_dir=image_dir,
+                        stride=stride,
+                    )
+                    if len(mvs_pts) >= 500:
+                        all_pts.append(mvs_pts)
+                        all_cols.append(mvs_cols)
+                        mvs_done = True
+                except Exception:
+                    mvs_done = False
 
-                img_path = image_dir / img_name
-                if not img_path.exists():
-                    continue
+            if not mvs_done:
+                for img_name, T_world_cam in camera_poses.items():
+                    if img_name not in depth_maps:
+                        continue
 
-                img_bgr = cv2.imread(str(img_path))
-                if img_bgr is None:
-                    continue
-                img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-                depth = depth_maps[img_name]
+                    img_path = image_dir / img_name
+                    if not img_path.exists():
+                        continue
 
-                H, W = depth.shape
-                f = 1.20 * max(W, H)
-                cx = W / 2.0
-                cy = H / 2.0
+                    img_bgr = cv2.imread(str(img_path))
+                    if img_bgr is None:
+                        continue
+                    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+                    depth = depth_maps[img_name]
 
-                # Adaptive sampling stride: yields ~30k-60k points per view regardless of 12MP-48MP resolution
-                s = max(6, int(max(W, H) / 200))
-                v_grid, u_grid = np.mgrid[0:H:s, 0:W:s]
-                d = depth[v_grid, u_grid]
+                    H, W = depth.shape
+                    f = 1.20 * max(W, H)
+                    cx = W / 2.0
+                    cy = H / 2.0
 
-                valid = (d > 0.2) & (d < 30.0)
-                if not np.any(valid):
-                    continue
+                    # Adaptive sampling stride: yields ~30k-60k points per view regardless of 12MP-48MP resolution
+                    s = max(6, int(max(W, H) / 200))
+                    v_grid, u_grid = np.mgrid[0:H:s, 0:W:s]
+                    d = depth[v_grid, u_grid]
 
-                u_val = u_grid[valid]
-                v_val = v_grid[valid]
-                d_val = d[valid]
+                    valid = (d > 0.2) & (d < 30.0)
+                    if not np.any(valid):
+                        continue
 
-                x_c = (u_val - cx) * d_val / f
-                y_c = (v_val - cy) * d_val / f
-                z_c = d_val
+                    u_val = u_grid[valid]
+                    v_val = v_grid[valid]
+                    d_val = d[valid]
 
-                pts_cam = np.column_stack([x_c, y_c, z_c, np.ones_like(z_c)])
-                pts_world = (T_world_cam @ pts_cam.T).T[:, :3]
+                    x_c = (u_val - cx) * d_val / f
+                    y_c = (v_val - cy) * d_val / f
+                    z_c = d_val
 
-                cols = img_rgb[v_val, u_val].astype(np.float32) / 255.0
+                    pts_cam = np.column_stack([x_c, y_c, z_c, np.ones_like(z_c)])
+                    pts_world = (T_world_cam @ pts_cam.T).T[:, :3]
 
-                all_pts.append(pts_world.astype(np.float32))
-                all_cols.append(cols.astype(np.float32))
+                    cols = img_rgb[v_val, u_val].astype(np.float32) / 255.0
+
+                    all_pts.append(pts_world.astype(np.float32))
+                    all_cols.append(cols.astype(np.float32))
 
         if not all_pts:
             return (

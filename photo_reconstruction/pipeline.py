@@ -32,6 +32,7 @@ QUALITY_PRESETS: Dict[str, Dict[str, Any]] = {
         "voxel_size": 0.06,
         "poisson_depth": 7,
         "cv_sift_features": 1000,
+        "use_mvs_verification": False,
     },
     "quick": {  # Backwards compatibility alias for draft
         "max_image_size": 1000,
@@ -39,6 +40,7 @@ QUALITY_PRESETS: Dict[str, Dict[str, Any]] = {
         "voxel_size": 0.05,
         "poisson_depth": 7,
         "cv_sift_features": 1500,
+        "use_mvs_verification": False,
     },
     "standard": {
         "max_image_size": 1600,
@@ -46,6 +48,7 @@ QUALITY_PRESETS: Dict[str, Dict[str, Any]] = {
         "voxel_size": 0.03,
         "poisson_depth": 8,
         "cv_sift_features": 2500,
+        "use_mvs_verification": True,
     },
     "high": {
         "max_image_size": 2400,
@@ -53,6 +56,7 @@ QUALITY_PRESETS: Dict[str, Dict[str, Any]] = {
         "voxel_size": 0.02,
         "poisson_depth": 9,
         "cv_sift_features": 4000,
+        "use_mvs_verification": True,
     },
     "maximum": {
         "max_image_size": 3200,
@@ -60,6 +64,7 @@ QUALITY_PRESETS: Dict[str, Dict[str, Any]] = {
         "voxel_size": 0.015,
         "poisson_depth": 10,
         "cv_sift_features": 6000,
+        "use_mvs_verification": True,
     },
 }
 
@@ -239,6 +244,7 @@ class PhoneReconstructionPipeline:
             depth_maps=depth_maps if depth_maps else None,
             sparse_points=sparse_pts,
             sparse_colors=sparse_cols,
+            use_mvs_verification=preset_cfg.get("use_mvs_verification", False),
         )
         dense_ply = dense_dir / "dense_cloud.ply"
         DenseReconstructor.save_point_cloud_ply(dense_pts, dense_cols, dense_ply, normals=dense_norms)

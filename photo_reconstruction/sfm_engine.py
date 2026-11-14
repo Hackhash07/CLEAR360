@@ -343,6 +343,10 @@ class SfMEngine:
         best_pair = None
         max_matches = 0
         best_matches = None
+        deep_matcher = None
+        deep_pts1 = None
+        deep_pts2 = None
+        img_map = {p.name: p for p in images}
 
         names = list(kps_dict.keys())
         for i in range(len(names)):
@@ -357,7 +361,27 @@ class SfMEngine:
                     best_pair = (names[i], names[j])
                     best_matches = matches
 
+        # If SIFT matches are sparse, attempt DeepMatcher (LightGlue)
         if max_matches < 30 or best_pair is None:
+            try:
+                from photo_reconstruction.deep_matcher import DeepMatcher
+                deep_matcher = DeepMatcher(feature_type="superpoint", max_keypoints=2048)
+                if deep_matcher.is_available:
+                    if progress_cb:
+                        progress_cb(55, "Applying LightGlue neural feature matching...")
+                    for i in range(len(names)):
+                        for j in range(i + 1, len(names)):
+                            p1, p2 = img_map[names[i]], img_map[names[j]]
+                            kpts0, kpts1, _ = deep_matcher.match_pair(p1, p2)
+                            if len(kpts0) > max_matches:
+                                max_matches = len(kpts0)
+                                best_pair = (names[i], names[j])
+                                deep_pts1 = kpts0
+                                deep_pts2 = kpts1
+            except Exception:
+                pass
+
+        if max_matches < 15 or best_pair is None:
             return {
                 "success": False,
                 "registered_count": 0,
@@ -367,15 +391,18 @@ class SfMEngine:
                 "sparse_points": np.zeros((0, 3), dtype=np.float32),
                 "sparse_colors": np.zeros((0, 3), dtype=np.float32),
                 "mean_reprojection_error": 0.0,
-                "message": "Insufficient feature matches between image pairs (< 30 matches).",
+                "message": "Insufficient feature matches between image pairs (< 15 matches).",
             }
 
         name1, name2 = best_pair
-        kp1 = kps_dict[name1]
-        kp2 = kps_dict[name2]
-
-        pts1 = np.float32([kp1[m.queryIdx].pt for m in best_matches])
-        pts2 = np.float32([kp2[m.trainIdx].pt for m in best_matches])
+        if deep_pts1 is not None and deep_pts2 is not None:
+            pts1 = deep_pts1
+            pts2 = deep_pts2
+        else:
+            kp1 = kps_dict[name1]
+            kp2 = kps_dict[name2]
+            pts1 = np.float32([kp1[m.queryIdx].pt for m in best_matches])
+            pts2 = np.float32([kp2[m.trainIdx].pt for m in best_matches])
 
         H, W = imgs_rgb[name1].shape[:2]
         f = 1.2 * max(W, H)
@@ -405,6 +432,14 @@ class SfMEngine:
         camera_poses = {name1: T1, name2: T2}
         all_pts3d = [sparse_pts]
 
+        # Lazy init deep matcher for remaining views if needed
+        if deep_matcher is None:
+            try:
+                from photo_reconstruction.deep_matcher import DeepMatcher
+                deep_matcher = DeepMatcher(feature_type="superpoint", max_keypoints=2048)
+            except Exception:
+                deep_matcher = None
+
         # Incremental Registration for remaining viewpoints
         remaining = [n for n in names if n not in camera_poses]
         max_iters = len(remaining)
@@ -413,20 +448,30 @@ class SfMEngine:
                 break
             registered_this_iter = False
             for cand_name in list(remaining):
-                d_cand = descs_dict[cand_name]
-                if d_cand is None:
-                    continue
+                d_cand = descs_dict.get(cand_name)
                 # Try to register against any already registered camera
                 for reg_name in list(camera_poses.keys()):
-                    d_reg = descs_dict[reg_name]
-                    if d_reg is None:
-                        continue
-                    m_cand = bf.match(d_reg, d_cand)
-                    if len(m_cand) < 15:
-                        continue
+                    cand_pts_reg = None
+                    cand_pts_cand = None
 
-                    cand_pts_reg = np.float32([kps_dict[reg_name][m.queryIdx].pt for m in m_cand])
-                    cand_pts_cand = np.float32([kps_dict[cand_name][m.trainIdx].pt for m in m_cand])
+                    d_reg = descs_dict.get(reg_name)
+                    if d_reg is not None and d_cand is not None:
+                        m_cand = bf.match(d_reg, d_cand)
+                        if len(m_cand) >= 15:
+                            cand_pts_reg = np.float32([kps_dict[reg_name][m.queryIdx].pt for m in m_cand])
+                            cand_pts_cand = np.float32([kps_dict[cand_name][m.trainIdx].pt for m in m_cand])
+
+                    if cand_pts_reg is None and deep_matcher is not None and deep_matcher.is_available:
+                        try:
+                            k0, k1, _ = deep_matcher.match_pair(img_map[reg_name], img_map[cand_name])
+                            if len(k0) >= 15:
+                                cand_pts_reg = k0
+                                cand_pts_cand = k1
+                        except Exception:
+                            pass
+
+                    if cand_pts_reg is None or cand_pts_cand is None or len(cand_pts_reg) < 15:
+                        continue
 
                     E_c, mask_c = cv2.findEssentialMat(cand_pts_reg, cand_pts_cand, K, method=cv2.RANSAC, prob=0.999, threshold=1.5)
                     if E_c is None or mask_c is None or np.sum(mask_c) < 15:

@@ -185,3 +185,38 @@ def test_quality_report_generator():
     assert report["completeness_percentage"] == 100.0
     assert report["image_counts"]["registered"] == 4
 
+
+def test_deep_matcher_interface():
+    """Verify LightGlue DeepMatcher interface and graceful fallback."""
+    from photo_reconstruction.deep_matcher import DeepMatcher
+    matcher = DeepMatcher(feature_type="superpoint", max_keypoints=512)
+    # Regardless of weights availability, match_pair should return valid arrays without raising
+    k0, k1, scores = matcher.match_pair(Path("non_existent_0.jpg"), Path("non_existent_1.jpg"))
+    assert isinstance(k0, np.ndarray)
+    assert isinstance(k1, np.ndarray)
+    assert isinstance(scores, np.ndarray)
+
+
+def test_mvs_geometric_consistency_filter():
+    """Verify multi-view geometric depth filtering cross-check."""
+    from photo_reconstruction.mvs_consistency import MVSGeometricConsistencyFilter
+
+    # Two cameras separated along X axis by 0.5m
+    T1 = np.eye(4, dtype=np.float64)
+    T2 = np.eye(4, dtype=np.float64)
+    T2[0, 3] = 0.5  # Camera 2 is at x=+0.5m
+
+    # Synthetic planar depth at 2.0 meters for both cameras
+    depth1 = np.ones((100, 100), dtype=np.float32) * 2.0
+    depth2 = np.ones((100, 100), dtype=np.float32) * 2.0
+
+    poses = {"cam1.jpg": T1, "cam2.jpg": T2}
+    depths = {"cam1.jpg": depth1, "cam2.jpg": depth2}
+
+    mvs = MVSGeometricConsistencyFilter(rel_depth_threshold=0.10, min_consistent_views=1)
+    pts, counts = mvs.filter_points(poses, depths, stride=10)
+    assert len(pts) > 0
+    assert len(counts) == len(pts)
+    assert np.all(counts >= 1)
+
+
