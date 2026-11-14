@@ -81,6 +81,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
 
     reconstruction_completed = QtCore.Signal(str, str)  # (session_id, mesh_ply_path)
     load_session_requested = QtCore.Signal(str)          # session_id
+    display_mode_changed = QtCore.Signal(str)            # 'mesh' or 'cloud'
 
     def __init__(self, data_root: Optional[Path] = None, parent: Optional[QtWidgets.QWidget] = None):
         super().__init__(parent)
@@ -275,6 +276,32 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         btn_sess_row.addWidget(self.btn_open_scene)
         btn_sess_row.addWidget(self.btn_view_report)
         grp_sess_layout.addLayout(btn_sess_row)
+
+        # 3D View Display Mode: Surface Mesh vs Point Cloud
+        lbl_display = QtWidgets.QLabel("3D View Display Mode:")
+        lbl_display.setStyleSheet("font-size: 11px; color: #94a3b8; font-weight: bold; margin-top: 4px;")
+        grp_sess_layout.addWidget(lbl_display)
+
+        display_row = QtWidgets.QHBoxLayout()
+        self.btn_view_mesh = QtWidgets.QPushButton("🧊 Surface Mesh")
+        self.btn_view_mesh.setCheckable(True)
+        self.btn_view_mesh.setChecked(True)
+        self.btn_view_mesh.setStyleSheet(
+            "background-color: #8b5cf6; color: #ffffff; font-weight: bold; padding: 6px; border-radius: 4px;"
+        )
+        self.btn_view_mesh.clicked.connect(lambda: self._on_display_mode_clicked("mesh"))
+
+        self.btn_view_cloud = QtWidgets.QPushButton("🔍 Point Cloud")
+        self.btn_view_cloud.setCheckable(True)
+        self.btn_view_cloud.setChecked(False)
+        self.btn_view_cloud.setStyleSheet(
+            "background-color: #334155; color: #cbd5e1; font-weight: bold; padding: 6px; border-radius: 4px;"
+        )
+        self.btn_view_cloud.clicked.connect(lambda: self._on_display_mode_clicked("cloud"))
+
+        display_row.addWidget(self.btn_view_mesh)
+        display_row.addWidget(self.btn_view_cloud)
+        grp_sess_layout.addLayout(display_row)
 
         layout.addWidget(grp_sessions)
         layout.addStretch()
@@ -560,3 +587,27 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         btn_box.accepted.connect(dlg.accept)
         dlg_layout.addWidget(btn_box)
         dlg.exec()
+
+    def _on_display_mode_clicked(self, mode: str):
+        self.set_display_mode(mode)
+        self.display_mode_changed.emit(mode)
+
+    def set_display_mode(self, mode: str):
+        if mode == "mesh":
+            self.btn_view_mesh.setChecked(True)
+            self.btn_view_cloud.setChecked(False)
+            self.btn_view_mesh.setStyleSheet(
+                "background-color: #8b5cf6; color: #ffffff; font-weight: bold; padding: 6px; border-radius: 4px;"
+            )
+            self.btn_view_cloud.setStyleSheet(
+                "background-color: #334155; color: #cbd5e1; font-weight: bold; padding: 6px; border-radius: 4px;"
+            )
+        elif mode == "cloud":
+            self.btn_view_mesh.setChecked(False)
+            self.btn_view_cloud.setChecked(True)
+            self.btn_view_mesh.setStyleSheet(
+                "background-color: #334155; color: #cbd5e1; font-weight: bold; padding: 6px; border-radius: 4px;"
+            )
+            self.btn_view_cloud.setStyleSheet(
+                "background-color: #0284c7; color: #ffffff; font-weight: bold; padding: 6px; border-radius: 4px;"
+            )

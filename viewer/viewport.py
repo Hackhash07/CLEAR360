@@ -663,8 +663,9 @@ class Clear360Viewport(QtWidgets.QWidget):
                     p_rgba = np.hstack([p_cols, np.ones((len(p_cols), 1), dtype=np.float32)])
                 else:
                     p_rgba = np.ones((len(p_pts), 4), dtype=np.float32) * 0.8
-                self.visual_cloud.set_data(p_pts, edge_color=p_rgba, face_color=p_rgba, size=3.5)
-                self.visual_cloud.visible = True
+                self.visual_cloud.set_data(p_pts, edge_color=p_rgba, face_color=p_rgba, size=1.5)
+                # Keep point cloud hidden by default so continuous surface mesh is cleanly visible
+                self.visual_cloud.visible = False
             else:
                 self.visual_cloud.visible = False
         else:

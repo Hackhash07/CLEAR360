@@ -64,11 +64,32 @@ class DenseReconstructor:
         distance_threshold: float = 0.25,
     ) -> Tuple[np.ndarray, np.ndarray, Dict[str, np.ndarray], Optional[np.ndarray], np.ndarray]:
         """
-        Automatically detect the ground plane and align the scene upright (+Z up, ground at Z=0).
-        Ensures consistent orientation in the CLEAR360 viewer.
+        Auto-align scene orientation so that ground is horizontal and scene stays upright:
+        1. Derives true physical world UP vector from camera orientations (camera -Y in world).
+        2. Detects dominant plane using RANSAC.
+        3. Tests if detected plane is a horizontal ground plane (|dot(n, up)| >= 0.707) or a vertical wall.
+        4. If ground plane: rotates ground normal to +Z [0, 0, 1] and sets ground elevation to Z = 0.
+        5. If vertical wall or no plane: rotates camera UP vector to +Z [0, 0, 1] so walls stay vertical.
         """
         if len(points) < 50:
             return points, normals, camera_poses, sparse_points, np.eye(4)
+
+        # 1. Determine authentic physical world UP vector from camera orientations
+        # In camera frame, +X is right, +Y is down, +Z is forward.
+        # Thus camera UP in camera coordinates is [0, -1, 0].
+        # In world coordinates: cam_up = pose[:3, :3] @ [0, -1, 0] = -pose[:3, 1].
+        avg_up = None
+        if camera_poses and len(camera_poses) > 0:
+            cam_ups = np.array([-p[:3, 1] for p in camera_poses.values()], dtype=np.float64)
+            avg_up = np.mean(cam_ups, axis=0)
+            norm_up = np.linalg.norm(avg_up)
+            if norm_up > 1e-6:
+                avg_up = avg_up / norm_up
+            else:
+                avg_up = None
+        if avg_up is None:
+            # In COLMAP convention, -Y is up
+            avg_up = np.array([0.0, -1.0, 0.0], dtype=np.float64)
 
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(points.astype(np.float64))
@@ -82,78 +103,67 @@ class DenseReconstructor:
         except Exception:
             inliers = []
 
-        # If a dominant plane with >= 5% support is found
+        is_ground_plane = False
+        plane_normal = None
+        z_offset = None
+
+        # 2. Check if segmented plane is a horizontal ground plane
         if len(inliers) >= max(30, int(len(points) * 0.05)):
             a, b, c, d = plane_model
             n = np.array([a, b, c], dtype=np.float64)
             n_norm = np.linalg.norm(n)
             if n_norm > 1e-6:
                 n = n / n_norm
-
-                # Determine upward direction from cameras relative to the ground plane
-                cam_centers = np.array([p[:3, 3] for p in camera_poses.values()]) if camera_poses else np.zeros((0, 3))
-                plane_pts = points[inliers]
-                mean_plane = np.mean(plane_pts, axis=0)
-
-                if len(cam_centers) > 0:
-                    mean_cam = np.mean(cam_centers, axis=0)
-                    up_dir = mean_cam - mean_plane
-                    if np.dot(n, up_dir) < 0:
+                dot_up = float(np.dot(n, avg_up))
+                # Only treat as ground if normal is roughly parallel to camera UP (within 45 degrees)
+                if abs(dot_up) >= 0.707:
+                    is_ground_plane = True
+                    if dot_up < 0:
                         n = -n
                         d = -d
-                elif n[1] > 0:  # In COLMAP, -Y is up
-                    n = -n
-                    d = -d
+                    plane_normal = n
+                    z_offset = -d
 
-                # Target normal is +Z [0, 0, 1]
-                target = np.array([0.0, 0.0, 1.0], dtype=np.float64)
-                v = np.cross(n, target)
-                s = np.linalg.norm(v)
-                cos_val = float(np.dot(n, target))
+        if is_ground_plane and plane_normal is not None:
+            source_vec = plane_normal
+        else:
+            # If plane is a vertical wall (e.g. courtyard wall behind fountain), DO NOT rotate wall to floor!
+            # Instead, directly align the camera UP vector with +Z [0, 0, 1] to keep walls vertical.
+            source_vec = avg_up
 
-                if s > 1e-6:
-                    vx = np.array([
-                        [0, -v[2], v[1]],
-                        [v[2], 0, -v[0]],
-                        [-v[1], v[0], 0]
-                    ])
-                    R_align = np.eye(3) + vx + (vx @ vx) * ((1.0 - cos_val) / (s ** 2))
-                else:
-                    R_align = np.eye(3) if cos_val > 0 else -np.eye(3)
+        target = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        v = np.cross(source_vec, target)
+        s = np.linalg.norm(v)
+        cos_val = float(np.dot(source_vec, target))
 
-                z_ground = -d
-                pts_rot = (R_align @ points.T).T
-                pts_rot[:, 2] -= z_ground
+        if s > 1e-6:
+            vx = np.array([
+                [0, -v[2], v[1]],
+                [v[2], 0, -v[0]],
+                [-v[1], v[0], 0]
+            ])
+            R_align = np.eye(3) + vx + (vx @ vx) * ((1.0 - cos_val) / (s ** 2))
+        else:
+            R_align = np.eye(3) if cos_val > 0 else -np.eye(3)
 
-                norms_rot = (R_align @ normals.T).T if normals is not None and len(normals) == len(points) else normals
-                sparse_rot = None
-                if sparse_points is not None and len(sparse_points) > 0:
-                    sparse_rot = (R_align @ sparse_points.T).T
-                    sparse_rot[:, 2] -= z_ground
+        pts_rot = (R_align @ points.T).T
 
-                T_align = np.eye(4, dtype=np.float64)
-                T_align[:3, :3] = R_align
-                T_align[:3, 3] = [0.0, 0.0, -z_ground]
+        if is_ground_plane and z_offset is not None:
+            ground_z = z_offset
+        else:
+            # Place lowest 1st percentile of points at Z = 0
+            ground_z = float(np.percentile(pts_rot[:, 2], 1.0))
 
-                new_poses = {}
-                for name, pose in camera_poses.items():
-                    new_poses[name] = T_align @ pose
-
-                return pts_rot.astype(np.float32), norms_rot.astype(np.float32), new_poses, sparse_rot, T_align
-
-        # Fallback: standard coordinate frame conversion from OpenCV/COLMAP to Vispy (+Z up)
-        R_cv_gl = np.array([
-            [1.0,  0.0,  0.0],
-            [0.0,  0.0,  1.0],
-            [0.0, -1.0,  0.0]
-        ], dtype=np.float64)
-
-        pts_rot = (R_cv_gl @ points.T).T
-        norms_rot = (R_cv_gl @ normals.T).T if normals is not None and len(normals) == len(points) else normals
-        sparse_rot = (R_cv_gl @ sparse_points.T).T if sparse_points is not None and len(sparse_points) > 0 else None
+        pts_rot[:, 2] -= ground_z
+        norms_rot = (R_align @ normals.T).T if normals is not None and len(normals) == len(points) else normals
+        sparse_rot = None
+        if sparse_points is not None and len(sparse_points) > 0:
+            sparse_rot = (R_align @ sparse_points.T).T
+            sparse_rot[:, 2] -= ground_z
 
         T_align = np.eye(4, dtype=np.float64)
-        T_align[:3, :3] = R_cv_gl
+        T_align[:3, :3] = R_align
+        T_align[:3, 3] = [0.0, 0.0, -ground_z]
 
         new_poses = {}
         for name, pose in camera_poses.items():
