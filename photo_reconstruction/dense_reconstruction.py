@@ -222,7 +222,32 @@ class DenseReconstructor:
         # If dense depth maps are supplied (e.g. from Depth Anything V2 or stereo)
         if depth_maps:
             mvs_done = False
-            if use_mvs_verification and len(camera_poses) >= 2:
+            if use_mvs_verification and len(camera_poses) >= 2 and camera_models:
+                try:
+                    from photo_reconstruction.m7_3_6_fusion import M736GeometricConsensusEngine
+                    imgs_rgb_dict = {}
+                    for img_name in camera_poses:
+                        img_path = image_dir / img_name
+                        if img_path.exists():
+                            bgr = cv2.imread(str(img_path))
+                            if bgr is not None:
+                                imgs_rgb_dict[img_name] = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                    engine = M736GeometricConsensusEngine(voxel_fusion_size=self.voxel_size)
+                    f_pts, f_cols, f_norms, f_w, report = engine.evaluate_multi_view_consensus(
+                        camera_models=camera_models,
+                        depth_maps=depth_maps,
+                        images_rgb=imgs_rgb_dict,
+                        stride=max(4, int(self.voxel_size * 150)),
+                    )
+                    if len(f_pts) >= 500:
+                        all_pts.append(f_pts)
+                        all_cols.append(f_cols)
+                        mvs_done = True
+                except Exception as e:
+                    print(f"Notice: M736 consensus fallback: {e}")
+                    mvs_done = False
+
+            if not mvs_done and use_mvs_verification and len(camera_poses) >= 2:
                 try:
                     from photo_reconstruction.mvs_consistency import MVSGeometricConsistencyFilter
                     mvs_filter = MVSGeometricConsistencyFilter(

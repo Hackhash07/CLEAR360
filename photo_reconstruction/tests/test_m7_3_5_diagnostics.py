@@ -86,3 +86,4 @@ def test_polygon_soup_repair_duplicates_and_degenerates():
     assert stats["degenerate_faces_removed"] >= 1
     assert len(r_faces) == 2  # Only 2 distinct physical faces remain
     assert stats["non_manifold_faces_removed"] == 0
+

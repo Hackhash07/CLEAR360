@@ -270,3 +270,4 @@ class PolygonSoupRepair:
             stats["faces_oriented_outward"] = int(num_flipped)
 
         return out_verts, out_faces, stats
+

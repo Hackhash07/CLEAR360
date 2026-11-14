@@ -31,6 +31,7 @@ from scipy.spatial import Delaunay
 
 from photo_reconstruction.camera_model import PhoneCameraModel
 from photo_reconstruction.texture_engine import VisibilityAwareTextureEngine
+from photo_reconstruction.mesh_diagnostics import PolygonSoupRepair
 
 
 @dataclass
@@ -235,96 +236,146 @@ class RegionSceneAssembler:
         points: np.ndarray,
         colors: np.ndarray,
         normals: np.ndarray,
-        alpha: float = 0.06,
+        radii: Optional[List[float]] = None,
+        max_edge_len: float = 0.12,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        High-detail reconstruction for the central golden sculpture via Alpha Shapes.
-        Preserves fine silhouette, ornate details, and eliminates shredded mesh shards.
+        High-detail reconstruction for the central golden sculpture via Multi-Radius BPA.
+        Preserves fine silhouette, ornate details, and completely eliminates shredded mesh cornflakes.
         """
         if len(points) < 15:
             return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint32)
 
+        if radii is None:
+            radii = [0.025, 0.050, 0.090]
+
+        cam_c = np.array([0.0, 0.0, 2.1], dtype=np.float32)
+        # Orient point normals towards camera line-of-sight
+        los = cam_c - points
+        flip = np.sum(normals * los, axis=1) < 0
+        norms_oriented = normals.copy()
+        norms_oriented[flip] = -norms_oriented[flip]
+
         pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points.astype(np.float64)))
+        pcd.normals = o3d.utility.Vector3dVector(norms_oriented.astype(np.float64))
         pcd = pcd.voxel_down_sample(voxel_size=0.015)
 
-        mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(pcd, alpha=alpha)
-        mesh.remove_degenerate_triangles()
-        mesh.remove_non_manifold_edges()
+        mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
+            pcd, o3d.utility.DoubleVector(radii)
+        )
+        v = np.asarray(mesh.vertices, dtype=np.float32)
+        f = np.asarray(mesh.triangles, dtype=np.uint32)
 
-        # Prune small disconnected floaters
-        tri_clusters, cluster_sizes, _ = mesh.cluster_connected_triangles()
-        tri_clusters = np.asarray(tri_clusters)
-        num_clusters = len(cluster_sizes)
-        if num_clusters > 1:
-            counts = np.bincount(tri_clusters)
-            major_clusters = np.where(counts >= max(15, int(len(mesh.triangles) * 0.03)))[0]
-            keep_mask = np.isin(tri_clusters, major_clusters)
-            mesh.remove_triangles_by_mask(~keep_mask)
-            mesh.remove_unreferenced_vertices()
+        if len(f) == 0:
+            return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint32)
 
+        # Edge-length gating to prevent bridging across disconnected features
+        e0 = np.linalg.norm(v[f[:, 1]] - v[f[:, 0]], axis=1)
+        e1 = np.linalg.norm(v[f[:, 2]] - v[f[:, 1]], axis=1)
+        e2 = np.linalg.norm(v[f[:, 0]] - v[f[:, 2]], axis=1)
+        valid = (e0 < max_edge_len) & (e1 < max_edge_len) & (e2 < max_edge_len)
+        f = f[valid]
+
+        # Polygon soup repair (welding coincident vertices, removing duplicates/degenerates)
+        v_clean, f_clean, _ = PolygonSoupRepair.repair_mesh(v, f)
+
+        # Orient all faces consistently outward towards cameras
         from photo_reconstruction.normal_orientation import NormalOrientationEngine
         norm_engine = NormalOrientationEngine()
-        m_v_clean, m_f_clean, _ = norm_engine.filter_triangular_artifacts(
-            np.asarray(mesh.vertices, dtype=np.float32),
-            np.asarray(mesh.triangles, dtype=np.uint32)
-        )
-        cam_c = np.array([0.0, 0.0, 2.1])
-        m_f_oriented, _, _ = norm_engine.orient_faces_towards_cameras(m_v_clean, m_f_clean, cam_c)
-        return m_v_clean, m_f_oriented
+        f_oriented, _, _ = norm_engine.orient_faces_towards_cameras(v_clean, f_clean, cam_c)
+        return v_clean, f_oriented
 
     @staticmethod
     def mesh_general_relief(
         points: np.ndarray,
         colors: np.ndarray,
         normals: np.ndarray,
-        alpha: float = 0.08,
+        radii: Optional[List[float]] = None,
+        max_edge_len: float = 0.16,
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Mesh general architectural relief (basin, fountain_frame) via Alpha Shapes."""
+        """Mesh general architectural relief (basin, fountain_frame) via Multi-Radius BPA."""
         if len(points) < 30:
             return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint32)
 
+        if radii is None:
+            radii = [0.035, 0.065, 0.110]
+
+        cam_c = np.array([0.0, 0.0, 2.1], dtype=np.float32)
+        los = cam_c - points
+        flip = np.sum(normals * los, axis=1) < 0
+        norms_oriented = normals.copy()
+        norms_oriented[flip] = -norms_oriented[flip]
+
         pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points.astype(np.float64)))
+        pcd.normals = o3d.utility.Vector3dVector(norms_oriented.astype(np.float64))
         pcd = pcd.voxel_down_sample(voxel_size=0.025)
 
-        mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(pcd, alpha=alpha)
-        mesh.remove_degenerate_triangles()
-        mesh.remove_non_manifold_edges()
+        mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
+            pcd, o3d.utility.DoubleVector(radii)
+        )
+        v = np.asarray(mesh.vertices, dtype=np.float32)
+        f = np.asarray(mesh.triangles, dtype=np.uint32)
+
+        if len(f) == 0:
+            return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint32)
+
+        e0 = np.linalg.norm(v[f[:, 1]] - v[f[:, 0]], axis=1)
+        e1 = np.linalg.norm(v[f[:, 2]] - v[f[:, 1]], axis=1)
+        e2 = np.linalg.norm(v[f[:, 0]] - v[f[:, 2]], axis=1)
+        valid = (e0 < max_edge_len) & (e1 < max_edge_len) & (e2 < max_edge_len)
+        f = f[valid]
+
+        v_clean, f_clean, _ = PolygonSoupRepair.repair_mesh(v, f)
         from photo_reconstruction.normal_orientation import NormalOrientationEngine
         norm_engine = NormalOrientationEngine()
-        m_v_clean, m_f_clean, _ = norm_engine.filter_triangular_artifacts(
-            np.asarray(mesh.vertices, dtype=np.float32),
-            np.asarray(mesh.triangles, dtype=np.uint32)
-        )
-        cam_c = np.array([0.0, 0.0, 2.1])
-        m_f_oriented, _, _ = norm_engine.orient_faces_towards_cameras(m_v_clean, m_f_clean, cam_c)
-        return m_v_clean, m_f_oriented
+        f_oriented, _, _ = norm_engine.orient_faces_towards_cameras(v_clean, f_clean, cam_c)
+        return v_clean, f_oriented
 
     @staticmethod
     def mesh_adjacent_alpha(
         points: np.ndarray,
         colors: np.ndarray,
         normals: np.ndarray,
-        alpha: float = 0.15,
+        radii: Optional[List[float]] = None,
+        max_edge_len: float = 0.22,
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Mesh sparse lateral adjacent structures using Alpha Shapes for stability."""
+        """Mesh sparse lateral adjacent structures using Multi-Radius BPA."""
         if len(points) < 20:
             return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint32)
 
+        if radii is None:
+            radii = [0.050, 0.100, 0.180]
+
+        cam_c = np.array([0.0, 0.0, 2.1], dtype=np.float32)
+        los = cam_c - points
+        flip = np.sum(normals * los, axis=1) < 0
+        norms_oriented = normals.copy()
+        norms_oriented[flip] = -norms_oriented[flip]
+
         pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points.astype(np.float64)))
+        pcd.normals = o3d.utility.Vector3dVector(norms_oriented.astype(np.float64))
         pcd = pcd.voxel_down_sample(voxel_size=0.035)
 
-        mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(pcd, alpha=alpha)
-        mesh.remove_degenerate_triangles()
-        mesh.remove_non_manifold_edges()
+        mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
+            pcd, o3d.utility.DoubleVector(radii)
+        )
+        v = np.asarray(mesh.vertices, dtype=np.float32)
+        f = np.asarray(mesh.triangles, dtype=np.uint32)
+
+        if len(f) == 0:
+            return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint32)
+
+        e0 = np.linalg.norm(v[f[:, 1]] - v[f[:, 0]], axis=1)
+        e1 = np.linalg.norm(v[f[:, 2]] - v[f[:, 1]], axis=1)
+        e2 = np.linalg.norm(v[f[:, 0]] - v[f[:, 2]], axis=1)
+        valid = (e0 < max_edge_len) & (e1 < max_edge_len) & (e2 < max_edge_len)
+        f = f[valid]
+
+        v_clean, f_clean, _ = PolygonSoupRepair.repair_mesh(v, f)
         from photo_reconstruction.normal_orientation import NormalOrientationEngine
         norm_engine = NormalOrientationEngine()
-        m_v_clean, m_f_clean, _ = norm_engine.filter_triangular_artifacts(
-            np.asarray(mesh.vertices, dtype=np.float32),
-            np.asarray(mesh.triangles, dtype=np.uint32)
-        )
-        cam_c = np.array([0.0, 0.0, 2.1])
-        m_f_oriented, _, _ = norm_engine.orient_faces_towards_cameras(m_v_clean, m_f_clean, cam_c)
-        return m_v_clean, m_f_oriented
+        f_oriented, _, _ = norm_engine.orient_faces_towards_cameras(v_clean, f_clean, cam_c)
+        return v_clean, f_oriented
 
     def assemble_scene_graph(
         self,
