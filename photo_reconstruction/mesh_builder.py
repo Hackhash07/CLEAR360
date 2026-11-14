@@ -17,17 +17,25 @@ import open3d as o3d
 class MeshBuilder:
     """3D surface mesh reconstructor from dense oriented point clouds."""
 
-    def __init__(self, method: str = "poisson", poisson_depth: int = 8, density_quantile: float = 0.05):
+    def __init__(
+        self,
+        method: str = "poisson",
+        poisson_depth: int = 8,
+        density_quantile: float = 0.05,
+        taubin_iterations: int = 8,
+    ):
         """
         Parameters
         ----------
         method : str ('poisson', 'bpa')
         poisson_depth : int (octree depth for Poisson reconstruction: 7-9)
         density_quantile : float (removes low-density bounding box artifacts)
+        taubin_iterations : int (anti-ripple non-shrinking surface smoothing)
         """
         self.method = method.lower()
         self.poisson_depth = int(poisson_depth)
         self.density_quantile = float(density_quantile)
+        self.taubin_iterations = int(taubin_iterations)
 
     def build_mesh(
         self,
@@ -86,6 +94,10 @@ class MeshBuilder:
                         if k == 0 or np.sqrt(dist_sq[0]) > max_allowed_dist:
                             remove_phantom[i] = True
                     mesh.remove_vertices_by_mask(remove_phantom)
+
+                # 3. Apply non-shrinking Taubin smoothing to eliminate Poisson surface bumps / cauliflower ripple
+                if self.taubin_iterations > 0 and len(mesh.vertices) > 100:
+                    mesh = mesh.filter_smooth_taubin(number_of_iterations=self.taubin_iterations)
             except Exception:
                 mesh = None
 
