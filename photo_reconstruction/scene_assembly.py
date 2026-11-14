@@ -262,7 +262,15 @@ class RegionSceneAssembler:
             mesh.remove_triangles_by_mask(~keep_mask)
             mesh.remove_unreferenced_vertices()
 
-        return np.asarray(mesh.vertices, dtype=np.float32), np.asarray(mesh.triangles, dtype=np.uint32)
+        from photo_reconstruction.normal_orientation import NormalOrientationEngine
+        norm_engine = NormalOrientationEngine()
+        m_v_clean, m_f_clean, _ = norm_engine.filter_triangular_artifacts(
+            np.asarray(mesh.vertices, dtype=np.float32),
+            np.asarray(mesh.triangles, dtype=np.uint32)
+        )
+        cam_c = np.array([0.0, 0.0, 2.1])
+        m_f_oriented, _, _ = norm_engine.orient_faces_towards_cameras(m_v_clean, m_f_clean, cam_c)
+        return m_v_clean, m_f_oriented
 
     @staticmethod
     def mesh_general_relief(
@@ -281,7 +289,15 @@ class RegionSceneAssembler:
         mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(pcd, alpha=alpha)
         mesh.remove_degenerate_triangles()
         mesh.remove_non_manifold_edges()
-        return np.asarray(mesh.vertices, dtype=np.float32), np.asarray(mesh.triangles, dtype=np.uint32)
+        from photo_reconstruction.normal_orientation import NormalOrientationEngine
+        norm_engine = NormalOrientationEngine()
+        m_v_clean, m_f_clean, _ = norm_engine.filter_triangular_artifacts(
+            np.asarray(mesh.vertices, dtype=np.float32),
+            np.asarray(mesh.triangles, dtype=np.uint32)
+        )
+        cam_c = np.array([0.0, 0.0, 2.1])
+        m_f_oriented, _, _ = norm_engine.orient_faces_towards_cameras(m_v_clean, m_f_clean, cam_c)
+        return m_v_clean, m_f_oriented
 
     @staticmethod
     def mesh_adjacent_alpha(
@@ -300,7 +316,15 @@ class RegionSceneAssembler:
         mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(pcd, alpha=alpha)
         mesh.remove_degenerate_triangles()
         mesh.remove_non_manifold_edges()
-        return np.asarray(mesh.vertices, dtype=np.float32), np.asarray(mesh.triangles, dtype=np.uint32)
+        from photo_reconstruction.normal_orientation import NormalOrientationEngine
+        norm_engine = NormalOrientationEngine()
+        m_v_clean, m_f_clean, _ = norm_engine.filter_triangular_artifacts(
+            np.asarray(mesh.vertices, dtype=np.float32),
+            np.asarray(mesh.triangles, dtype=np.uint32)
+        )
+        cam_c = np.array([0.0, 0.0, 2.1])
+        m_f_oriented, _, _ = norm_engine.orient_faces_towards_cameras(m_v_clean, m_f_clean, cam_c)
+        return m_v_clean, m_f_oriented
 
     def assemble_scene_graph(
         self,
@@ -397,6 +421,12 @@ class RegionSceneAssembler:
         if all_scene_verts and all_scene_faces:
             unified_v = np.vstack(all_scene_verts)
             unified_f = np.vstack(all_scene_faces)
+
+            # Ensure all unified faces have outward-facing winding towards cameras
+            from photo_reconstruction.normal_orientation import NormalOrientationEngine
+            norm_engine = NormalOrientationEngine()
+            cam_centers = [cam.camera_center for cam in camera_models.values()]
+            unified_f, _, _ = norm_engine.orient_faces_towards_cameras(unified_v, unified_f, cam_centers)
 
             # Apply Visibility-Aware Texturing to assembled geometry
             tex_engine = VisibilityAwareTextureEngine(atlas_size=4096)

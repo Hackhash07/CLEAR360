@@ -150,3 +150,4 @@ def test_reconstruction_stage_auditor_so3():
     audit = auditor.audit_camera_transforms({"test.jpg": cam})
     assert audit["test.jpg"]["is_valid_so3"] is True
     assert audit["test.jpg"]["det_R"] == 1.0
+

@@ -219,7 +219,18 @@ class MeshBuilder:
             else:
                 mesh_cols = np.ones((len(verts), 3), dtype=np.float32) * 0.7
 
+        # Ensure outward face winding and filter sliver artifacts (CLEAR360 M7.3.4)
+        from photo_reconstruction.normal_orientation import NormalOrientationEngine
+        norm_engine = NormalOrientationEngine()
+        verts, faces, _ = norm_engine.filter_triangular_artifacts(verts, faces)
+        if len(faces) > 0:
+            cam_c = np.array([0.0, 0.0, 2.1])
+            faces, mesh_norms, _ = norm_engine.orient_faces_towards_cameras(verts, faces, cam_c)
+
         alpha = np.ones((len(mesh_cols), 1), dtype=np.float32)
+        if len(alpha) != len(verts):
+            alpha = np.ones((len(verts), 1), dtype=np.float32)
+            mesh_cols = np.ones((len(verts), 3), dtype=np.float32) * 0.7
         rgba_cols = np.hstack([mesh_cols, alpha])
 
         return verts, faces, rgba_cols, mesh_norms

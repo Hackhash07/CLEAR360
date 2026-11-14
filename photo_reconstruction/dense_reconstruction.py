@@ -144,7 +144,8 @@ class DenseReconstructor:
             ])
             R_align = np.eye(3) + vx + (vx @ vx) * ((1.0 - cos_val) / (s ** 2))
         else:
-            R_align = np.eye(3) if cos_val > 0 else -np.eye(3)
+            # 180-deg rotation around X-axis preserves det(R) = +1.0 (pure rotation in SO(3))
+            R_align = np.eye(3) if cos_val > 0 else np.diag([1.0, -1.0, -1.0]).astype(np.float64)
 
         pts_rot = (R_align @ points.T).T
 

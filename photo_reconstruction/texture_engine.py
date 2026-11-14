@@ -119,6 +119,16 @@ class VisibilityAwareTextureEngine:
 
         verts = vertices.astype(np.float64)
 
+        # Ensure face normals consistently point outward towards cameras
+        from photo_reconstruction.normal_orientation import NormalOrientationEngine
+        norm_engine = NormalOrientationEngine()
+        cam_centers_list = [cam.camera_center for cam in camera_models.values()]
+        faces, face_normals, num_flipped = norm_engine.orient_faces_towards_cameras(
+            vertices, faces, cam_centers_list
+        )
+        if num_flipped > 0:
+            print(f"[TextureEngine] Aligned {num_flipped:,}/{num_faces:,} face normals towards camera line-of-sight.")
+
         # 1. Compute Face Geometry (Normals and Centroids)
         v0 = verts[faces[:, 0]]
         v1 = verts[faces[:, 1]]
@@ -286,15 +296,16 @@ class VisibilityAwareTextureEngine:
             pix_2d, _, _ = cam.project_world_to_image(pts_3d, check_bounds=False)
 
             # Map from original image coordinates to atlas [0, 1] UV
+            # In VisPy and OpenGL Texture2D, row 0 of array is sampled at V = 0.0 (top of image).
+            # Row H-1 is sampled at V = 1.0 (bottom of image).
             u_atlas = (x_off + pix_2d[:, 0] * s_x) / float(total_atlas_w)
-            # OpenGL / VisPy UV convention: V=0 is bottom, V=1 is top
-            v_atlas = 1.0 - ((y_off + pix_2d[:, 1] * s_y) / float(total_atlas_h))
+            v_atlas = (y_off + pix_2d[:, 1] * s_y) / float(total_atlas_h)
 
             # Clamp UV within atlas cell bounds to avoid seam bleeding
             u_min = x_off / float(total_atlas_w)
             u_max = (x_off + cell_w) / float(total_atlas_w)
-            v_min = 1.0 - ((y_off + cell_h) / float(total_atlas_h))
-            v_max = 1.0 - (y_off / float(total_atlas_h))
+            v_min = y_off / float(total_atlas_h)
+            v_max = (y_off + cell_h) / float(total_atlas_h)
 
             u_atlas = np.clip(u_atlas, u_min + 1e-4, u_max - 1e-4)
             v_atlas = np.clip(v_atlas, v_min + 1e-4, v_max - 1e-4)
