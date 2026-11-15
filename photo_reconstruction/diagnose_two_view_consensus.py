@@ -363,7 +363,7 @@ def run_preflight(
     result["verified_source_sample_rate_pct"] = round(
         100.0 * verified_total / max(candidates_total, 1), 2
     )
-    result["camera_baseline_m"] = float(
+    result["camera_baseline_sfm_units"] = float(
         np.linalg.norm(
             pair_cameras[view_names[0]].camera_center
             - pair_cameras[view_names[1]].camera_center
@@ -457,7 +457,7 @@ def main() -> int:
             f"{report['verified_source_samples_total']:,} / "
             f"{report['minimum_verified_source_samples']:,}"
         )
-        print(f"Camera baseline: {report['camera_baseline_m']:.4f} m")
+        print(f"Camera baseline: {report['camera_baseline_sfm_units']:.4f} COLMAP scene units")
     else:
         print("Requested pair did not both pass held-out depth calibration.")
         print(
