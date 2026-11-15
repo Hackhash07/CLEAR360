@@ -378,7 +378,16 @@ class PhoneReconstructionPipeline:
             chosen_method = mesh_method if mesh_method is not None else preset_cfg.get("mesh_method", "poisson")
             update_progress(80, f"Building 3D surface mesh using {chosen_method.upper()} meshing algorithm...")
             mesh_builder = MeshBuilder(method=chosen_method, poisson_depth=preset_cfg["poisson_depth"])
-            mesh_v, mesh_f, mesh_c, mesh_n = mesh_builder.build_mesh(dense_pts, dense_cols, dense_norms)
+            registered_camera_centers = (
+                np.asarray([cam.camera_center for cam in camera_models.values()], dtype=np.float64)
+                if camera_models else None
+            )
+            mesh_v, mesh_f, mesh_c, mesh_n = mesh_builder.build_mesh(
+                dense_pts,
+                dense_cols,
+                dense_norms,
+                camera_centers=registered_camera_centers,
+            )
 
         # 6. Metric Scale Recovery (if reference distance provided)
         if reference_distance_m is not None and reference_distance_m > 0 and len(mesh_v) >= 2:
