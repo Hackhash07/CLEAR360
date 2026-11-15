@@ -259,54 +259,91 @@ class PhoneReconstructionPipeline:
         update_progress(60, f"Generating dense 3D point cloud ({preset_cfg['voxel_size']}m voxel)...")
         from photo_reconstruction.depth_helper import IsolatedDepthEstimator
         reg_paths = [img_target_dir / name for name in camera_poses.keys()]
-        depth_maps = IsolatedDepthEstimator.estimate_depths_for_images(reg_paths, session_dir / "depth_cache")
-        # Only pass depth maps to texture visibility testing when the corresponding
-        # view has enough sparse SfM anchors to establish the same coordinate gauge.
-        # Raw monocular depth must never be compared directly with SfM-space mesh Z.
+        raw_depth_maps = IsolatedDepthEstimator.estimate_depths_for_images(
+            reg_paths, session_dir / "depth_cache"
+        )
+        # Strict MVS accepts only views whose affine depth calibration passed a
+        # genuine held-out check. Draft mode may still use raw monocular depth as
+        # a clearly unverified preview, but it is never used for strict fusion.
+        mvs_flag = use_mvs if use_mvs is not None else preset_cfg.get("use_mvs_verification", False)
+        depth_maps = dict(raw_depth_maps)
         texture_depth_maps = None
-
-        # Robust per-view SfM-scale depth alignment (held-out validation)
         camera_models = sfm_res.get("camera_models", {})
         sparse_tracks = sfm_res.get("sparse_tracks", {})
-        if depth_maps and camera_models and sparse_tracks:
-            update_progress(65, "Aligning monocular depth scale to SfM coordinate frame (held-out validation)...")
+        trusted_camera_models = dict(camera_models)
+
+        if raw_depth_maps and camera_models and sparse_tracks:
+            update_progress(65, "Calibrating per-view depth against held-out SfM anchors...")
             from photo_reconstruction.depth_aligner import SfMDepthAligner
             aligner = SfMDepthAligner(mode="regularized")
             align_res = aligner.align_depth_maps(
-                depth_maps=depth_maps,
+                depth_maps=raw_depth_maps,
                 camera_models=camera_models,
                 sparse_tracks=sparse_tracks,
             )
-            depth_maps = align_res.aligned_depth_maps
-            aligned_texture_views = {
-                name: depth_maps[name]
-                for name, stats in align_res.view_stats.items()
-                if stats.success and name in depth_maps
-            }
-            texture_depth_maps = aligned_texture_views or None
+            accepted_depth_maps = dict(align_res.aligned_depth_maps)
+            accepted_names = sorted(accepted_depth_maps.keys())
+            texture_depth_maps = accepted_depth_maps or None
 
-            # Save depth alignment diagnostics
+            # In strict MVS mode, unvalidated monocular views are excluded from
+            # both cross-view fusion and visibility/occlusion decisions.
+            if mvs_flag:
+                depth_maps = accepted_depth_maps
+                trusted_camera_models = {
+                    name: camera_models[name]
+                    for name in accepted_names
+                    if name in camera_models
+                }
+                if len(depth_maps) < 2 or len(trusted_camera_models) < 2:
+                    rejected = {
+                        name: stats.status_message
+                        for name, stats in align_res.view_stats.items()
+                        if not stats.success
+                    }
+                    raise RuntimeError(
+                        "Strict multi-view reconstruction stopped: fewer than two camera views "
+                        "passed held-out depth calibration. No unverified depth sheets were fused. "
+                        f"Accepted views: {accepted_names}. Rejected views: {rejected}"
+                    )
+            else:
+                # Draft is an explicitly approximate preview path. Use accepted
+                # maps where available; if none pass, retain raw maps for preview.
+                depth_maps = accepted_depth_maps or dict(raw_depth_maps)
+
             align_diag = {
                 "mode": align_res.mode,
                 "global_scale": float(align_res.global_scale),
-                "total_anchors": int(align_res.total_anchors),
+                "total_training_anchors": int(align_res.total_anchors),
+                "accepted_views": accepted_names,
+                "rejected_views": sorted(
+                    name for name, stats in align_res.view_stats.items() if not stats.success
+                ),
+                "limits": {
+                    "median_relative_error": aligner.max_val_median_rel,
+                    "p90_relative_error": aligner.max_val_p90_rel,
+                },
                 "views": {
                     name: {
-                        "anchors": s.num_anchors,
+                        "anchors": int(s.num_anchors),
                         "scale": float(s.median_scale),
-                        "mad": float(s.mad_scale),
-                        "raw_residual": float(s.raw_residual_median),
-                        "aligned_residual": float(s.aligned_residual_median),
-                        "reduction_pct": float(s.residual_reduction_pct),
+                        "offset": float(s.depth_offset),
+                        "mad_scale": float(s.mad_scale),
+                        "raw_residual_median": float(s.raw_residual_median),
+                        "aligned_residual_median": float(s.aligned_residual_median),
+                        "validation_median_relative_error": float(s.validation_median_relative_error),
+                        "validation_p90_relative_error": float(s.validation_p90_relative_error),
+                        "residual_reduction_pct": float(s.residual_reduction_pct),
+                        "success": bool(s.success),
+                        "status": s.status_message,
                     }
                     for name, s in align_res.view_stats.items()
                 },
             }
-            with open(session_dir / "depth_alignment_report.json", "w") as f_diag:
+            with open(session_dir / "depth_alignment_report.json", "w", encoding="utf-8") as f_diag:
                 json.dump(align_diag, f_diag, indent=2)
 
         dense_engine = DenseReconstructor(voxel_size=preset_cfg["voxel_size"])
-        mvs_flag = use_mvs if use_mvs is not None else preset_cfg.get("use_mvs_verification", False)
+        dense_camera_models = trusted_camera_models if mvs_flag else camera_models
         dense_pts, dense_cols, dense_norms = dense_engine.reconstruct_dense(
             image_dir=img_target_dir,
             camera_poses=camera_poses,
@@ -314,7 +351,7 @@ class PhoneReconstructionPipeline:
             sparse_points=sparse_pts,
             sparse_colors=sparse_cols,
             use_mvs_verification=mvs_flag,
-            camera_models=camera_models,
+            camera_models=dense_camera_models,
             session_dir=session_dir,
         )
 
@@ -427,11 +464,20 @@ class PhoneReconstructionPipeline:
             from photo_reconstruction.texture_engine import VisibilityAwareTextureEngine
             tex_engine = VisibilityAwareTextureEngine(atlas_size=4096)
             try:
+                texture_camera_models = (
+                    {name: camera_models[name] for name in texture_depth_maps if name in camera_models}
+                    if texture_depth_maps else (trusted_camera_models if mvs_flag else camera_models)
+                )
+                texture_images = {
+                    name: img_dict[name]
+                    for name in texture_camera_models
+                    if name in img_dict
+                }
                 tex_v, tex_f, tex_uv, tex_atlas, tex_rep = tex_engine.texture_mesh(
                     vertices=mesh_v,
                     faces=mesh_f,
-                    camera_models=camera_models,
-                    images=img_dict,
+                    camera_models=texture_camera_models,
+                    images=texture_images,
                     depth_maps=texture_depth_maps,
                     out_dir=mesh_dir,
                     base_name="scene_mesh",
