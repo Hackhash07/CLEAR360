@@ -361,7 +361,7 @@ class VisibilityAwareTextureEngine:
                 continue
 
             x_off, y_off, s_x, s_y = cam_cell_offsets[c_idx]
-            cam = camera_models[cam_names[c_idx]]
+            cam = image_camera_models[cam_names[c_idx]]
 
             # Project the 3 vertices into the valid observing camera
             pix_2d, _, _ = cam.project_world_to_image(pts_3d, check_bounds=False)
