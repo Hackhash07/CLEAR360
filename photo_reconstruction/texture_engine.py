@@ -170,7 +170,7 @@ class VisibilityAwareTextureEngine:
                 face_centroids[test_f_indices], check_bounds=True
             )
 
-            # Check border margin
+            # Check border margin for centroid
             u_c = proj_c[:, 0]
             v_c = proj_c[:, 1]
             inside_margin = (
@@ -185,32 +185,47 @@ class VisibilityAwareTextureEngine:
             if len(test_f_indices) == 0:
                 continue
 
-            # Occlusion check if depth map available
+            # Multi-sample visibility check (Centroid + 3 Vertices) across triangle surface
+            p0, d0, val0 = cam.project_world_to_image(v0[test_f_indices], check_bounds=False)
+            p1, d1, val1 = cam.project_world_to_image(v1[test_f_indices], check_bounds=False)
+            p2, d2, val2 = cam.project_world_to_image(v2[test_f_indices], check_bounds=False)
+
             if d_map is not None:
-                u_pix = np.clip(np.round(proj_c[inside_margin, 0]).astype(int), 0, W - 1)
-                v_pix = np.clip(np.round(proj_c[inside_margin, 1]).astype(int), 0, H - 1)
-                d_obs = d_map[v_pix, u_pix].astype(np.float64)
-                z_proj = depth_c[inside_margin]
+                # Sample depth at centroid
+                u_pix_c = np.clip(np.round(proj_c[inside_margin, 0]).astype(int), 0, W - 1)
+                v_pix_c = np.clip(np.round(proj_c[inside_margin, 1]).astype(int), 0, H - 1)
+                d_obs_c = d_map[v_pix_c, u_pix_c].astype(np.float64)
+                z_proj_c = depth_c[inside_margin]
 
-                # Ensure scale alignment between d_obs and z_proj to prevent false occlusion rejections
-                valid_d = d_obs > 0.1
-                if np.sum(valid_d) > 20:
-                    med_obs = float(np.median(d_obs[valid_d]))
-                    med_proj = float(np.median(z_proj[valid_d]))
-                    ratio = med_proj / max(med_obs, 1e-4)
-                    if abs(ratio - 1.0) > 0.05:
-                        d_obs = d_obs * ratio
+                # Sample depth at 3 vertices
+                u_p0 = np.clip(np.round(p0[:, 0]).astype(int), 0, W - 1)
+                v_p0 = np.clip(np.round(p0[:, 1]).astype(int), 0, H - 1)
+                d_obs_v0 = d_map[v_p0, u_p0].astype(np.float64)
 
-                # Not occluded if projected depth <= observed depth + margin
-                not_occluded = (d_obs > 0.1) & (z_proj <= d_obs + max(self.occ_thresh, 0.40))
+                u_p1 = np.clip(np.round(p1[:, 0]).astype(int), 0, W - 1)
+                v_p1 = np.clip(np.round(p1[:, 1]).astype(int), 0, H - 1)
+                d_obs_v1 = d_map[v_p1, u_p1].astype(np.float64)
+
+                u_p2 = np.clip(np.round(p2[:, 0]).astype(int), 0, W - 1)
+                v_p2 = np.clip(np.round(p2[:, 1]).astype(int), 0, H - 1)
+                d_obs_v2 = d_map[v_p2, u_p2].astype(np.float64)
+
+                # Upstream-calibrated depth test (no artificial scale multiplier)
+                depth_tol = max(self.occ_thresh, 0.65)
+                vis_c = (d_obs_c > 0.1) & (z_proj_c <= d_obs_c + depth_tol)
+                vis_v0 = (d_obs_v0 > 0.1) & (d0 <= d_obs_v0 + depth_tol)
+                vis_v1 = (d_obs_v1 > 0.1) & (d1 <= d_obs_v1 + depth_tol)
+                vis_v2 = (d_obs_v2 > 0.1) & (d2 <= d_obs_v2 + depth_tol)
+
+                # Face is visible if centroid OR at least two vertices are unoccluded
+                not_occluded = vis_c | ((vis_v0.astype(int) + vis_v1.astype(int) + vis_v2.astype(int)) >= 2)
                 test_f_indices = test_f_indices[not_occluded]
                 if len(test_f_indices) == 0:
                     continue
 
-            # Project full triangle vertices to compute 2D resolution
-            p0, _, val0 = cam.project_world_to_image(v0[test_f_indices], check_bounds=False)
-            p1, _, val1 = cam.project_world_to_image(v1[test_f_indices], check_bounds=False)
-            p2, _, val2 = cam.project_world_to_image(v2[test_f_indices], check_bounds=False)
+                p0 = p0[not_occluded]
+                p1 = p1[not_occluded]
+                p2 = p2[not_occluded]
 
             # 2D cross product for signed area
             area_2d = 0.5 * np.abs(
@@ -241,6 +256,28 @@ class VisibilityAwareTextureEngine:
                 d_c = np.maximum(np.linalg.norm(vec_to_c, axis=1), 1e-6)
                 cos_c = np.sum(face_normals * (vec_to_c / d_c[:, None]), axis=1)
                 max_cos_all = np.maximum(max_cos_all, cos_c)
+
+        # Ensure visible front-facing surfaces receive texture from best observing camera
+        for f_i in range(num_faces):
+            if best_cam_idx[f_i] == -1 and max_cos_all[f_i] > 0.05:
+                best_c = -1
+                best_sc = -1.0
+                for c_idx, name in enumerate(cam_names):
+                    if name in camera_models and name in images:
+                        cam = camera_models[name]
+                        vec = cam.camera_center - face_centroids[f_i]
+                        d = max(float(np.linalg.norm(vec)), 1e-6)
+                        ct = float(np.dot(face_normals[f_i], vec / d))
+                        if ct > best_sc:
+                            best_sc = ct
+                            best_c = c_idx
+                if best_c >= 0:
+                    best_cam_idx[f_i] = best_c
+
+        untextured_mask = best_cam_idx == -1
+        untextured_count = int(np.sum(untextured_mask))
+        textured_count = num_faces - untextured_count
+
         rear_facing_count = int(np.sum(max_cos_all <= 0.0))
         occluded_count = max(0, untextured_count - rear_facing_count)
 
@@ -258,12 +295,12 @@ class VisibilityAwareTextureEngine:
 
         atlas_img = np.zeros((total_atlas_h, total_atlas_w, 3), dtype=np.uint8)
 
-        # Draw dedicated 64x64 neutral gray swatch at (0, 0) for untextured / rear surfaces
+        # Draw dedicated 64x64 neutral swatch at (0, 0) for untextured / rear surfaces
         swatch_size = min(64, cell_w // 4, cell_h // 4)
-        swatch_color = np.array([140, 140, 140], dtype=np.uint8) # Neutral architectural stone gray
+        swatch_color = np.array([140, 140, 140], dtype=np.uint8)  # Architectural stone gray
         atlas_img[0:swatch_size, 0:swatch_size] = swatch_color
         u_neutral = float(swatch_size // 2) / float(total_atlas_w)
-        v_neutral = float(swatch_size // 2) / float(total_atlas_h)
+        v_neutral = 1.0 - float(swatch_size // 2) / float(total_atlas_h)
 
         # Precompute camera cell rects and downscale images into cells
         cam_cell_offsets: Dict[int, Tuple[int, int, float, float]] = {}  # (x_off, y_off, scale_x, scale_y)
@@ -320,14 +357,15 @@ class VisibilityAwareTextureEngine:
             # Project the 3 vertices into the valid observing camera
             pix_2d, _, _ = cam.project_world_to_image(pts_3d, check_bounds=False)
 
+            # Wavefront OBJ standard: (0, 0) is bottom-left, v = 1.0 is top of image
             u_atlas = (x_off + pix_2d[:, 0] * s_x) / float(total_atlas_w)
-            v_atlas = (y_off + pix_2d[:, 1] * s_y) / float(total_atlas_h)
+            v_atlas = 1.0 - (y_off + pix_2d[:, 1] * s_y) / float(total_atlas_h)
 
-            # Clamp UV within atlas cell bounds to avoid seam bleeding
+            # Clamp UV within atlas cell bounds (with v inverted for OBJ standard)
             u_min = x_off / float(total_atlas_w)
             u_max = (x_off + cell_w) / float(total_atlas_w)
-            v_min = y_off / float(total_atlas_h)
-            v_max = (y_off + cell_h) / float(total_atlas_h)
+            v_min = 1.0 - (y_off + cell_h) / float(total_atlas_h)
+            v_max = 1.0 - y_off / float(total_atlas_h)
 
             u_atlas = np.clip(u_atlas, u_min + 1e-4, u_max - 1e-4)
             v_atlas = np.clip(v_atlas, v_min + 1e-4, v_max - 1e-4)

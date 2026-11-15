@@ -662,7 +662,8 @@ class Clear360Viewport(QtWidgets.QWidget):
                 from vispy.visuals.filters import TextureFilter
                 tex_bgr = cv2.imread(str(atlas_png))
                 if tex_bgr is not None:
-                    tex_rgb = cv2.cvtColor(tex_bgr, cv2.COLOR_BGR2RGB)
+                    # Flip vertically for OpenGL Texture2D to match Wavefront OBJ standard (v=0 bottom, v=1 top)
+                    tex_rgb = np.ascontiguousarray(np.flipud(cv2.cvtColor(tex_bgr, cv2.COLOR_BGR2RGB)))
                     # Load vertex, UV coordinates and smooth normals from OBJ
                     obj_v, obj_vt, obj_vn, obj_f = [], [], [], []
                     with open(obj_file, "r") as f_obj:

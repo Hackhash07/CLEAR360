@@ -46,17 +46,22 @@ class GeometricConsensusReport:
     mean_depth_residual_m: float
 
     def to_dict(self) -> Dict[str, Any]:
+        def _fmt(val, decimals=2):
+            if val is None or (isinstance(val, (float, int)) and np.isnan(val)):
+                return "NOT MEASURED"
+            return round(float(val), decimals)
+
         return {
             "total_candidates": self.total_candidates,
             "consensus_pts_count": self.consensus_pts_count,
             "validated_pts_count": self.validated_pts_count,
             "single_view_pts_count": self.single_view_pts_count,
             "rejected_outliers_count": self.rejected_outliers_count,
-            "mean_layer_thickness_before_mm": round(self.mean_layer_thickness_before_mm, 2),
-            "mean_layer_thickness_after_mm": round(self.mean_layer_thickness_after_mm, 2),
-            "thickness_reduction_pct": round(self.thickness_reduction_pct, 2),
-            "mean_reprojection_error_px": round(self.mean_reprojection_error_px, 3),
-            "mean_depth_residual_m": round(self.mean_depth_residual_m, 4),
+            "mean_layer_thickness_before_mm": _fmt(self.mean_layer_thickness_before_mm, 2),
+            "mean_layer_thickness_after_mm": _fmt(self.mean_layer_thickness_after_mm, 2),
+            "thickness_reduction_pct": _fmt(self.thickness_reduction_pct, 2),
+            "mean_reprojection_error_px": _fmt(self.mean_reprojection_error_px, 3),
+            "mean_depth_residual_m": _fmt(self.mean_depth_residual_m, 4),
         }
 
 
@@ -80,12 +85,12 @@ class M736GeometricConsensusEngine:
     def adaptive_depth_threshold(depth_z: float) -> float:
         """
         Calculates depth-dependent geometric threshold:
-        tau(z) = clamp(0.015m, 0.050m, 0.005*z + 0.001*z^2)
+        tau(z) = clamp(0.025m, 0.180m, 0.012*z + 0.001*z^2)
         Accounts for quadratic uncertainty expansion with distance from camera baseline.
         """
-        z = float(np.clip(depth_z, 1.0, 30.0))
-        tau = 0.005 * z + 0.001 * (z ** 2)
-        return float(np.clip(tau, 0.015, 0.050))
+        z = float(np.clip(depth_z, 0.5, 30.0))
+        tau = 0.012 * z + 0.001 * (z ** 2)
+        return float(np.clip(tau, 0.025, 0.180))
 
     def evaluate_multi_view_consensus(
         self,
@@ -159,6 +164,7 @@ class M736GeometricConsensusEngine:
 
         all_depth_res = []
         all_reproj_errs = []
+        pair_separations_before = []
 
         for j_idx, target_name in enumerate(cam_names):
             target_cam = camera_models[target_name]
@@ -207,8 +213,20 @@ class M736GeometricConsensusEngine:
             # Spatial distance in 3D
             spatial_dist = np.linalg.norm(all_candidates[indices] - back_pts_w, axis=1)
 
-            # Agreement criterion: depth difference <= tau AND 3D spatial distance <= 2*tau
-            agreed = (depth_diff <= adaptive_tau) & (spatial_dist <= adaptive_tau * 2.0)
+            # Photometric cross-check with pixel sampling if images available
+            if target_name in images_rgb:
+                t_img = images_rgb[target_name]
+                u_pix = np.clip(np.round(u_p).astype(int), 0, W_t - 1)
+                v_pix = np.clip(np.round(v_p).astype(int), 0, H_t - 1)
+                sampled_cols = t_img[v_pix, u_pix].astype(np.float32) / 255.0
+                cand_cols = all_colors[indices]
+                color_diff = np.mean(np.abs(sampled_cols - cand_cols), axis=1)
+                color_consistent = color_diff < 0.35
+            else:
+                color_consistent = np.ones(len(indices), dtype=bool)
+
+            # Agreement criterion: depth diff <= tau AND 3D spatial distance <= 2.5*tau AND photometric consistency
+            agreed = (depth_diff <= adaptive_tau) & (spatial_dist <= adaptive_tau * 2.5) & color_consistent
             agreed_indices = indices[agreed]
 
             support_counts[agreed_indices] += 1
@@ -219,6 +237,7 @@ class M736GeometricConsensusEngine:
 
             all_depth_res.extend(depth_diff[agreed].tolist())
             all_reproj_errs.extend((spatial_dist[agreed] / (d_p[agreed] + 1e-4) * target_cam.fx).tolist())
+            pair_separations_before.extend((spatial_dist[agreed] * 1000.0).tolist())
 
         # 3. Collapse Depth Layers: Compute consensus weighted centroid
         collapsed_pts = (consensus_accum_pts / consensus_accum_weights[:, None]).astype(np.float32)
@@ -228,13 +247,28 @@ class M736GeometricConsensusEngine:
         med_conf_mask = support_counts == 1
         single_view_mask = support_counts == 0
 
-        # M7.3.9 Phase 2: Confidence-Aware Point Separation
-        # Retain ONLY geometrically verified points (high confidence + validated) in reconstruction.
+        # M7.3.10 Confidence-Aware Point Separation
+        # Retain geometrically verified points (high confidence + validated) in reconstruction.
         # Single-view points are uncertain and retained exclusively in a separate diagnostic layer.
         verified_mask = support_counts >= 1
         clean_pts = collapsed_pts[verified_mask]
         clean_cols = all_colors[verified_mask]
         clean_weights = (support_counts[verified_mask] + 1).astype(np.float32)
+
+        # Genuine residual measurement after layer collapse:
+        if len(clean_pts) > 0 and len(pair_separations_before) > 0:
+            dist_to_collapsed = np.linalg.norm(all_candidates[verified_mask] - clean_pts, axis=1) * 1000.0
+            thick_before = float(np.mean(pair_separations_before))
+            thick_after = float(np.mean(dist_to_collapsed))
+            if thick_before < 1e-3:
+                # Points were already coincident across depth maps (zero separation)
+                reduc_pct = 100.0
+            else:
+                reduc_pct = float(((thick_before - thick_after) / thick_before) * 100.0)
+        else:
+            thick_before = float("nan")
+            thick_after = float("nan")
+            reduc_pct = float("nan")
 
         # Store uncertain points for diagnostic layer
         self.uncertain_pts = collapsed_pts[single_view_mask]
@@ -274,10 +308,8 @@ class M736GeometricConsensusEngine:
             compat_dot=self.normal_compat_thresh,
         )
 
-        # Measure layer thickness reduction across wall cross-section
-        thick_before = 38.5  # Measured raw spread in mm
-        thick_after = 6.2    # Fused manifold residual in mm
-        reduc_pct = ((thick_before - thick_after) / thick_before) * 100.0
+        mean_reproj = float(np.mean(all_reproj_errs)) if len(all_reproj_errs) > 0 else float("nan")
+        mean_depth_res = float(np.mean(all_depth_res)) if len(all_depth_res) > 0 else float("nan")
 
         report = GeometricConsensusReport(
             total_candidates=total_candidates,
@@ -288,8 +320,8 @@ class M736GeometricConsensusEngine:
             mean_layer_thickness_before_mm=thick_before,
             mean_layer_thickness_after_mm=thick_after,
             thickness_reduction_pct=reduc_pct,
-            mean_reprojection_error_px=float(np.mean(all_reproj_errs)) if all_reproj_errs else 1.25,
-            mean_depth_residual_m=float(np.mean(all_depth_res)) if all_depth_res else 0.022,
+            mean_reprojection_error_px=mean_reproj,
+            mean_depth_residual_m=mean_depth_res,
         )
 
         return fused_pts, fused_cols, fused_norms, fused_weights, report

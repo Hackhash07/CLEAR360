@@ -465,10 +465,65 @@ class PhoneReconstructionPipeline:
         except Exception as e:
             print(f"Notice: M7.3.7 manifest generation: {e}")
 
-        update_progress(100, f"Photogrammetry complete ({t_total:.1f} s). Model saved to {session_dir.name}.")
+        # 9. M7.3.10 Rigorous Pipeline Integrity & Geometric Validation
+        validation_passed = True
+        validation_errors = []
+
+        if len(camera_poses) < 2:
+            validation_passed = False
+            validation_errors.append(f"Insufficient registered cameras: {len(camera_poses)} < 2")
+
+        if len(dense_pts) < 200:
+            validation_passed = False
+            validation_errors.append(f"Insufficient dense point cloud: {len(dense_pts):,} pts < 200")
+
+        if len(mesh_f) < 50:
+            validation_passed = False
+            validation_errors.append(f"Insufficient mesh triangles: {len(mesh_f):,} faces < 50")
+
+        # Check degenerate triangles
+        if len(mesh_f) > 0 and len(mesh_v) > 0:
+            v0 = mesh_v[mesh_f[:, 0]]
+            v1 = mesh_v[mesh_f[:, 1]]
+            v2 = mesh_v[mesh_f[:, 2]]
+            cross = np.cross(v1 - v0, v2 - v0)
+            face_areas = 0.5 * np.linalg.norm(cross, axis=1)
+            degen_count = int(np.sum(face_areas < 1e-8))
+            if (degen_count / len(mesh_f)) > 0.05:
+                validation_passed = False
+                validation_errors.append(f"High degenerate face ratio: {degen_count}/{len(mesh_f)} ({degen_count/len(mesh_f)*100:.1f}%)")
+
+        tex_report_file = session_dir / "texturing_report.json"
+        if tex_report_file.exists():
+            try:
+                with open(tex_report_file) as f_t:
+                    t_rep = json.load(f_t)
+                cov = t_rep.get("coverage_percentage", 0.0)
+                if cov < 75.0:
+                    validation_errors.append(f"Low texture coverage: {cov:.1f}% < 75%")
+            except Exception:
+                pass
+
+        if validation_passed:
+            recon_grade = "OPTIMAL" if len(camera_poses) >= len(copied_paths) else "SUBOPTIMAL"
+            completeness = 100.0 if recon_grade == "OPTIMAL" else round(len(camera_poses) / len(copied_paths) * 100.0, 1)
+        else:
+            recon_grade = "INCOMPLETE"
+            completeness = round(len(camera_poses) / max(len(copied_paths), 1) * 50.0, 1)
+
+        report["reconstruction_grade"] = recon_grade
+        report["completeness_percentage"] = completeness
+        report["diagnostics"]["validation_errors"] = validation_errors
+        report["diagnostics"]["has_failures"] = not validation_passed
+        if validation_errors:
+            report["notes"] += f" [VALIDATION NOTICE: {'; '.join(validation_errors)}]"
+        QualityReportGenerator.save_report_json(report, session_dir / "report.json")
+
+        status_msg = "Photogrammetry complete" if validation_passed else "Photogrammetry completed with warnings"
+        update_progress(100, f"{status_msg} ({t_total:.1f} s). Model saved to {session_dir.name}.")
 
         return {
-            "success": True,
+            "success": validation_passed,
             "session_id": current_session_id,
             "session_dir": session_dir,
             "mesh_ply": mesh_ply,
@@ -480,6 +535,7 @@ class PhoneReconstructionPipeline:
             "camera_poses": camera_poses,
             "quality_preset": active_preset,
             "report": report,
+            "validation_errors": validation_errors,
         }
 
 

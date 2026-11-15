@@ -159,11 +159,11 @@ def test_upright_uv_coordinates(tmp_path):
     assert len(new_uv) == 3
     # UV coordinates must be strictly within [0, 1]
     assert np.all(new_uv >= 0.0) and np.all(new_uv <= 1.0)
-    # V coordinates must have V(top) < V(bottom) in OpenGL/VisPy array convention
+    # V coordinates must have V(top) > V(bottom) under standard Wavefront OBJ UV convention
     # Top vertex is index 2 (Z = 1.0), bottom vertices are indices 0, 1 (Z = -1.0)
     v_top = new_uv[2, 1]
     v_bottom = new_uv[0, 1]
-    assert v_top < v_bottom, f"Top vertex V ({v_top}) must be less than bottom vertex V ({v_bottom}) for upright texture"
+    assert v_top > v_bottom, f"Top vertex V ({v_top}) must be greater than bottom vertex V ({v_bottom}) for upright OBJ standard"
 
 
 def test_landmark_validator():

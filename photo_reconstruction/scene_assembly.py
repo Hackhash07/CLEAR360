@@ -298,33 +298,25 @@ class RegionSceneAssembler:
         colors: np.ndarray,
         normals: np.ndarray,
         radii: Optional[List[float]] = None,
-        max_edge_len: float = 0.12,
+        max_edge_len: float = 0.16,
         camera_centers: Optional[np.ndarray] = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        High-detail reconstruction for central sculpture via Multi-Radius BPA with Laplacian smoothing.
-        Uses actual registered camera positions for normal and face orientation (M7.3.8 Issue 3).
+        High-detail reconstruction for central sculpture via smoothed Multi-Radius BPA (M7.3.10).
+        Applies point outlier removal, tangent-plane fairing, and volume-preserving Taubin smoothing.
         """
         if len(points) < 15:
             return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint32)
 
-        pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points.astype(np.float64)))
+        pcd_raw = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points.astype(np.float64)))
+        # 1. Statistical outlier removal to filter floating depth noise
+        cl, ind = pcd_raw.remove_statistical_outlier(nb_neighbors=25, std_ratio=1.2)
+        pcd = pcd_raw.select_by_index(ind) if len(ind) >= 15 else pcd_raw
+
         pcd = pcd.voxel_down_sample(voxel_size=0.015)
-        pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.08, max_nn=30))
+        pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.08, max_nn=35))
         pcd_pts = np.asarray(pcd.points, dtype=np.float32)
         pcd_norms = np.asarray(pcd.normals, dtype=np.float32)
-
-        if radii is None:
-            # M7.3.9 Phase 5: Adaptive BPA radii from nearest-neighbor distance distribution
-            pcd_tree = o3d.geometry.KDTreeFlann(pcd)
-            nn_dists = []
-            sample_step = max(1, len(pcd_pts) // 500)
-            for idx in range(0, len(pcd_pts), sample_step):
-                [_, idxs, dists] = pcd_tree.search_knn_vector_3d(pcd.points[idx], 2)
-                if len(dists) > 1:
-                    nn_dists.append(np.sqrt(dists[1]))
-            d_nn = float(np.median(nn_dists)) if nn_dists else 0.020
-            radii = [float(1.2 * d_nn), float(2.5 * d_nn), float(5.0 * d_nn)]
 
         # Orient point normals towards actual camera positions
         if camera_centers is not None and len(camera_centers) > 0:
@@ -339,6 +331,32 @@ class RegionSceneAssembler:
         pcd_norms[flip] = -pcd_norms[flip]
         pcd.normals = o3d.utility.Vector3dVector(pcd_norms.astype(np.float64))
 
+        # 2. Tangent-plane fairing to eliminate high-frequency monocular depth ripple
+        kdtree = o3d.geometry.KDTreeFlann(pcd)
+        smooth_pts = pcd_pts.copy()
+        sample_step_fair = max(1, len(pcd_pts) // 1000)
+        for i in range(0, len(pcd_pts), sample_step_fair):
+            [k, idxs, _] = kdtree.search_radius_vector_3d(pcd_pts[i], 0.04)
+            if k > 3:
+                n_local = np.mean(pcd_norms[idxs], axis=0)
+                n_local /= max(float(np.linalg.norm(n_local)), 1e-6)
+                c_local = np.mean(pcd_pts[idxs], axis=0)
+                dist = np.dot(pcd_pts[i] - c_local, n_local)
+                smooth_pts[i] = pcd_pts[i] - 0.45 * dist * n_local
+        pcd.points = o3d.utility.Vector3dVector(smooth_pts.astype(np.float64))
+
+        if radii is None:
+            # M7.3.10: Adaptive BPA radii from nearest-neighbor distance distribution
+            pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+            nn_dists = []
+            sample_step = max(1, len(pcd_pts) // 500)
+            for idx in range(0, len(pcd_pts), sample_step):
+                [_, idxs, dists] = pcd_tree.search_knn_vector_3d(pcd.points[idx], 2)
+                if len(dists) > 1:
+                    nn_dists.append(np.sqrt(dists[1]))
+            d_nn = float(np.median(nn_dists)) if nn_dists else 0.020
+            radii = [float(1.8 * d_nn), float(3.2 * d_nn), float(6.0 * d_nn)]
+
         mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
             pcd, o3d.utility.DoubleVector(radii)
         )
@@ -354,29 +372,21 @@ class RegionSceneAssembler:
         valid = (e0 < max_edge_len) & (e1 < max_edge_len) & (e2 < max_edge_len)
         f = f[valid]
 
-        # M7.3.9 Phase 5: Normal divergence check - reject triangles bridging between wall and projecting basin rim
-        if len(f) > 0 and len(pcd_norms) == len(v):
-            fn0 = pcd_norms[f[:, 0]]
-            fn1 = pcd_norms[f[:, 1]]
-            fn2 = pcd_norms[f[:, 2]]
-            dot01 = np.sum(fn0 * fn1, axis=1)
-            dot12 = np.sum(fn1 * fn2, axis=1)
-            dot20 = np.sum(fn2 * fn0, axis=1)
-            consistent_normals = (dot01 > 0.15) & (dot12 > 0.15) & (dot20 > 0.15)
-            f = f[consistent_normals]
-
         v_clean, f_clean, _ = PolygonSoupRepair.repair_mesh(v, f)
 
-        # Taubin smoothing to fair out monocular depth jitter without shrinkage
+        # 3. Volume-preserving Taubin smoothing (30 iterations) with displacement measurement
         if len(f_clean) > 0:
+            v_before = v_clean.copy()
             m_tmp = o3d.geometry.TriangleMesh()
             m_tmp.vertices = o3d.utility.Vector3dVector(v_clean.astype(np.float64))
             m_tmp.triangles = o3d.utility.Vector3iVector(f_clean.astype(np.int32))
-            m_tmp = m_tmp.filter_smooth_taubin(number_of_iterations=8)
+            m_tmp = m_tmp.filter_smooth_taubin(number_of_iterations=30)
             v_clean = np.asarray(m_tmp.vertices, dtype=np.float32)
             f_clean = np.asarray(m_tmp.triangles, dtype=np.uint32)
+            mean_disp = float(np.mean(np.linalg.norm(v_clean - v_before, axis=1)))
+            print(f"    Sculpture Taubin fairing: {len(f_clean):,} faces, mean vertex displacement: {mean_disp*1000.0:.2f} mm")
 
-        # Orient faces consistently towards actual cameras
+        # 4. Topological manifold component winding propagation
         from photo_reconstruction.normal_orientation import NormalOrientationEngine
         norm_engine = NormalOrientationEngine()
         cams_for_orient = camera_centers if camera_centers is not None else np.array([[0.0, 0.0, 2.0]], dtype=np.float32)
@@ -389,33 +399,23 @@ class RegionSceneAssembler:
         colors: np.ndarray,
         normals: np.ndarray,
         radii: Optional[List[float]] = None,
-        max_edge_len: float = 0.16,
+        max_edge_len: float = 0.20,
         camera_centers: Optional[np.ndarray] = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Mesh general architectural relief (basin, fountain_frame) via Multi-Radius BPA with Laplacian fairing.
-        Uses actual registered camera positions for normal and face orientation (M7.3.8 Issue 3).
+        Mesh general architectural relief (basin, fountain_frame) via smoothed Multi-Radius BPA (M7.3.10).
         """
         if len(points) < 30:
             return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint32)
 
-        pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points.astype(np.float64)))
-        pcd = pcd.voxel_down_sample(voxel_size=0.025)
-        pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.10, max_nn=30))
+        pcd_raw = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points.astype(np.float64)))
+        cl, ind = pcd_raw.remove_statistical_outlier(nb_neighbors=25, std_ratio=1.2)
+        pcd = pcd_raw.select_by_index(ind) if len(ind) >= 30 else pcd_raw
+
+        pcd = pcd.voxel_down_sample(voxel_size=0.020)
+        pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.10, max_nn=35))
         pcd_pts = np.asarray(pcd.points, dtype=np.float32)
         pcd_norms = np.asarray(pcd.normals, dtype=np.float32)
-
-        if radii is None:
-            # M7.3.9 Phase 5: Adaptive BPA radii from nearest-neighbor distance distribution
-            pcd_tree = o3d.geometry.KDTreeFlann(pcd)
-            nn_dists = []
-            sample_step = max(1, len(pcd_pts) // 500)
-            for idx in range(0, len(pcd_pts), sample_step):
-                [_, idxs, dists] = pcd_tree.search_knn_vector_3d(pcd.points[idx], 2)
-                if len(dists) > 1:
-                    nn_dists.append(np.sqrt(dists[1]))
-            d_nn = float(np.median(nn_dists)) if nn_dists else 0.030
-            radii = [float(1.2 * d_nn), float(2.5 * d_nn), float(5.0 * d_nn)]
 
         if camera_centers is not None and len(camera_centers) > 0:
             los = np.zeros_like(pcd_pts)
@@ -429,6 +429,31 @@ class RegionSceneAssembler:
         pcd_norms[flip] = -pcd_norms[flip]
         pcd.normals = o3d.utility.Vector3dVector(pcd_norms.astype(np.float64))
 
+        # Tangent-plane fairing
+        kdtree = o3d.geometry.KDTreeFlann(pcd)
+        smooth_pts = pcd_pts.copy()
+        sample_step_fair = max(1, len(pcd_pts) // 1000)
+        for i in range(0, len(pcd_pts), sample_step_fair):
+            [k, idxs, _] = kdtree.search_radius_vector_3d(pcd_pts[i], 0.05)
+            if k > 3:
+                n_local = np.mean(pcd_norms[idxs], axis=0)
+                n_local /= max(float(np.linalg.norm(n_local)), 1e-6)
+                c_local = np.mean(pcd_pts[idxs], axis=0)
+                dist = np.dot(pcd_pts[i] - c_local, n_local)
+                smooth_pts[i] = pcd_pts[i] - 0.45 * dist * n_local
+        pcd.points = o3d.utility.Vector3dVector(smooth_pts.astype(np.float64))
+
+        if radii is None:
+            pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+            nn_dists = []
+            sample_step = max(1, len(pcd_pts) // 500)
+            for idx in range(0, len(pcd_pts), sample_step):
+                [_, idxs, dists] = pcd_tree.search_knn_vector_3d(pcd.points[idx], 2)
+                if len(dists) > 1:
+                    nn_dists.append(np.sqrt(dists[1]))
+            d_nn = float(np.median(nn_dists)) if nn_dists else 0.025
+            radii = [float(1.8 * d_nn), float(3.2 * d_nn), float(6.0 * d_nn)]
+
         mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
             pcd, o3d.utility.DoubleVector(radii)
         )
@@ -444,26 +469,18 @@ class RegionSceneAssembler:
         valid = (e0 < max_edge_len) & (e1 < max_edge_len) & (e2 < max_edge_len)
         f = f[valid]
 
-        # M7.3.9 Phase 5: Normal divergence check - reject triangles bridging between wall and projecting basin rim
-        if len(f) > 0 and len(pcd_norms) == len(v):
-            fn0 = pcd_norms[f[:, 0]]
-            fn1 = pcd_norms[f[:, 1]]
-            fn2 = pcd_norms[f[:, 2]]
-            dot01 = np.sum(fn0 * fn1, axis=1)
-            dot12 = np.sum(fn1 * fn2, axis=1)
-            dot20 = np.sum(fn2 * fn0, axis=1)
-            consistent_normals = (dot01 > 0.15) & (dot12 > 0.15) & (dot20 > 0.15)
-            f = f[consistent_normals]
-
         v_clean, f_clean, _ = PolygonSoupRepair.repair_mesh(v, f)
 
         if len(f_clean) > 0:
+            v_before = v_clean.copy()
             m_tmp = o3d.geometry.TriangleMesh()
             m_tmp.vertices = o3d.utility.Vector3dVector(v_clean.astype(np.float64))
             m_tmp.triangles = o3d.utility.Vector3iVector(f_clean.astype(np.int32))
-            m_tmp = m_tmp.filter_smooth_taubin(number_of_iterations=8)
+            m_tmp = m_tmp.filter_smooth_taubin(number_of_iterations=30)
             v_clean = np.asarray(m_tmp.vertices, dtype=np.float32)
             f_clean = np.asarray(m_tmp.triangles, dtype=np.uint32)
+            mean_disp = float(np.mean(np.linalg.norm(v_clean - v_before, axis=1)))
+            print(f"    Relief Taubin fairing: {len(f_clean):,} faces, mean vertex displacement: {mean_disp*1000.0:.2f} mm")
 
         from photo_reconstruction.normal_orientation import NormalOrientationEngine
         norm_engine = NormalOrientationEngine()
@@ -575,6 +592,21 @@ class RegionSceneAssembler:
                     cam.T_cam_world = np.linalg.inv(cam.T_world_cam)
             cam_centers = np.array([cam.camera_center for cam in camera_models.values()], dtype=np.float32)
 
+            # Re-align uncertain diagnostic cloud into canonical coordinate frame
+            unc_file = self.session_dir / "dense_cloud" / "uncertain_diagnostic_cloud.ply"
+            if unc_file.exists():
+                try:
+                    pcd_u = o3d.io.read_point_cloud(str(unc_file))
+                    if len(pcd_u.points) > 0:
+                        u_pts = np.asarray(pcd_u.points)
+                        R_c = can_res.T_canonical_world[:3, :3]
+                        t_c = can_res.T_canonical_world[:3, 3]
+                        u_pts_aligned = (R_c @ u_pts.T).T + t_c
+                        pcd_u.points = o3d.utility.Vector3dVector(u_pts_aligned)
+                        o3d.io.write_point_cloud(str(unc_file), pcd_u)
+                except Exception as e:
+                    print(f"Notice: Diagnostic cloud alignment: {e}")
+
         # 2. Data-Driven Region Segmentation
         if can_res.is_canonical_established:
             segmented = self.canonical_aligner.segment_canonical_regions(pts_use, colors, norms_use, can_res)
@@ -606,12 +638,29 @@ class RegionSceneAssembler:
             print(f"  --> Meshing component '{r_id}' ({len(r_pts):,} points)...", flush=True)
 
             if r_id == "pavement":
-                # M7.3.9 Phase 4: Mesh strictly within observed support (alpha shape / bounded Delaunay)
-                m_v, m_f = self.mesh_pavement_planar(r_pts, r_cols, r_norms, max_edge_len=0.25)
+                if can_res.is_canonical_established:
+                    y_front = min(4.2, float(np.min(r_pts[:, 1])) if len(r_pts) > 0 else 4.2)
+                    m_v, m_f = self.mesh_pavement_continuous_grid(
+                        y_wall=can_res.wall_y,
+                        half_width=max(3.8, can_res.courtyard_width / 2.0),
+                        y_front=y_front,
+                        z_ground=0.0,
+                        grid_step=0.06,
+                    )
+                else:
+                    m_v, m_f = self.mesh_pavement_planar(r_pts, r_cols, r_norms, max_edge_len=0.35)
 
             elif r_id == "wall":
-                # M7.3.9 Phase 4: Mesh strictly within observed support (alpha shape / bounded Delaunay)
-                m_v, m_f = self.mesh_wall_planar(r_pts, r_cols, r_norms, max_edge_len=0.25)
+                if can_res.is_canonical_established:
+                    m_v, m_f = self.mesh_wall_continuous_grid(
+                        y_wall=can_res.wall_y,
+                        half_width=max(3.8, can_res.courtyard_width / 2.0),
+                        z_min=0.35,
+                        z_max=5.40,
+                        grid_step=0.06,
+                    )
+                else:
+                    m_v, m_f = self.mesh_wall_planar(r_pts, r_cols, r_norms, max_edge_len=0.35)
 
             elif r_id == "sculpture":
                 m_v, m_f = self.mesh_sculpture_high_detail(r_pts, r_cols, r_norms, camera_centers=cam_centers)
