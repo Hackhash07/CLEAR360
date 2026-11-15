@@ -99,6 +99,7 @@ def run_multiview_fusion(
     voxel_size: float = 0.025,
     normal_compatibility: float = 0.707,
     minimum_verified_samples: int = 1000,
+    minimum_support_count: int = 1,
 ) -> dict[str, Any]:
     if stride < 1:
         raise ValueError("--stride must be >= 1.")
@@ -106,6 +107,8 @@ def run_multiview_fusion(
         raise ValueError("--voxel-size must be > 0.")
     if not (-1.0 <= normal_compatibility <= 1.0):
         raise ValueError("--normal-compatibility must be between -1 and 1.")
+    if minimum_support_count not in (1, 2):
+        raise ValueError("--minimum-support-count must be 1 or 2.")
 
     sparse_root = output_dir / "sfm_work" / "sparse"
     model_dir, reconstruction = _load_best_colmap_model(sparse_root)
@@ -193,6 +196,7 @@ def run_multiview_fusion(
         "voxel_size_sfm_units": float(voxel_size),
         "normal_compatibility_dot_threshold": float(normal_compatibility),
         "minimum_verified_source_samples": int(minimum_verified_samples),
+        "minimum_support_count_from_other_views": int(minimum_support_count),
         "note": (
             "This stage runs actual M7.3.6 multi-view geometric consensus, normal "
             "estimation, and normal-compatible voxel fusion. It does not run MVS "
@@ -221,6 +225,7 @@ def run_multiview_fusion(
     engine = M736GeometricConsensusEngine(
         normal_compat_thresh=normal_compatibility,
         voxel_fusion_size=voxel_size,
+        minimum_support_count=minimum_support_count,
     )
     points, colors, normals, weights, engine_report = (
         engine.evaluate_multi_view_consensus(
@@ -244,7 +249,11 @@ def run_multiview_fusion(
     if len(normals) == len(points):
         cloud.normals = o3d.utility.Vector3dVector(normals.astype(np.float64))
 
-    run_dir = output_dir / "multiview_consensus_fusion"
+    run_dir = output_dir / (
+        "multiview_consensus_fusion"
+        if args.minimum_support_count == 1
+        else f"multiview_consensus_fusion_support{args.minimum_support_count}"
+    )
     run_dir.mkdir(parents=True, exist_ok=True)
     ply_path = run_dir / "verified_multiview_consensus_cloud.ply"
     if not o3d.io.write_point_cloud(str(ply_path), cloud, write_ascii=False):
@@ -260,6 +269,8 @@ def run_multiview_fusion(
     verified_samples = (
         engine_counts["multi_view_consensus_samples"]
         + engine_counts["single_other_view_validated_samples"]
+        if minimum_support_count == 1
+        else engine_counts["multi_view_consensus_samples"]
     )
 
     report.update({
@@ -317,6 +328,13 @@ def main() -> int:
     parser.add_argument("--voxel-size", type=float, default=0.025)
     parser.add_argument("--normal-compatibility", type=float, default=0.707)
     parser.add_argument("--minimum-verified-samples", type=int, default=1000)
+    parser.add_argument(
+        "--minimum-support-count",
+        type=int,
+        choices=(1, 2),
+        default=1,
+        help="Require each source sample to agree with at least this many other views.",
+    )
     args = parser.parse_args()
 
     images_dir = Path(args.images).expanduser().resolve()
@@ -342,6 +360,7 @@ def main() -> int:
         voxel_size=args.voxel_size,
         normal_compatibility=args.normal_compatibility,
         minimum_verified_samples=args.minimum_verified_samples,
+        minimum_support_count=args.minimum_support_count,
     )
 
     run_dir = output_dir / "multiview_consensus_fusion"
@@ -354,12 +373,13 @@ def main() -> int:
           f"{report['registered_depth_views']}")
     print("Accepted views:", ", ".join(report["calibration_accepted_views"]))
     print("Selected views:", ", ".join(report["selected_views"]))
+    print(f"Minimum support from other views: {args.minimum_support_count}")
     print(f"Status: {report['status']}")
 
     if "engine_counts" in report:
         counts = report["engine_counts"]
         print(f"Candidate source samples: {counts['total_candidate_samples']:,}")
-        print(f"Verified source samples: {report['verified_source_samples']:,}")
+        print(f"Verified source samples (at selected support): {report['verified_source_samples']:,}")
         print(
             f"Multi-view consensus samples: {counts['multi_view_consensus_samples']:,}"
         )
