@@ -342,6 +342,13 @@ class PhoneReconstructionPipeline:
             with open(session_dir / "depth_alignment_report.json", "w", encoding="utf-8") as f_diag:
                 json.dump(align_diag, f_diag, indent=2)
 
+        if mvs_flag and len(depth_maps) < 2:
+            raise RuntimeError(
+                "Strict multi-view reconstruction stopped: fewer than two depth maps are "
+                "available for validated geometric fusion. Check the saved depth alignment "
+                "diagnostics; no unverified monocular depth was substituted."
+            )
+
         dense_engine = DenseReconstructor(voxel_size=preset_cfg["voxel_size"])
         dense_camera_models = trusted_camera_models if mvs_flag else camera_models
         dense_pts, dense_cols, dense_norms = dense_engine.reconstruct_dense(
