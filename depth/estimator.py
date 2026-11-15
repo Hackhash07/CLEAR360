@@ -77,8 +77,9 @@ class DepthEstimator:
     ----------
     weights_path : str or Path, optional
         Path to depth_anything_v2_metric_vkitti_vits.pth.
-    encoder : str
-        Encoder backbone variant ('vits', 'vitb', 'vitl'). Default: 'vits'.
+    encoder : str or None
+        Encoder backbone variant ('vits', 'vitb', 'vitl'). If omitted, infer it
+        from the official checkpoint filename and fall back to 'vits'.
     max_depth : float
         Maximum metric depth cutoff (metres). Default: 80.0 m.
     input_size : int
@@ -95,10 +96,19 @@ class DepthEstimator:
 
     DEPTH_SOURCE_TAG = "ai_depth_anything_v2_metric"
 
+    @staticmethod
+    def _infer_encoder_from_checkpoint(weights_path: Union[str, Path]) -> str:
+        """Infer ViT-S/B/L from official metric checkpoint filename suffix."""
+        stem = Path(weights_path).stem.lower()
+        for encoder in ("vits", "vitb", "vitl"):
+            if stem.endswith(f"_{encoder}") or f"_{encoder}_" in stem:
+                return encoder
+        return "vits"
+
     def __init__(
         self,
         weights_path: Optional[Union[str, Path]] = None,
-        encoder: str = "vits",
+        encoder: Optional[str] = None,
         max_depth: float = 80.0,
         input_size: int = 518,
         device: Optional[str] = "cpu",  # Default to CPU on macOS to prevent libtorch MPS crash
@@ -107,7 +117,12 @@ class DepthEstimator:
             weights_path = PROJECT_ROOT / "weights" / "depth_anything_v2_metric_vkitti_vits.pth"
 
         self.weights_path = Path(weights_path)
-        self.encoder = encoder
+        self.encoder = encoder or self._infer_encoder_from_checkpoint(self.weights_path)
+        if self.encoder not in self.MODEL_CONFIGS:
+            raise ValueError(
+                f"Unsupported Depth Anything V2 encoder '{self.encoder}'. "
+                f"Choose one of: {', '.join(self.MODEL_CONFIGS)}."
+            )
         self.max_depth = float(max_depth)
         self.input_size = int(input_size)
 
