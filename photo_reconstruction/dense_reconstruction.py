@@ -211,18 +211,11 @@ class DenseReconstructor:
         """
         all_pts: List[np.ndarray] = []
         all_cols: List[np.ndarray] = []
-
-        # Include sparse SfM points if provided
-        if sparse_points is not None and len(sparse_points) > 0:
-            all_pts.append(sparse_points)
-            if sparse_colors is not None and len(sparse_colors) == len(sparse_points):
-                all_cols.append(sparse_colors)
-            else:
-                all_cols.append(np.ones((len(sparse_points), 3), dtype=np.float32) * 0.7)
+        all_normals: List[np.ndarray] = []
+        mvs_done = False
 
         # If dense depth maps are supplied (e.g. from Depth Anything V2 or stereo)
         if depth_maps:
-            mvs_done = False
             if use_mvs_verification and len(camera_poses) >= 2 and camera_models:
                 try:
                     from photo_reconstruction.m7_3_6_fusion import M736GeometricConsensusEngine
@@ -240,9 +233,14 @@ class DenseReconstructor:
                         images_rgb=imgs_rgb_dict,
                         stride=max(4, int(self.voxel_size * 150)),
                     )
-                    if len(f_pts) >= 500:
-                        all_pts.append(f_pts)
-                        all_cols.append(f_cols)
+                    if len(f_pts) >= 1000 and len(f_norms) == len(f_pts):
+                        # M7.3.6 already computes camera-aware, normal-compatible
+                        # fused normals. Preserve them; recomputing every normal
+                        # toward one average camera centre is invalid for an
+                        # indoor scene whose surfaces surround the camera path.
+                        all_pts = [f_pts]
+                        all_cols = [f_cols]
+                        all_normals = [f_norms]
                         mvs_done = True
 
                         # M7.3.9 Phase 2: Save uncertain points strictly into separate diagnostic layer
@@ -332,6 +330,16 @@ class DenseReconstructor:
                     all_pts.append(pts_world.astype(np.float32))
                     all_cols.append(cols.astype(np.float32))
 
+        # Sparse SfM points remain useful for draft / non-MVS reconstruction.
+        # For verified MVS, use the fused point cloud and its corresponding normals
+        # as one consistent geometry product rather than mixing in sparse-only points.
+        if not mvs_done and sparse_points is not None and len(sparse_points) > 0:
+            all_pts.append(sparse_points)
+            if sparse_colors is not None and len(sparse_colors) == len(sparse_points):
+                all_cols.append(sparse_colors)
+            else:
+                all_cols.append(np.ones((len(sparse_points), 3), dtype=np.float32) * 0.7)
+
         if not all_pts:
             return (
                 np.zeros((0, 3), dtype=np.float32),
@@ -341,11 +349,19 @@ class DenseReconstructor:
 
         merged_pts = np.vstack(all_pts)
         merged_cols = np.vstack(all_cols)
+        merged_normals = np.vstack(all_normals) if all_normals else None
+        has_fused_normals = (
+            merged_normals is not None
+            and len(merged_normals) == len(merged_pts)
+            and np.all(np.isfinite(merged_normals))
+        )
 
         # Build Open3D point cloud for cleaning and normal estimation
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(merged_pts.astype(np.float64))
         pcd.colors = o3d.utility.Vector3dVector(merged_cols.astype(np.float64))
+        if has_fused_normals:
+            pcd.normals = o3d.utility.Vector3dVector(merged_normals.astype(np.float64))
 
         # 1. Voxel Grid Downsampling
         if self.voxel_size > 0.005 and len(pcd.points) > 100:
@@ -358,19 +374,25 @@ class DenseReconstructor:
                 std_ratio=self.std_ratio,
             )
 
-        # 3. Normal Estimation
+        # 3. Normal Estimation / Orientation
         if len(pcd.points) >= 3:
-            pcd.estimate_normals(
-                search_param=o3d.geometry.KDTreeSearchParamHybrid(
-                    radius=self.voxel_size * 2.5, max_nn=30
+            if has_fused_normals and len(pcd.normals) == len(pcd.points):
+                # MVS consensus normals are estimated and oriented per source view,
+                # then fused only when directions agree. Do not overwrite them with
+                # a single average-camera orientation (invalid for enclosing rooms).
+                pcd.normalize_normals()
+            else:
+                pcd.estimate_normals(
+                    search_param=o3d.geometry.KDTreeSearchParamHybrid(
+                        radius=self.voxel_size * 2.5, max_nn=30
+                    )
                 )
-            )
-            if camera_poses:
-                cam_centers = [pose[:3, 3] for pose in camera_poses.values()]
-                avg_cam = np.mean(cam_centers, axis=0)
-                pcd.orient_normals_towards_camera_location(avg_cam)
-            elif len(pcd.points) > 15:
-                pcd.orient_normals_consistent_tangent_plane(k=min(15, len(pcd.points) - 1))
+                if camera_poses:
+                    cam_centers = [pose[:3, 3] for pose in camera_poses.values()]
+                    avg_cam = np.mean(cam_centers, axis=0)
+                    pcd.orient_normals_towards_camera_location(avg_cam)
+                elif len(pcd.points) > 15:
+                    pcd.orient_normals_consistent_tangent_plane(k=min(15, len(pcd.points) - 1))
             normals = np.asarray(pcd.normals, dtype=np.float32)
         else:
             normals = np.zeros((len(pcd.points), 3), dtype=np.float32)
