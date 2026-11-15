@@ -138,7 +138,7 @@ def _run_depth_calibration(
 
     camera_models = sfm_result.get("camera_models", {})
     sparse_tracks = sfm_result.get("sparse_tracks", {})
-    if len(camera_models) < 2 or not sparse_tracks:
+    if len(camera_models) < 2 or not any(sparse_tracks.values()):
         return {
             "status": "skipped",
             "reason": (
