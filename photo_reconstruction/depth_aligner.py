@@ -165,7 +165,13 @@ class SfMDepthAligner:
                     p_cam = cam.T_cam_world[:3, :3] @ xyz_w + cam.T_cam_world[:3, 3]
                     z_sfm = float(p_cam[2])
                     u, v = track["xy"]
-                    ui, vi = int(round(float(u))), int(round(float(v)))
+                    # COLMAP feature coordinates use the calibrated camera's
+                    # resolution. Cached monocular depth maps are at the source
+                    # image resolution, so map pixel centres between the grids.
+                    scale_x = float(W) / float(max(int(cam.width), 1))
+                    scale_y = float(H) / float(max(int(cam.height), 1))
+                    ui = int(round((float(u) + 0.5) * scale_x - 0.5))
+                    vi = int(round((float(v) + 0.5) * scale_y - 0.5))
                     if not (self.min_depth <= z_sfm <= self.max_depth):
                         continue
                     if not (0 <= vi < H and 0 <= ui < W):
