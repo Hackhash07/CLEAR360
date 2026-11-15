@@ -256,19 +256,31 @@ class ViewerInfoPanel(QtWidgets.QWidget):
     def set_app_mode(self, mode: str):
         """Switch info panel display based on active application mode (M7.3.10 Part 10)."""
         if mode == "phone":
-            self.grp_clearance.hide()
-            self.grp_inspector.hide()
-            self.grp_table.hide()
-            self.grp_stats.hide()
-            self.grp_health.hide()
-            self.grp_phone_diagnostics.show()
+            if hasattr(self, "disclaimer_card"):
+                self.disclaimer_card.hide()
+            if hasattr(self, "grp_inspector"):
+                self.grp_inspector.hide()
+            if hasattr(self, "grp_table"):
+                self.grp_table.hide()
+            if hasattr(self, "grp_stats"):
+                self.grp_stats.hide()
+            if hasattr(self, "grp_health"):
+                self.grp_health.hide()
+            if hasattr(self, "grp_phone_diagnostics"):
+                self.grp_phone_diagnostics.show()
         else:
-            self.grp_clearance.show()
-            self.grp_inspector.show()
-            self.grp_table.show()
-            self.grp_stats.show()
-            self.grp_health.show()
-            self.grp_phone_diagnostics.hide()
+            if hasattr(self, "disclaimer_card"):
+                self.disclaimer_card.show()
+            if hasattr(self, "grp_inspector"):
+                self.grp_inspector.show()
+            if hasattr(self, "grp_table"):
+                self.grp_table.show()
+            if hasattr(self, "grp_stats"):
+                self.grp_stats.show()
+            if hasattr(self, "grp_health"):
+                self.grp_health.show()
+            if hasattr(self, "grp_phone_diagnostics"):
+                self.grp_phone_diagnostics.hide()
 
     def update_phone_diagnostics(
         self,

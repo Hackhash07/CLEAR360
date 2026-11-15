@@ -12,6 +12,7 @@ Integrates:
 
 import sys
 import time
+import json
 from typing import Optional
 from pathlib import Path
 from PySide6 import QtWidgets, QtCore, QtGui
