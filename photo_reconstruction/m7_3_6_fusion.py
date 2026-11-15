@@ -100,6 +100,11 @@ class M736GeometricConsensusEngine:
                 scaled[name] = camera
         return scaled
 
+    def _verified_support_mask(self, support_counts: np.ndarray) -> np.ndarray:
+        """Select samples supported by the configured number of other cameras."""
+        counts = np.asarray(support_counts, dtype=np.int32)
+        return counts >= self.minimum_support_count
+
     @staticmethod
     def adaptive_depth_threshold(depth_z: float) -> float:
         """
@@ -265,7 +270,7 @@ class M736GeometricConsensusEngine:
         # Production default keeps samples supported by >=1 other view.
         # A stricter diagnostic mode can require >=2 other views to isolate
         # multi-view consensus surfaces from single-other-view support.
-        verified_mask = support_counts >= self.minimum_support_count
+        verified_mask = self._verified_support_mask(support_counts)
         clean_pts = collapsed_pts[verified_mask]
         clean_cols = all_colors[verified_mask]
         clean_weights = (support_counts[verified_mask] + 1).astype(np.float32)
