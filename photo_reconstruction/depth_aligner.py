@@ -1,36 +1,19 @@
 """
-photo_reconstruction/depth_aligner.py — Robust SfM-Scale Depth Alignment
-=======================================================================
+photo_reconstruction/depth_aligner.py — held-out SfM depth calibration.
 
-Aligns single-view monocular depth predictions with the metric/arbitrary coordinate
-gauge established by COLMAP Structure-from-Motion.
+Fits an affine mapping from monocular depth to the SfM camera-Z gauge per view:
+    z_sfm = scale * depth_mono + offset
 
-Mathematical Formulation:
-  For each camera view i with 3D triangulated sparse points P_k:
-    1. Transform P_k to camera space: P_{cam, k} = R_i P_k + t_i.
-    2. Extract axial Z-depth: Z_{SfM, k} = P_{cam, k}[2].
-    3. Sample raw monocular depth at corresponding 2D observation: D_{mono, k} = D_i(v_k, u_k).
-    4. Compute scale ratio: r(i, k) = Z_{SfM, k} / D_{mono, k}.
-    5. Robust scale estimate:
-         s_i = robust_median({ r(i, k) })
-    6. Rescale:
-         D_{aligned, i} = s_i * D_{mono, i}
-
-Comparison Modes:
-  - 'global': A single robust pooled scale factor across all images.
-  - 'per_view': Independent scale factors per image.
-  - 'regularized': Per-view factor regularized toward the pooled global factor.
-
-Labeling:
-  Strictly labeled 'SFM-SCALE ALIGNED DEPTH'. Absolute physical metric scaling requires
-  an independent verified reference distance.
+Calibration uses training anchors only. A separate held-out set determines whether
+that view is trustworthy enough for multi-view geometric fusion. Rejected views are
+not returned as aligned depth maps.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
 
 from photo_reconstruction.camera_model import PhoneCameraModel
@@ -38,7 +21,6 @@ from photo_reconstruction.camera_model import PhoneCameraModel
 
 @dataclass
 class ViewAlignmentStats:
-    """Statistical summary of SfM-scale depth alignment for a single view."""
     image_name: str
     num_anchors: int
     median_scale: float
@@ -53,11 +35,13 @@ class ViewAlignmentStats:
     residual_reduction_pct: float
     success: bool
     status_message: str
+    depth_offset: float = 0.0
+    validation_median_relative_error: float = 1.0
+    validation_p90_relative_error: float = 1.0
 
 
 @dataclass
 class AlignmentReport:
-    """Full dataset alignment report containing per-view and global diagnostics."""
     mode: str
     global_scale: float
     total_anchors: int
@@ -66,7 +50,7 @@ class AlignmentReport:
 
 
 class SfMDepthAligner:
-    """Robust estimator for SfM-scale alignment of monocular depth maps."""
+    """Robust affine calibration with genuine held-out acceptance checks."""
 
     def __init__(
         self,
@@ -77,25 +61,73 @@ class SfMDepthAligner:
         min_anchors: int = 15,
         regularization_prior_weight: float = 30.0,
         validation_split_ratio: float = 0.20,
+        max_validation_median_relative_error: float = 0.04,
+        max_validation_p90_relative_error: float = 0.12,
     ):
-        """
-        Parameters
-        ----------
-        mode : str ('global', 'per_view', 'regularized')
-        max_reprojection_error : float (px)
-        min_depth : float (m)
-        max_depth : float (m)
-        min_anchors : int
-        regularization_prior_weight : float (N_0 weight for regularizing toward global)
-        validation_split_ratio : float (held-out validation fraction: e.g. 0.20)
-        """
         self.mode = mode.lower()
+        if self.mode not in {"global", "per_view", "regularized"}:
+            raise ValueError(f"Unsupported depth alignment mode: {mode}")
         self.max_reprojection_error = float(max_reprojection_error)
         self.min_depth = float(min_depth)
         self.max_depth = float(max_depth)
         self.min_anchors = int(min_anchors)
         self.prior_weight = float(regularization_prior_weight)
         self.val_split = float(validation_split_ratio)
+        self.max_val_median_rel = float(max_validation_median_relative_error)
+        self.max_val_p90_rel = float(max_validation_p90_relative_error)
+
+    @staticmethod
+    def _robust_affine_fit(
+        mono_depth: np.ndarray,
+        sfm_depth: np.ndarray,
+        seed: int = 42,
+    ) -> Tuple[float, float]:
+        """Fit y = scale*x + offset using median pairwise slopes and robust refit."""
+        x = np.asarray(mono_depth, dtype=np.float64).ravel()
+        y = np.asarray(sfm_depth, dtype=np.float64).ravel()
+        valid = np.isfinite(x) & np.isfinite(y)
+        x, y = x[valid], y[valid]
+        if len(x) < 5 or float(np.ptp(x)) < 1e-5:
+            raise ValueError("Insufficient depth variation for affine calibration")
+
+        rng = np.random.default_rng(seed)
+        n_pairs = min(8192, max(512, len(x) * 12))
+        i = rng.integers(0, len(x), size=n_pairs)
+        j = rng.integers(0, len(x), size=n_pairs)
+        dx = x[j] - x[i]
+        dy = y[j] - y[i]
+        min_dx = max(1e-4, float(np.std(x)) * 1e-3)
+        keep = (np.abs(dx) > min_dx) & np.isfinite(dy / np.where(dx == 0, 1.0, dx))
+        slopes = dy[keep] / dx[keep]
+        slopes = slopes[np.isfinite(slopes) & (slopes > 0.0)]
+        if len(slopes) < 10:
+            raise ValueError("Could not estimate a positive depth scale")
+        scale = float(np.median(slopes))
+        offset = float(np.median(y - scale * x))
+
+        residual = y - (scale * x + offset)
+        residual_center = float(np.median(residual))
+        residual_mad = float(1.4826 * np.median(np.abs(residual - residual_center)))
+        y_scale = max(float(np.median(np.abs(y))), 1e-3)
+        cutoff = max(3.5 * residual_mad, 0.01 * y_scale, 1e-4)
+        inliers = np.abs(residual - residual_center) <= cutoff
+
+        if int(np.sum(inliers)) >= max(8, int(0.5 * len(x))):
+            A = np.column_stack([x[inliers], np.ones(int(np.sum(inliers)))])
+            fitted, *_ = np.linalg.lstsq(A, y[inliers], rcond=None)
+            fitted_scale, fitted_offset = float(fitted[0]), float(fitted[1])
+            if np.isfinite(fitted_scale) and fitted_scale > 0 and np.isfinite(fitted_offset):
+                scale, offset = fitted_scale, fitted_offset
+
+        return scale, offset
+
+    @staticmethod
+    def _split_indices(n: int, name: str, val_ratio: float) -> Tuple[np.ndarray, np.ndarray]:
+        seed = 42 + sum(name.encode("utf-8"))
+        rng = np.random.default_rng(seed)
+        perm = rng.permutation(n)
+        n_train = min(n - 3, max(8, int(round(n * (1.0 - val_ratio)))))
+        return perm[:n_train], perm[n_train:]
 
     def align_depth_maps(
         self,
@@ -103,160 +135,166 @@ class SfMDepthAligner:
         camera_models: Dict[str, PhoneCameraModel],
         sparse_tracks: Dict[str, List[Dict[str, Any]]],
     ) -> AlignmentReport:
-        """
-        Align all depth maps to the SfM scale using sparse triangulated anchors.
+        """Calibrate each view on training anchors; return only validated depth maps."""
+        pairs_by_view: Dict[str, np.ndarray] = {}
+        ratios_by_view: Dict[str, np.ndarray] = {}
+        split_by_view: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
+        train_models: Dict[str, Tuple[float, float]] = {}
 
-        Parameters
-        ----------
-        depth_maps : Dict[str, np.ndarray]
-            Raw monocular depth maps (H, W).
-        camera_models : Dict[str, PhoneCameraModel]
-            Authoritative camera models with world/camera extrinsics.
-        sparse_tracks : Dict[str, List[Dict[str, Any]]]
-            Mapping of image_name -> list of observations:
-            [{'xy': (u, v), 'xyz': (x, y, z), 'error': float}, ...]
-
-        Returns
-        -------
-        AlignmentReport
-        """
-        per_view_ratios: Dict[str, np.ndarray] = {}
-        per_view_pairs: Dict[str, np.ndarray] = {}
-
-        # 1. Collect valid anchor points for each view
-        for name, tracks in sparse_tracks.items():
-            if name not in depth_maps or name not in camera_models:
+        for name, d_map in depth_maps.items():
+            if name not in camera_models:
+                pairs_by_view[name] = np.zeros((0, 2), dtype=np.float64)
                 continue
 
-            d_map = depth_maps[name]
+            d_map = np.asarray(d_map, dtype=np.float32)
+            if d_map.ndim != 2:
+                pairs_by_view[name] = np.zeros((0, 2), dtype=np.float64)
+                continue
+            H, W = d_map.shape
             cam = camera_models[name]
-            H, W = d_map.shape[:2]
+            pairs: List[Tuple[float, float]] = []
 
-            pairs: List[Tuple[float, float]] = []  # (z_sfm, d_mono)
-            for trk in tracks:
-                err = trk.get("error", 0.0)
-                if err > self.max_reprojection_error:
-                    continue
-
-                xyz_w = np.asarray(trk["xyz"], dtype=np.float64)
-                # Compute camera-space axial Z-depth: P_cam = T_cam_world @ P_world
-                p_cam = cam.T_cam_world[:3, :3] @ xyz_w + cam.T_cam_world[:3, 3]
-                z_sfm = p_cam[2]
-                if z_sfm < self.min_depth or z_sfm > self.max_depth:
-                    continue
-
-                u, v = trk["xy"]
-                u_i, v_i = int(round(u)), int(round(v))
-                if 0 <= v_i < H and 0 <= u_i < W:
-                    d_mono = float(d_map[v_i, u_i])
-                    if d_mono >= self.min_depth and d_mono <= self.max_depth:
-                        # Reject local depth boundary gradient outliers
+            for track in sparse_tracks.get(name, []):
+                try:
+                    error = float(track.get("error", 0.0))
+                    if not np.isfinite(error) or error > self.max_reprojection_error:
+                        continue
+                    xyz_w = np.asarray(track["xyz"], dtype=np.float64).reshape(3)
+                    if not np.all(np.isfinite(xyz_w)):
+                        continue
+                    p_cam = cam.T_cam_world[:3, :3] @ xyz_w + cam.T_cam_world[:3, 3]
+                    z_sfm = float(p_cam[2])
+                    u, v = track["xy"]
+                    ui, vi = int(round(float(u))), int(round(float(v)))
+                    if not (self.min_depth <= z_sfm <= self.max_depth):
+                        continue
+                    if not (0 <= vi < H and 0 <= ui < W):
+                        continue
+                    d_mono = float(d_map[vi, ui])
+                    if np.isfinite(d_mono) and self.min_depth <= d_mono <= self.max_depth:
                         pairs.append((z_sfm, d_mono))
+                except (KeyError, TypeError, ValueError, IndexError):
+                    continue
 
-            if len(pairs) >= self.min_anchors:
-                pairs_arr = np.array(pairs, dtype=np.float64)
-                # Filter extreme numerical ratio outliers using IQR gating
-                ratios = pairs_arr[:, 0] / pairs_arr[:, 1]
-                q25, q75 = np.percentile(ratios, 25), np.percentile(ratios, 75)
+            arr = np.asarray(pairs, dtype=np.float64).reshape(-1, 2)
+            if len(arr) >= self.min_anchors:
+                ratios = arr[:, 0] / np.maximum(arr[:, 1], 1e-8)
+                q25, q75 = np.percentile(ratios, [25, 75])
                 iqr = q75 - q25
-                inliers = (ratios >= q25 - 2.5 * iqr) & (ratios <= q75 + 2.5 * iqr)
-
-                per_view_pairs[name] = pairs_arr[inliers]
-                per_view_ratios[name] = ratios[inliers]
+                keep = (ratios >= q25 - 2.5 * iqr) & (ratios <= q75 + 2.5 * iqr)
+                arr = arr[keep]
+            pairs_by_view[name] = arr
+            if len(arr) >= self.min_anchors:
+                train_idx, val_idx = self._split_indices(len(arr), name, self.val_split)
+                split_by_view[name] = (train_idx, val_idx)
+                try:
+                    train = arr[train_idx]
+                    train_models[name] = self._robust_affine_fit(
+                        train[:, 1], train[:, 0], seed=42 + sum(name.encode("utf-8"))
+                    )
+                except ValueError:
+                    pass
             else:
-                per_view_pairs[name] = np.zeros((0, 2), dtype=np.float64)
-                per_view_ratios[name] = np.zeros(0, dtype=np.float64)
+                split_by_view[name] = (np.arange(len(arr)), np.zeros(0, dtype=np.int64))
 
-        # 2. Compute Pooled Global Scale Factor
-        all_ratios_list = [r for r in per_view_ratios.values() if len(r) > 0]
-        if all_ratios_list:
-            pooled = np.concatenate(all_ratios_list)
-            global_scale = float(np.median(pooled))
-            total_anchors = len(pooled)
+        pooled_train = [
+            pairs_by_view[name][split_by_view[name][0]]
+            for name in train_models
+            if len(split_by_view[name][0]) >= 5
+        ]
+        if pooled_train:
+            pooled = np.vstack(pooled_train)
+            global_scale, global_offset = self._robust_affine_fit(
+                pooled[:, 1], pooled[:, 0], seed=2026
+            )
+            total_anchors = int(sum(len(x) for x in pooled_train))
         else:
-            global_scale = 1.0
-            total_anchors = 0
+            global_scale, global_offset, total_anchors = 1.0, 0.0, 0
 
         report = AlignmentReport(
             mode=self.mode,
-            global_scale=global_scale,
+            global_scale=float(global_scale),
             total_anchors=total_anchors,
         )
 
-        # 3. Compute Per-View Scales and Held-Out Validation
         for name, d_map in depth_maps.items():
-            ratios = per_view_ratios.get(name, np.zeros(0, dtype=np.float64))
-            pairs = per_view_pairs.get(name, np.zeros((0, 2), dtype=np.float64))
-            n = len(ratios)
-
-            if n >= self.min_anchors:
-                s_indep = float(np.median(ratios))
-                s_mean = float(np.mean(ratios))
-                s_std = float(np.std(ratios))
-                s_mad = float(np.median(np.abs(ratios - s_indep)))
-                s_iqr = float(np.percentile(ratios, 75) - np.percentile(ratios, 25))
-
-                if self.mode == "global":
-                    chosen_scale = global_scale
-                elif self.mode == "per_view":
-                    chosen_scale = s_indep
-                else:  # regularized
-                    weight = float(n) / (float(n) + self.prior_weight)
-                    chosen_scale = weight * s_indep + (1.0 - weight) * global_scale
-
-                # Held-out validation split
-                np.random.seed(42)
-                perm = np.random.permutation(n)
-                n_train = max(5, int(n * (1.0 - self.val_split)))
-                train_idx, test_idx = perm[:n_train], perm[n_train:]
-
-                test_pairs = pairs[test_idx] if len(test_idx) > 0 else pairs
-                raw_res = np.abs(test_pairs[:, 0] - test_pairs[:, 1])
-                aligned_res = np.abs(test_pairs[:, 0] - test_pairs[:, 1] * chosen_scale)
-
-                raw_mean = float(np.mean(raw_res))
-                raw_med = float(np.median(raw_res))
-                aligned_mean = float(np.mean(aligned_res))
-                aligned_med = float(np.median(aligned_res))
-                red_pct = float((1.0 - aligned_mean / max(raw_mean, 1e-6)) * 100.0)
-
-                v_stat = ViewAlignmentStats(
-                    image_name=name,
-                    num_anchors=n,
-                    median_scale=chosen_scale,
-                    mean_scale=s_mean,
-                    std_scale=s_std,
-                    mad_scale=s_mad,
-                    iqr_scale=s_iqr,
-                    raw_residual_mean=raw_mean,
-                    raw_residual_median=raw_med,
-                    aligned_residual_mean=aligned_mean,
-                    aligned_residual_median=aligned_med,
-                    residual_reduction_pct=red_pct,
-                    success=True,
-                    status_message=f"Aligned ({n} anchors, {red_pct:.1f}% residual reduction).",
+            arr = pairs_by_view.get(name, np.zeros((0, 2), dtype=np.float64))
+            n = len(arr)
+            if name not in split_by_view or name not in train_models:
+                stats = ViewAlignmentStats(
+                    image_name=name, num_anchors=n,
+                    median_scale=float(global_scale), mean_scale=float(global_scale),
+                    std_scale=0.0, mad_scale=0.0, iqr_scale=0.0,
+                    raw_residual_mean=0.0, raw_residual_median=0.0,
+                    aligned_residual_mean=0.0, aligned_residual_median=0.0,
+                    residual_reduction_pct=0.0, success=False,
+                    status_message=f"Rejected: only {n} usable SfM anchors; {self.min_anchors} required.",
                 )
+                report.view_stats[name] = stats
+                continue
+
+            train_idx, val_idx = split_by_view[name]
+            local_scale, local_offset = train_models[name]
+            if self.mode == "global":
+                scale, offset = global_scale, global_offset
+            elif self.mode == "per_view":
+                scale, offset = local_scale, local_offset
             else:
-                chosen_scale = global_scale
-                v_stat = ViewAlignmentStats(
-                    image_name=name,
-                    num_anchors=n,
-                    median_scale=chosen_scale,
-                    mean_scale=chosen_scale,
-                    std_scale=0.0,
-                    mad_scale=0.0,
-                    iqr_scale=0.0,
-                    raw_residual_mean=0.0,
-                    raw_residual_median=0.0,
-                    aligned_residual_mean=0.0,
-                    aligned_residual_median=0.0,
-                    residual_reduction_pct=0.0,
-                    success=False,
-                    status_message=f"Insufficient anchors ({n} < {self.min_anchors}); using global scale {global_scale:.4f}.",
-                )
+                weight = float(len(train_idx)) / (float(len(train_idx)) + self.prior_weight)
+                scale = weight * local_scale + (1.0 - weight) * global_scale
+                offset = weight * local_offset + (1.0 - weight) * global_offset
 
-            report.view_stats[name] = v_stat
-            report.aligned_depth_maps[name] = (d_map * chosen_scale).astype(np.float32)
+            validation = arr[val_idx] if len(val_idx) else arr[train_idx]
+            z_sfm, d_mono = validation[:, 0], validation[:, 1]
+            raw_res = np.abs(z_sfm - d_mono)
+            aligned_res = np.abs(z_sfm - (scale * d_mono + offset))
+            reference_depth = max(float(np.median(np.abs(z_sfm))), 1e-3)
+            med_rel = float(np.median(aligned_res) / reference_depth)
+            p90_rel = float(np.percentile(aligned_res, 90) / reference_depth)
+            raw_mean = float(np.mean(raw_res))
+            aligned_mean = float(np.mean(aligned_res))
+            raw_med = float(np.median(raw_res))
+            aligned_med = float(np.median(aligned_res))
+            reduction = float((1.0 - aligned_mean / max(raw_mean, 1e-8)) * 100.0)
+
+            accepted = (
+                np.isfinite(med_rel)
+                and np.isfinite(p90_rel)
+                and med_rel <= self.max_val_median_rel
+                and p90_rel <= self.max_val_p90_rel
+            )
+            status = (
+                f"Accepted: holdout median={med_rel:.1%}, p90={p90_rel:.1%}."
+                if accepted else
+                f"Rejected: holdout median={med_rel:.1%}, p90={p90_rel:.1%}; "
+                f"limits are {self.max_val_median_rel:.1%}/{self.max_val_p90_rel:.1%}."
+            )
+
+            ratios = arr[:, 0] / np.maximum(arr[:, 1], 1e-8)
+            stats = ViewAlignmentStats(
+                image_name=name,
+                num_anchors=n,
+                median_scale=float(scale),
+                mean_scale=float(np.mean(ratios)),
+                std_scale=float(np.std(ratios)),
+                mad_scale=float(np.median(np.abs(ratios - np.median(ratios)))),
+                iqr_scale=float(np.percentile(ratios, 75) - np.percentile(ratios, 25)),
+                raw_residual_mean=raw_mean,
+                raw_residual_median=raw_med,
+                aligned_residual_mean=aligned_mean,
+                aligned_residual_median=aligned_med,
+                residual_reduction_pct=reduction,
+                success=bool(accepted),
+                status_message=status,
+                depth_offset=float(offset),
+                validation_median_relative_error=med_rel,
+                validation_p90_relative_error=p90_rel,
+            )
+            report.view_stats[name] = stats
+
+            if accepted:
+                aligned = scale * np.asarray(d_map, dtype=np.float32) + offset
+                aligned = np.clip(aligned, self.min_depth, self.max_depth).astype(np.float32)
+                report.aligned_depth_maps[name] = aligned
 
         return report
-
