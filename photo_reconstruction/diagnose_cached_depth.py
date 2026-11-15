@@ -137,7 +137,9 @@ def _load_cached_depth_maps(
     depth_dir = session_dir / cache_dir_name
     image_dir = session_dir / "original_images"
     if not depth_dir.is_dir() or not image_dir.is_dir():
-        raise RuntimeError("Session must contain original_images/ and depth_cache/.")
+        raise RuntimeError(
+            f"Session must contain original_images/ and {cache_dir_name}/."
+        )
 
     images_by_stem = {}
     for image_path in image_dir.iterdir():
@@ -289,7 +291,7 @@ def main() -> int:
         name for name, stats in report.view_stats.items() if not stats.success
     )
     views = {}
-    print("\nCACHED DEPTH CALIBRATION (no inference / no meshing)")
+    print(f"\nDEPTH CALIBRATION: {depth_source_label}")
     print(f"Session: {session_dir.name}")
     print(f"COLMAP model: {model_dir}")
     print(f"Views checked: {len(depth_maps)}")
