@@ -82,6 +82,24 @@ def validate_quality_preset(preset: str) -> str:
     return p
 
 
+def resolve_scene_profile(session_dir: Path) -> str:
+    """Return an explicitly selected scene profile; arbitrary phone photos default to generic."""
+    profile_path = Path(session_dir) / "scene_profile.json"
+    try:
+        with profile_path.open("r", encoding="utf-8") as profile_file:
+            metadata = json.load(profile_file)
+    except FileNotFoundError:
+        return "generic"
+    except (OSError, json.JSONDecodeError, TypeError):
+        return "generic"
+
+    profile = str(metadata.get("profile", "generic")).strip().lower()
+    if profile == "architectural_fountain":
+        return profile
+    # Unknown or unsupported profile names must never activate a specialized assembler.
+    return "generic"
+
+
 class PhoneReconstructionPipeline:
     """End-to-end smartphone 3D photogrammetry reconstruction pipeline."""
 
@@ -339,19 +357,7 @@ class PhoneReconstructionPipeline:
         # Keep it available only behind an explicit opt-in for a future, separately
         # selected architectural-fountain profile. The default phone workflow uses
         # the generic geometry produced by SfM/MVS and MeshBuilder.
-        scene_profile = "generic"
-        scene_profile_path = session_dir / "scene_profile.json"
-        try:
-            if scene_profile_path.is_file():
-                with open(scene_profile_path, "r", encoding="utf-8") as f_profile:
-                    profile_data = json.load(f_profile)
-                requested_profile = str(profile_data.get("profile", "generic")).strip().lower()
-                if requested_profile in {"generic", "architectural_fountain"}:
-                    scene_profile = requested_profile
-        except (OSError, ValueError, TypeError):
-            # Invalid optional profile metadata must never divert generic images
-            # into a specialized coordinate-based assembler.
-            scene_profile = "generic"
+        scene_profile = resolve_scene_profile(session_dir)
 
         if scene_profile == "architectural_fountain" and camera_models and img_dict:
             try:
