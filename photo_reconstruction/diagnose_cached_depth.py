@@ -129,8 +129,12 @@ def _build_camera_models_and_tracks(reconstruction, saved_pose_stems: set[str]):
     return camera_models, sparse_tracks
 
 
-def _load_cached_depth_maps(session_dir: Path, camera_models):
-    depth_dir = session_dir / "depth_cache"
+def _load_cached_depth_maps(
+    session_dir: Path,
+    camera_models,
+    cache_dir_name: str = "depth_cache",
+):
+    depth_dir = session_dir / cache_dir_name
     image_dir = session_dir / "original_images"
     if not depth_dir.is_dir() or not image_dir.is_dir():
         raise RuntimeError("Session must contain original_images/ and depth_cache/.")
@@ -173,6 +177,17 @@ def main() -> int:
         default=str(Path(__file__).resolve().parent.parent / "data"),
         help="Data directory containing phone_reconstruction/ (default: project data/)",
     )
+    parser.add_argument(
+        "--depth-source",
+        choices=("cached", "hypersim"),
+        default="cached",
+        help="'cached' checks the existing depth_cache; 'hypersim' predicts indoor depth into a separate cache.",
+    )
+    parser.add_argument(
+        "--weights",
+        default=None,
+        help="Optional metric checkpoint path. For --depth-source hypersim, defaults to weights/depth_anything_v2_metric_hypersim_vits.pth.",
+    )
     args = parser.parse_args()
 
     data_root = Path(args.data_root).expanduser()
@@ -200,7 +215,64 @@ def main() -> int:
             "Check that this session contains camera_poses/*_pose.npy."
         )
 
-    depth_maps = _load_cached_depth_maps(session_dir, camera_models)
+    depth_source_label = "Existing cached depth maps"
+    cache_dir_name = "depth_cache"
+    if args.depth_source == "hypersim":
+        from photo_reconstruction.depth_helper import IsolatedDepthEstimator
+
+        project_root = Path(__file__).resolve().parent.parent
+        weights_path = (
+            Path(args.weights).expanduser()
+            if args.weights
+            else project_root / "weights" / "depth_anything_v2_metric_hypersim_vits.pth"
+        )
+        if not weights_path.is_file():
+            raise FileNotFoundError(
+                "Indoor Hypersim checkpoint not found: "
+                f"{weights_path}\\nDownload the official small indoor checkpoint with:\\n"
+                'curl -L "https://huggingface.co/depth-anything/Depth-Anything-V2-Metric-Hypersim-Small/resolve/main/depth_anything_v2_metric_hypersim_vits.pth?download=true" '
+                f'-o "{weights_path}"'
+            )
+
+        image_dir = session_dir / "original_images"
+        image_by_stem = {
+            path.stem: path
+            for path in image_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
+        }
+        reg_paths = []
+        for name in camera_models:
+            image_path = image_by_stem.get(Path(name).stem)
+            if image_path is not None:
+                reg_paths.append(image_path)
+        if len(reg_paths) < 2:
+            raise RuntimeError("Could not find at least two registered source images for indoor depth inference.")
+
+        cache_dir_name = "depth_cache_hypersim"
+        print("Running Depth Anything V2 Metric Small (indoor Hypersim) in an isolated CPU process...")
+        print("This writes a separate cache and does not modify depth_cache or the previous report.")
+        generated = IsolatedDepthEstimator.estimate_depths_for_images(
+            image_paths=reg_paths,
+            cache_dir=session_dir / cache_dir_name,
+            project_root=project_root,
+            weights_path=weights_path,
+            max_depth=20.0,
+            timeout_s=900,
+            raise_on_error=True,
+        )
+        if len(generated) < 2:
+            raise RuntimeError(
+                f"Indoor depth inference produced only {len(generated)} maps; at least two are required."
+            )
+        depth_source_label = "Depth Anything V2 Metric Small — indoor Hypersim"
+        depth_maps = _load_cached_depth_maps(
+            session_dir,
+            camera_models,
+            cache_dir_name=cache_dir_name,
+        )
+    else:
+        depth_maps = _load_cached_depth_maps(session_dir, camera_models)
+
     # Keep only views with both a camera model, a track list, and a cached map.
     camera_models = {name: camera_models[name] for name in depth_maps}
     sparse_tracks = {name: sparse_tracks.get(name, []) for name in depth_maps}
@@ -255,6 +327,8 @@ def main() -> int:
     result = {
         "status": "mvs_ready" if len(accepted) >= 2 else "not_ready",
         "session": session_dir.name,
+        "depth_source": depth_source_label,
+        "depth_cache": cache_dir_name,
         "colmap_model": str(model_dir),
         "views_checked": len(depth_maps),
         "accepted_views": accepted,
@@ -268,10 +342,16 @@ def main() -> int:
         "views": views,
         "note": (
             "This is a calibration-only diagnostic. It does not run dense MVS, "
-            "point-cloud fusion, surface meshing, or texture generation."
+            "point-cloud fusion, surface meshing, or texture generation. "
+            "Indoor inference, when selected, uses a separate cache directory."
         ),
     }
-    output_path = session_dir / "depth_alignment_recheck.json"
+    output_name = (
+        "depth_alignment_recheck_hypersim.json"
+        if args.depth_source == "hypersim"
+        else "depth_alignment_recheck.json"
+    )
+    output_path = session_dir / output_name
     output_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
 
     print()
