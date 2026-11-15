@@ -116,18 +116,24 @@ def run_fusion(
         absent = [name for name in view_names if name not in camera_models_all]
         raise RuntimeError(f"Requested views missing from saved COLMAP model: {absent}")
 
-    depth_maps_all = _load_depth_maps(cache_dir, view_names)
-    camera_models = {name: camera_models_all[name] for name in view_names}
-    sparse_tracks = {
-        name: sparse_tracks_all.get(name, []) for name in view_names
+    # Calibrate with every cached registered view first. This preserves the same
+    # pooled global regularization prior used by the successful eight-view
+    # diagnostic, then we restrict geometric fusion to the requested accepted pair.
+    depth_maps_all = _load_depth_maps(cache_dir, sorted(camera_models_all))
+    camera_models_all = {
+        name: camera_models_all[name] for name in depth_maps_all
+    }
+    sparse_tracks_all = {
+        name: sparse_tracks_all.get(name, []) for name in depth_maps_all
     }
 
     aligner = SfMDepthAligner(mode="regularized")
     alignment = aligner.align_depth_maps(
         depth_maps=depth_maps_all,
-        camera_models=camera_models,
-        sparse_tracks=sparse_tracks,
+        camera_models=camera_models_all,
+        sparse_tracks=sparse_tracks_all,
     )
+    camera_models = {name: camera_models_all[name] for name in view_names}
 
     not_accepted = [
         name for name in view_names
