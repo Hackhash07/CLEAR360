@@ -93,6 +93,8 @@ def resolve_scene_profile(session_dir: Path) -> str:
     except (OSError, json.JSONDecodeError, TypeError):
         return "generic"
 
+    if not isinstance(metadata, dict):
+        return "generic"
     profile = str(metadata.get("profile", "generic")).strip().lower()
     if profile == "architectural_fountain":
         return profile
