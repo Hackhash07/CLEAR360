@@ -294,17 +294,6 @@ class PhoneReconstructionPipeline:
                     for name in accepted_names
                     if name in camera_models
                 }
-                if len(depth_maps) < 2 or len(trusted_camera_models) < 2:
-                    rejected = {
-                        name: stats.status_message
-                        for name, stats in align_res.view_stats.items()
-                        if not stats.success
-                    }
-                    raise RuntimeError(
-                        "Strict multi-view reconstruction stopped: fewer than two camera views "
-                        "passed held-out depth calibration. No unverified depth sheets were fused. "
-                        f"Accepted views: {accepted_names}. Rejected views: {rejected}"
-                    )
             else:
                 # Draft is an explicitly approximate preview path. Use accepted
                 # maps where available; if none pass, retain raw maps for preview.
@@ -341,6 +330,19 @@ class PhoneReconstructionPipeline:
             }
             with open(session_dir / "depth_alignment_report.json", "w", encoding="utf-8") as f_diag:
                 json.dump(align_diag, f_diag, indent=2)
+
+            if mvs_flag and len(depth_maps) < 2:
+                rejected = {
+                    name: stats.status_message
+                    for name, stats in align_res.view_stats.items()
+                    if not stats.success
+                }
+                raise RuntimeError(
+                    "Strict multi-view reconstruction stopped: fewer than two camera views "
+                    "passed held-out depth calibration. The per-view diagnostics were saved. "
+                    "No unverified depth sheets were fused. "
+                    f"Accepted views: {accepted_names}. Rejected views: {rejected}"
+                )
 
         if mvs_flag and len(depth_maps) < 2:
             raise RuntimeError(
