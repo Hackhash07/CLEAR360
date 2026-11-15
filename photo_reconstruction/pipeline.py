@@ -451,6 +451,11 @@ class PhoneReconstructionPipeline:
 
         if not textured_ok:
             MeshBuilder.save_mesh_obj(mesh_v, mesh_f, mesh_c, mesh_obj)
+
+        # Always provide the documented vertex-color PLY alongside the OBJ.
+        # The textured OBJ carries UVs/atlas data, while PLY remains a useful
+        # geometry + vertex-color artifact for viewers and regression checks.
+        if not mesh_ply.exists():
             MeshBuilder.save_mesh_ply(mesh_v, mesh_f, mesh_c, mesh_ply, normals=mesh_n)
 
         # 7. Quality Report Compilation
