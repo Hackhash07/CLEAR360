@@ -26,6 +26,10 @@ class IsolatedDepthEstimator:
         image_paths: List[Path],
         cache_dir: Path,
         project_root: Optional[Path] = None,
+        weights_path: Optional[Path] = None,
+        max_depth: float = 80.0,
+        timeout_s: int = 600,
+        raise_on_error: bool = False,
     ) -> Dict[str, np.ndarray]:
         """
         Estimate dense metric depth for each image in an isolated process.
@@ -45,8 +49,15 @@ class IsolatedDepthEstimator:
 
         manifest_path = c_dir / "depth_request_manifest.json"
         items = [{"path": str(p), "name": p.name} for p in image_paths if p.is_file()]
-        with open(manifest_path, "w") as f:
-            json.dump({"root": str(project_root), "output_dir": str(c_dir), "items": items}, f)
+        manifest = {
+            "root": str(project_root),
+            "output_dir": str(c_dir),
+            "items": items,
+            "weights_path": str(Path(weights_path).expanduser()) if weights_path is not None else None,
+            "max_depth": float(max_depth),
+        }
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2)
 
         worker_code = """
 import sys
@@ -65,7 +76,10 @@ from depth.estimator import DepthEstimator
 out_dir = Path(data["output_dir"])
 out_dir.mkdir(parents=True, exist_ok=True)
 
-estimator = DepthEstimator()
+estimator = DepthEstimator(
+    weights_path=data.get("weights_path"),
+    max_depth=float(data.get("max_depth", 80.0)),
+)
 
 for item in data["items"]:
     img_p = Path(item["path"])
@@ -85,11 +99,26 @@ print("ISOLATED_DEPTH_SUCCESS")
 
         try:
             cmd = [sys.executable, "-c", worker_code, str(manifest_path)]
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            if "ISOLATED_DEPTH_SUCCESS" not in proc.stdout:
-                # Subprocess may have failed
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=max(1, int(timeout_s)),
+            )
+            if proc.returncode != 0 or "ISOLATED_DEPTH_SUCCESS" not in proc.stdout:
+                detail = (proc.stderr or proc.stdout or "No worker output.")[-5000:]
+                if raise_on_error:
+                    raise RuntimeError(f"Isolated depth inference failed:\\n{detail}")
                 return {}
+        except subprocess.TimeoutExpired as exc:
+            if raise_on_error:
+                raise RuntimeError(
+                    f"Depth inference exceeded the {timeout_s}-second timeout."
+                ) from exc
+            return {}
         except Exception:
+            if raise_on_error:
+                raise
             return {}
 
         results = {}
