@@ -1,477 +1,273 @@
+"""CLEAR360 v2: photos -> clear 3D scene.
+SfM (pycolmap) -> Depth Anything V2 (flip-averaged, pinned to SfM points)
+-> multi-view consistency filter -> TSDF fusion -> clean mesh.
+pip install pycolmap open3d transformers torch opencv-python pillow   (Python 3.11/3.12)
+python scripts/reconstruct_scene.py --photos my_photos --out data/scene_001
 """
-scripts/run_m6_scene_reconstruction.py — Milestone M6 3D Scene Reconstruction & Mapping
-========================================================================================
-
-Executes the complete M6 evaluation across:
-  - 3 Synchronized Scenes: Frame 0 (baseline), Frame 5 (variant 1), Frame 10 (variant 2)
-  - 3 Separate Pipelines:
-      A. Ground Truth (GT)
-      B. Raw AI
-      C. Per-Camera Calibrated AI
-
-Deliverables generated:
-  - Clean PLYs: data/pointclouds/frame_XXXX_<pipeline>_clean.ply
-  - Semantic PLYs: data/pointclouds/frame_XXXX_<pipeline>_semantic.ply
-  - Occupancy Grids: data/occupancy/frame_XXXX_<pipeline>_occupancy.npz
-  - Scene Metadata: data/metadata/frame_XXXX_<pipeline>_scene.json
-  - Obstacle Bounding Boxes: data/metadata/frame_XXXX_<pipeline>_obstacles.json
-  - Diagnostic Visualizations: docs/figures/m6_*.png
-"""
-
-from __future__ import annotations
-
 import argparse
-import json
 from pathlib import Path
-import sys
-import time
-import yaml
-
-import cv2
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-import numpy as np
-import open3d as o3d
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from fusion.engine import PointCloudFusionEngine
-from occupancy.grid3d import OccupancyGrid3D, VoxelState
-from occupancy.tsdf import TSDFVolume3D
-from obstacles.clustering import BoundingBox3D, Obstacle3D, ObstacleClusterer, VehicleFootprint
-from obstacles.tracker import DynamicObstacleTracker
-from pipeline.calibration import CalibrationStore
-from scene.filter import GroundPlaneResult, SceneFilter
-from scene.semantics import (
-    SemanticClass,
-    classify_ai_scene_semantics,
-    create_semantic_point_cloud,
-    labels_to_colors,
-)
-from sim.constants import CAMERA_NAMES
-from validation.gt_loader import load_depth_exr, load_semantic_png
+import cv2, numpy as np, torch, pycolmap, open3d as o3d
+from PIL import Image
+from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
 
-def load_frame_data(
-    data_dir: Path,
-    frame_id: int,
-    pipeline_type: str,
-    global_scale: float,
-    per_cam_scales: dict[str, float],
-) -> Tuple[dict[str, np.ndarray], dict[str, np.ndarray], Optional[dict[str, np.ndarray]]]:
-    """Load RGB, Depth, and optional GT Semantics for a given frame and pipeline."""
-    rgbs = {}
-    depths = {}
-    semantics = {} if pipeline_type == "ground_truth" else None
-
-    for cam in CAMERA_NAMES:
-        rgb_file = data_dir / "photoreal_frames" / cam / f"frame_{frame_id:04d}.png"
-        bgr = cv2.imread(str(rgb_file), cv2.IMREAD_COLOR)
-        rgbs[cam] = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-
-        if pipeline_type == "ground_truth":
-            depth_file = data_dir / "photoreal_gt_depth" / cam / f"frame_{frame_id:04d}.exr"
-            depths[cam] = load_depth_exr(depth_file)
-            sem_file = data_dir / "photoreal_gt_semantic" / cam / f"frame_{frame_id:04d}.png"
-            if sem_file.exists():
-                semantics[cam] = load_semantic_png(sem_file)
-        elif pipeline_type == "ai_raw":
-            raw_file = data_dir / "photoreal_ai_depth" / cam / f"frame_{frame_id:04d}.npy"
-            depths[cam] = np.load(raw_file).astype(np.float32)
-        elif pipeline_type == "ai_per_camera":
-            calib_file = data_dir / "photoreal_calib_depth" / cam / f"frame_{frame_id:04d}.npy"
-            depths[cam] = np.load(calib_file).astype(np.float32)
-
-    return rgbs, depths, semantics
+def prep(src, dst, max_side):
+    dst.mkdir(parents=True, exist_ok=True)
+    items = []
+    for p in sorted(src.iterdir()):
+        if p.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
+            continue
+        im = cv2.imread(str(p))
+        if im is None:
+            continue
+        s = max_side / max(im.shape[:2])
+        if s < 1:
+            im = cv2.resize(im, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+        sharp = cv2.Laplacian(cv2.cvtColor(im, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()
+        items.append((p.stem, im, sharp))
+    if not items:
+        raise SystemExit("No photos found (use jpg/png; convert HEIC first)")
+    med = np.median([i[2] for i in items])
+    kept = 0
+    for name, im, sharp in items:
+        if sharp < 0.4 * med:
+            print("skip blurry:", name)
+            continue
+        cv2.imwrite(str(dst / f"{name}.jpg"), im, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        kept += 1
+    print(f"{kept}/{len(items)} photos kept")
+    return kept
 
 
-def process_scene_pipeline(
-    frame_id: int,
-    pipeline_type: str,
-    calib_store: CalibrationStore,
-    fusion_engine: PointCloudFusionEngine,
-    scene_filter: SceneFilter,
-    obstacle_clusterer: ObstacleClusterer,
-    data_dir: Path,
-    output_dir: Path,
-    meta_dir: Path,
-    occupancy_dir: Path,
-    global_scale: float,
-    per_cam_scales: dict[str, float],
-) -> dict:
-    """Process a single pipeline on a single frame."""
-    t0 = time.perf_counter()
-
-    # 1. Load Data
-    rgbs, depths, semantics = load_frame_data(
-        data_dir, frame_id, pipeline_type, global_scale, per_cam_scales
-    )
-
-    # 2. Multi-Camera Rigid Fusion
-    is_gt = pipeline_type == "ground_truth"
-    fusion_res = fusion_engine.fuse_depth_maps(
-        depth_maps=depths,
-        rgb_maps=rgbs,
-        semantic_masks=semantics if is_gt else None,
-        frame_id=frame_id,
-        pipeline_type=pipeline_type,
-    )
-    t_fusion = time.perf_counter() - t0
-
-    # 3. Scene Filtering (Voxel DS, SOR, ROR, Sky Filter, Ground Segmentation)
-    t1 = time.perf_counter()
-    raw_pcd = fusion_res.point_cloud
-    clean_pcd, non_ground_pcd, ground_res, filter_stats = scene_filter.filter_complete_scene(
-        pcd=raw_pcd,
-        labels=None, # strictly no GT mask leakage into filter
-        is_ground_truth=is_gt,
-    )
-    t_filter = time.perf_counter() - t1
-
-    clean_pts = np.asarray(clean_pcd.points)
-    clean_col = np.asarray(clean_pcd.colors)
-
-    # 4. Semantic Labeling
-    t2 = time.perf_counter()
-    if is_gt:
-        # Ground-truth semantic assignment
-        # Build KD-tree of original raw GT points (which had semantic labels) to transfer labels
-        gt_labels_all = []
-        gt_pts_all = []
-        for cam_name in CAMERA_NAMES:
-            if semantics and cam_name in semantics:
-                c_pts, _, c_lab = fusion_engine.unproject_camera(
-                    cam_name, depths[cam_name], rgbs[cam_name], semantics[cam_name]
-                )
-                if len(c_pts) > 0 and c_lab is not None:
-                    gt_pts_all.append(c_pts)
-                    gt_labels_all.append(c_lab)
-        if gt_pts_all:
-            tree_gt = o3d.geometry.KDTreeFlann(
-                o3d.geometry.PointCloud(o3d.utility.Vector3dVector(np.vstack(gt_pts_all)))
-            )
-            raw_labels_cat = np.concatenate(gt_labels_all)
-            semantic_labels = np.zeros(len(clean_pts), dtype=np.int32)
-            for i, p in enumerate(clean_pts):
-                [_, idx, _] = tree_gt.search_knn_vector_3d(p, 1)
-                semantic_labels[i] = raw_labels_cat[idx[0]]
-        else:
-            semantic_labels = np.full(len(clean_pts), SemanticClass.UNKNOWN, dtype=np.int32)
-    else:
-        # AI-derived semantic classification (geometric & appearance heuristics; ZERO GT leakage)
-        semantic_labels = classify_ai_scene_semantics(
-            points=clean_pts,
-            ground_inliers=ground_res.inlier_indices,
-            colors=clean_col,
-        )
-    t_semantic = time.perf_counter() - t2
-
-    # Save clean PLY and semantic PLY
-    clean_ply_path = output_dir / f"frame_{frame_id:04d}_{pipeline_type}_clean.ply"
-    fusion_engine.save_ply(clean_pcd, clean_ply_path)
-
-    semantic_pcd = create_semantic_point_cloud(clean_pts, semantic_labels)
-    semantic_ply_path = output_dir / f"frame_{frame_id:04d}_{pipeline_type}_semantic.ply"
-    fusion_engine.save_ply(semantic_pcd, semantic_ply_path)
-
-    # 5. 3D Occupancy Mapping with Ray-Based Free-Space Carving
-    t3 = time.perf_counter()
-    occ_grid = OccupancyGrid3D(
-        bounds_x=(-12.0, 12.0),
-        bounds_y=(-12.0, 12.0),
-        bounds_z=(-0.5, 3.5),
-        resolution=0.05,
-    )
-
-    # Camera origins in vehicle frame
-    cam_origins = {
-        "front": np.array([0.0, 2.15, 0.90]),
-        "rear":  np.array([0.0, -2.15, 0.90]),
-        "left":  np.array([-0.95, 0.0, 1.25]),
-        "right": np.array([+0.95, 0.0, 1.25]),
-    }
-
-    # Carve rays for each camera view using unprojected endpoints
-    for cam_name, cam_cloud in fusion_res.camera_clouds.items():
-        c_pts = np.asarray(cam_cloud.points)
-        if len(c_pts) > 0 and cam_name in cam_origins:
-            occ_grid.integrate_camera_view(
-                camera_origin=cam_origins[cam_name],
-                endpoints=c_pts,
-                free_margin_m=0.05,
-                max_range_m=25.0,
-                subsample_stride=2,
-            )
-    t_occ = time.perf_counter() - t3
-
-    # Save occupancy grid
-    occ_npz_path = occupancy_dir / f"frame_{frame_id:04d}_{pipeline_type}_occupancy.npz"
-    occ_grid.save_npz(occ_npz_path)
-    occ_stats = occ_grid.get_stats()
-
-    # 6. TSDF Volume Surface Reconstruction
-    t4 = time.perf_counter()
-    tsdf = TSDFVolume3D(
-        bounds_x=(-10.0, 10.0),
-        bounds_y=(-10.0, 10.0),
-        bounds_z=(-0.2, 2.8),
-        voxel_size=0.05,
-        truncation_margin=0.15,
-    )
-    for cam_name in CAMERA_NAMES:
-        cam_model = calib_store.get(cam_name)
-        tsdf.integrate_view(depths[cam_name], cam_model, weight=1.0, max_depth=20.0)
-    tsdf_surface_pts = tsdf.extract_zero_crossing_points()
-    t_tsdf = time.perf_counter() - t4
-
-    # 7. Obstacle Clustering & Footprint Clearance
-    t5 = time.perf_counter()
-    non_ground_pts = np.asarray(non_ground_pcd.points)
-    non_ground_labels = semantic_labels[ground_res.outlier_indices] if len(semantic_labels) == len(clean_pts) else None
-
-    obstacles = obstacle_clusterer.cluster_obstacles(
-        points=non_ground_pts,
-        labels=non_ground_labels,
-    )
-    t_cluster = time.perf_counter() - t5
-    t_total = time.perf_counter() - t0
-
-    # Save Obstacle Bounding Box JSON
-    obs_json_path = meta_dir / f"frame_{frame_id:04d}_{pipeline_type}_obstacles.json"
-    with open(obs_json_path, "w") as f:
-        json.dump([o.to_dict() for o in obstacles], f, indent=2)
-
-    # Save Scene Metadata JSON
-    scene_meta = {
-        "frame_id": frame_id,
-        "pipeline_type": pipeline_type,
-        "total_processing_time_s": t_total,
-        "timing_breakdown_s": {
-            "fusion": t_fusion,
-            "filter": t_filter,
-            "semantic": t_semantic,
-            "occupancy": t_occ,
-            "tsdf": t_tsdf,
-            "clustering": t_cluster,
-        },
-        "points": {
-            "initial_raw": filter_stats.initial_points,
-            "after_filter": filter_stats.final_points,
-            "ground_points": filter_stats.ground_points,
-            "non_ground_points": filter_stats.non_ground_points,
-        },
-        "ground_plane": {
-            "elevation_z_m": ground_res.elevation_z,
-            "tilt_deg": ground_res.tilt_deg,
-            "rmse_m": ground_res.rmse_m,
-            "normal": ground_res.normal.tolist(),
-        },
-        "occupancy_grid": occ_stats,
-        "tsdf": {
-            "surface_points_count": len(tsdf_surface_pts),
-            "voxel_size_m": tsdf.voxel_size,
-        },
-        "obstacles_detected": len(obstacles),
-        "closest_obstacle_clearance_m": obstacles[0].clearance_to_vehicle_m if obstacles else float("inf"),
-    }
-    scene_json_path = meta_dir / f"frame_{frame_id:04d}_{pipeline_type}_scene.json"
-    with open(scene_json_path, "w") as f:
-        json.dump(scene_meta, f, indent=2)
-
-    return {
-        "frame_id": frame_id,
-        "pipeline_type": pipeline_type,
-        "clean_points": len(clean_pts),
-        "ground_res": ground_res,
-        "filter_stats": filter_stats,
-        "occ_stats": occ_stats,
-        "obstacles": obstacles,
-        "timing": scene_meta["timing_breakdown_s"],
-        "total_time_s": t_total,
-        "clean_pts": clean_pts,
-        "semantic_labels": semantic_labels,
-    }
+def extract(db, img_dir, single):
+    attempts = []
+    try:
+        o = pycolmap.FeatureExtractionOptions()
+        o.sift.max_num_features = 16384
+        attempts.append({"extraction_options": o})
+    except Exception:
+        pass
+    attempts.append({})
+    if single:
+        attempts = [{**a, "camera_mode": pycolmap.CameraMode.SINGLE} for a in attempts] + attempts
+    for kw in attempts:
+        try:
+            if db.exists():
+                db.unlink()
+            pycolmap.extract_features(str(db), str(img_dir), **kw)
+            return
+        except Exception as e:
+            print("retrying feature extraction:", type(e).__name__)
+    raise SystemExit("Feature extraction failed")
 
 
-def generate_diagnostic_visualizations(
-    frame_id: int,
-    res_gt: dict,
-    res_ai: dict,
-    figures_dir: Path,
-) -> None:
-    """Generate 2D bird's-eye view diagnostic plots of occupancy, semantics, and obstacles."""
-    fig, axes = plt.subplots(1, 2, figsize=(18, 8))
-
-    footprint = VehicleFootprint()
-
-    for idx, (res, title) in enumerate([(res_gt, "Ground Truth (Blender Cycles)"), (res_ai, "Calibrated AI (Depth Anything V2)")]):
-        ax = axes[idx]
-        pts = res["clean_pts"]
-        labels = res["semantic_labels"]
-        obstacles = res["obstacles"]
-
-        # Downsampled scatter for background
-        stride = 6
-        pts_sub = pts[::stride]
-        labs_sub = labels[::stride]
-        cols_sub = labels_to_colors(labs_sub)
-
-        ax.scatter(pts_sub[:, 0], pts_sub[:, 1], c=cols_sub, s=1.0, alpha=0.5)
-
-        # Draw Hyundai Creta Vehicle Footprint
-        body_w = footprint.body_max[0] - footprint.body_min[0]
-        body_l = footprint.body_max[1] - footprint.body_min[1]
-        body_rect = patches.Rectangle(
-            (footprint.body_min[0], footprint.body_min[1]),
-            body_w, body_l,
-            linewidth=2.0, edgecolor="black", facecolor=(0.8, 0.8, 0.8, 0.8),
-            label="Ego Vehicle (Body)"
-        )
-        ax.add_patch(body_rect)
-
-        # Draw Side Mirrors
-        l_mirr = patches.Rectangle(
-            (footprint.left_mirror_min[0], footprint.left_mirror_min[1]),
-            footprint.left_mirror_max[0] - footprint.left_mirror_min[0],
-            footprint.left_mirror_max[1] - footprint.left_mirror_min[1],
-            linewidth=1.5, edgecolor="red", facecolor="silver", label="Side Mirrors"
-        )
-        r_mirr = patches.Rectangle(
-            (footprint.right_mirror_min[0], footprint.right_mirror_min[1]),
-            footprint.right_mirror_max[0] - footprint.right_mirror_min[0],
-            footprint.right_mirror_max[1] - footprint.right_mirror_min[1],
-            linewidth=1.5, edgecolor="red", facecolor="silver"
-        )
-        ax.add_patch(l_mirr)
-        ax.add_patch(r_mirr)
-
-        # Draw Obstacle Bounding Boxes & Clearance Vectors
-        for obs in obstacles[:8]:  # Draw top 8 obstacles
-            b = obs.bbox
-            bw = b.max_point[0] - b.min_point[0]
-            bl = b.max_point[1] - b.min_point[1]
-            box_rect = patches.Rectangle(
-                (b.min_point[0], b.min_point[1]),
-                bw, bl,
-                linewidth=1.8, edgecolor="blue" if not obs.is_dynamic else "orange",
-                facecolor="none", linestyle="--"
-            )
-            ax.add_patch(box_rect)
-
-            # Draw label with clearance
-            ax.text(
-                obs.centroid[0], obs.centroid[1],
-                f"{obs.semantic_name[:8]}\n{obs.clearance_to_vehicle_m:.2f}m",
-                fontsize=7, color="black", weight="bold",
-                bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.7)
-            )
-
-        ax.set_title(f"M6 3D Scene Reconstruction — {title} (Frame {frame_id:04d})")
-        ax.set_xlabel("X (Right, metres)")
-        ax.set_ylabel("Y (Forward, metres)")
-        ax.set_xlim(-12, 12)
-        ax.set_ylim(-12, 12)
-        ax.grid(True, linestyle=":", alpha=0.6)
-        if idx == 0:
-            ax.legend(loc="upper right")
-
-    fig_path = figures_dir / f"m6_scene_reconstruction_frame_{frame_id:04d}.png"
-    plt.tight_layout()
-    plt.savefig(fig_path, dpi=200)
-    plt.close()
-    print(f"      Saved diagnostic figure: {fig_path.name}")
+def run_sfm(img_dir, work, single):
+    db = work / "db.db"
+    extract(db, img_dir, single)
+    pycolmap.match_exhaustive(str(db))
+    sparse = work / "sparse"
+    sparse.mkdir(exist_ok=True)
+    maps = pycolmap.incremental_mapping(str(db), str(img_dir), str(sparse))
+    if not maps:
+        raise SystemExit("SfM failed: photos don't overlap. Retake with ~70% overlap.")
+    best = max(maps.values(), key=lambda m: m.num_reg_images())
+    n_in, n_reg = len(list(img_dir.glob("*.jpg"))), best.num_reg_images()
+    print(f"registered {n_reg}/{n_in} photos | {len(best.points3D)} 3D points")
+    try:
+        print(f"reprojection error {best.compute_mean_reprojection_error():.2f}px | "
+              f"track length {best.compute_mean_track_length():.1f}")
+    except Exception:
+        pass
+    if n_reg < 0.7 * n_in:
+        print("WARNING: many photos failed to register -> more overlap / more texture needed")
+    bdir = sparse / "best"
+    bdir.mkdir(exist_ok=True)
+    best.write(str(bdir))
+    und = work / "undist"
+    pycolmap.undistort_images(str(und), str(bdir), str(img_dir))
+    sp = und / "sparse"
+    if not (sp / "cameras.bin").exists():
+        sp = sp / "0"
+    return pycolmap.Reconstruction(str(sp)), und / "images"
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="CLEAR360 M6 Scene Reconstruction & Mapping")
-    parser.add_argument("--frames", nargs="+", type=int, default=[0, 5, 10], help="Frames to evaluate")
-    args = parser.parse_args()
+def pose(im):
+    c = im.cam_from_world
+    c = c() if callable(c) else c
+    M = np.eye(4)
+    M[:3] = c.matrix()
+    return M  # world -> camera
 
-    frame_ids = args.frames
-    data_dir = PROJECT_ROOT / "data"
-    output_dir = data_dir / "pointclouds"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    meta_dir = data_dir / "metadata"
-    meta_dir.mkdir(parents=True, exist_ok=True)
-    occupancy_dir = data_dir / "occupancy"
-    occupancy_dir.mkdir(parents=True, exist_ok=True)
-    figures_dir = PROJECT_ROOT / "docs" / "figures"
-    figures_dir.mkdir(parents=True, exist_ok=True)
 
-    print("\n" + "=" * 84)
-    print("CLEAR360 — MILESTONE M6: 3D SCENE RECONSTRUCTION, FILTERING & MAPPING")
-    print("=" * 84)
-    print(f"Target Frames : {frame_ids}")
-    print(f"Pipelines     : Ground Truth (GT), Raw AI, Per-Camera Calibrated AI")
-    print("=" * 84 + "\n")
+@torch.no_grad()
+def predict_disp(rgb, proc, net, dev, res):
+    outs = []
+    for img in (rgb, rgb[:, ::-1]):  # original + mirrored, then average
+        inp = proc(images=Image.fromarray(np.ascontiguousarray(img)), return_tensors="pt",
+                   size={"height": res, "width": res}).to(dev)
+        p = net(**inp).predicted_depth[None]
+        p = torch.nn.functional.interpolate(p, size=rgb.shape[:2], mode="bicubic",
+                                            align_corners=False)[0, 0].cpu().numpy()
+        outs.append(p)
+    return 0.5 * (outs[0] + outs[1][:, ::-1])
 
-    # Load Calibrations
-    calib_yaml = PROJECT_ROOT / "config" / "cameras.yaml"
-    calib_store = CalibrationStore(calib_yaml)
-    calib_store.load()
 
-    with open(PROJECT_ROOT / "config" / "depth_calibration.yaml", "r") as f:
-        depth_calib = yaml.safe_load(f)
-    global_scale = float(depth_calib["global_scale"])
-    per_cam_scales = {k: float(v) for k, v in depth_calib["per_camera_scales"].items()}
+def align(disp, uv, z):
+    """Pin relative depth to real SfM points: global fit, then local correction."""
+    h, w = disp.shape
+    u = np.clip(uv[:, 0].astype(int), 0, w - 1)
+    v = np.clip(uv[:, 1].astype(int), 0, h - 1)
+    d, inv = disp[v, u], 1.0 / z
+    keep = np.ones(len(d), bool)
+    a = b = 0.0
+    for _ in range(4):
+        A = np.stack([d[keep], np.ones(keep.sum())], 1)
+        a, b = np.linalg.lstsq(A, inv[keep], rcond=None)[0]
+        r = a * d + b - inv
+        new = np.abs(r) < 3 * np.median(np.abs(r[keep])) + 1e-9
+        if new.sum() < 10:
+            break
+        keep = new
+    R = np.zeros((h, w), np.float32)
+    W = np.zeros((h, w), np.float32)
+    R[v[keep], u[keep]] = (inv - (a * d + b))[keep]
+    W[v[keep], u[keep]] = 1
+    s = 0.05 * max(h, w)
+    num, den = cv2.GaussianBlur(R, (0, 0), s), cv2.GaussianBlur(W, (0, 0), s)
+    corr = np.where(den > 1e-6, num / np.maximum(den, 1e-6), 0)
+    return a * disp + b + corr
 
-    # Initialize Modules
-    fusion_engine = PointCloudFusionEngine(calib_store, max_depth=50.0, min_depth=0.1, stride=1, exclude_ego=True)
-    scene_filter = SceneFilter(voxel_size=0.05, sor_nb_neighbors=20, sor_std_ratio=2.0, ror_nb_points=12, ror_radius=0.15)
-    obstacle_clusterer = ObstacleClusterer(eps=0.30, min_samples=25, min_cluster_points=30)
-    tracker = DynamicObstacleTracker(max_association_distance_m=2.0)
 
-    all_results = {}
+def consistency(i, depths, views, nbrs, tol, need):
+    """Keep a pixel only if neighbouring photos agree on its 3D position."""
+    _, M, K, w, h, _, _ = views[i]
+    d = depths[i]
+    ys, xs = np.nonzero(d > 0)
+    z = d[ys, xs].astype(np.float64)
+    P = np.stack([(xs + .5 - K[0, 2]) * z / K[0, 0], (ys + .5 - K[1, 2]) * z / K[1, 1], z])
+    Pw = M[:3, :3].T @ (P - M[:3, 3:4])
+    ok = np.zeros(len(z), np.int32)
+    for j in nbrs[i]:
+        _, Mj, Kj, wj, hj, _, _ = views[j]
+        Q = Mj[:3, :3] @ Pw + Mj[:3, 3:4]
+        zq = np.maximum(Q[2], 1e-6)
+        ui = np.floor(Kj[0, 0] * Q[0] / zq + Kj[0, 2]).astype(np.int64)
+        vi = np.floor(Kj[1, 1] * Q[1] / zq + Kj[1, 2]).astype(np.int64)
+        inside = (Q[2] > 1e-6) & (ui >= 0) & (ui < wj) & (vi >= 0) & (vi < hj)
+        dj = np.zeros_like(zq)
+        dj[inside] = depths[j][vi[inside], ui[inside]]
+        ok += inside & (dj > 0) & (np.abs(dj - zq) < tol * zq)
+    mask = np.zeros(d.shape, bool)
+    mask[ys, xs] = ok >= min(need, len(nbrs[i]))
+    return mask
 
-    for fid in frame_ids:
-        print(f"\n" + "-" * 70)
-        print(f">>> PROCESSING SCENE FRAME {fid:04d}...")
-        print("-" * 70)
-        all_results[fid] = {}
 
-        for pipe in ["ground_truth", "ai_raw", "ai_per_camera"]:
-            print(f"  [{pipe.upper()}] Running reconstruction & mapping...")
-            res = process_scene_pipeline(
-                frame_id=fid,
-                pipeline_type=pipe,
-                calib_store=calib_store,
-                fusion_engine=fusion_engine,
-                scene_filter=scene_filter,
-                obstacle_clusterer=obstacle_clusterer,
-                data_dir=data_dir,
-                output_dir=output_dir,
-                meta_dir=meta_dir,
-                occupancy_dir=occupancy_dir,
-                global_scale=global_scale,
-                per_cam_scales=per_cam_scales,
-            )
-            all_results[fid][pipe] = res
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--photos", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--scale", type=float, default=1.0, help="real_length / model_length")
+    ap.add_argument("--model", default="large", choices=["small", "base", "large"])
+    ap.add_argument("--res", type=int, default=770, help="depth network input size")
+    ap.add_argument("--max-side", type=int, default=1800)
+    ap.add_argument("--tol", type=float, default=0.04, help="consistency tolerance (relative depth)")
+    ap.add_argument("--need", type=int, default=2, help="neighbour photos that must agree")
+    ap.add_argument("--k", type=int, default=5, help="neighbours to check")
+    ap.add_argument("--multi-camera", action="store_true", help="photos from different lenses/phones")
+    args = ap.parse_args()
 
-            print(
-                f"      Filtered Points: {res['clean_points']:,} | Ground RMSE: {res['ground_res'].rmse_m*100:.1f} cm | "
-                f"Tilt: {res['ground_res'].tilt_deg:.2f}° | Occupied Voxels: {res['occ_stats']['occupied_voxels']:,} | "
-                f"Free Voxels: {res['occ_stats']['free_voxels']:,} | Obstacles: {len(res['obstacles'])} | "
-                f"Time: {res['total_time_s']:.2f} s"
-            )
+    out = Path(args.out)
+    work = out / "work"
+    dbg = work / "depth_vis"
+    dbg.mkdir(parents=True, exist_ok=True)
 
-        # Update dynamic tracker
-        tracks = tracker.update(all_results[fid]["ai_per_camera"]["obstacles"], timestamp_s=float(fid) * 0.1)
-        print(f"      Active Dynamic Tracks: {len(tracks)}")
-        for tr in tracks:
-            print(f"        Track {tr.track_id}: Centroid ({tr.latest_centroid[0]:.2f}, {tr.latest_centroid[1]:.2f}, {tr.latest_centroid[2]:.2f}) m | Speed: {tr.speed_mps:.2f} m/s")
+    if prep(Path(args.photos), work / "images", args.max_side) < 4:
+        raise SystemExit("Need at least 4 sharp photos")
+    rec, imgdir = run_sfm(work / "images", work, not args.multi_camera)
 
-        # Generate 2D diagnostic figure comparing GT vs Calibrated AI
-        generate_diagnostic_visualizations(fid, all_results[fid]["ground_truth"], all_results[fid]["ai_per_camera"], figures_dir)
+    views = []
+    for im in rec.images.values():
+        cam = rec.cameras[im.camera_id]
+        M = pose(im)
+        uv, z = [], []
+        for p in im.points2D:
+            if p.has_point3D():
+                zc = (M[:3, :3] @ rec.points3D[p.point3D_id].xyz + M[:3, 3])[2]
+                if zc > 0:
+                    uv.append(p.xy)
+                    z.append(zc)
+        views.append((im.name, M, cam.calibration_matrix(), cam.width, cam.height,
+                      np.array(uv), np.array(z)))
+    zs = np.concatenate([v[6] for v in views])
+    voxel = float(np.median(zs)) / 600
+    dmax = float(np.percentile(zs, 95)) * 1.5
 
-    print("\n" + "=" * 84)
-    print("M6 MULTI-FRAME SCENE RECONSTRUCTION COMPLETE")
-    print("=" * 84 + "\n")
+    dev = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
+    mid = f"depth-anything/Depth-Anything-V2-{args.model.capitalize()}-hf"
+    proc = AutoImageProcessor.from_pretrained(mid)
+    net = AutoModelForDepthEstimation.from_pretrained(mid).to(dev).eval()
+
+    # Pass 1: depth per photo
+    depths = []
+    for name, M, K, w, h, uv, z in views:
+        if len(z) < 30:
+            print("skip (too few SfM points):", name)
+            depths.append(None)
+            continue
+        rgb = cv2.cvtColor(cv2.imread(str(imgdir / name)), cv2.COLOR_BGR2RGB)
+        inv = align(predict_disp(rgb, proc, net, dev, args.res), uv, z)
+        d = np.where(inv > 1e-4, 1.0 / np.maximum(inv, 1e-4), 0).astype(np.float32)
+        gy, gx = np.gradient(d)
+        edge = cv2.dilate((np.hypot(gx, gy) / np.maximum(d, 1e-6) > 0.03).astype(np.uint8),
+                          np.ones((3, 3), np.uint8)) > 0
+        d[edge | (d > dmax)] = 0
+        depths.append(d)
+        vis = np.clip(inv / max(np.percentile(inv, 99), 1e-6), 0, 1)
+        cv2.imwrite(str(dbg / f"{Path(name).stem}.png"),
+                    cv2.applyColorMap((vis * 255).astype(np.uint8), cv2.COLORMAP_TURBO))
+        print("depth:", name)
+
+    # Neighbours = nearby cameras looking the same way
+    C = np.array([-v[1][:3, :3].T @ v[1][:3, 3] for v in views])
+    V = np.array([v[1][2, :3] for v in views])
+    nbrs = []
+    for i in range(len(views)):
+        order = np.argsort(np.linalg.norm(C - C[i], axis=1))[1:]
+        nbrs.append([j for j in order if depths[j] is not None and V[i] @ V[j] > 0.5][:args.k])
+
+    # Pass 2: filter + fuse
+    vol = o3d.pipelines.integration.ScalableTSDFVolume(
+        voxel_length=voxel, sdf_trunc=4 * voxel,
+        color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8)
+    for i, (name, M, K, w, h, _, _) in enumerate(views):
+        if depths[i] is None:
+            continue
+        keep = consistency(i, depths, views, nbrs, args.tol, args.need)
+        frac = keep.sum() / max(1, (depths[i] > 0).sum())
+        print(f"fuse {name}: kept {frac:.0%} of pixels" + ("  <-- views disagree" if frac < 0.3 else ""))
+        d = np.where(keep, depths[i], 0).astype(np.float32)
+        rgb = cv2.cvtColor(cv2.imread(str(imgdir / name)), cv2.COLOR_BGR2RGB)
+        rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
+            o3d.geometry.Image(np.ascontiguousarray(rgb)), o3d.geometry.Image(d),
+            depth_scale=1.0, depth_trunc=dmax, convert_rgb_to_intensity=False)
+        intr = o3d.camera.PinholeCameraIntrinsic(w, h, K[0, 0], K[1, 1], K[0, 2], K[1, 2])
+        vol.integrate(rgbd, intr, M)
+
+    mesh = vol.extract_triangle_mesh()
+    cl, n, _ = mesh.cluster_connected_triangles()
+    cl, n = np.asarray(cl), np.asarray(n)
+    mesh.remove_triangles_by_mask(n[cl] < 0.05 * n.max())
+    mesh.remove_unreferenced_vertices()
+    mesh = mesh.filter_smooth_taubin(number_of_iterations=10)
+    mesh.compute_vertex_normals()
+    pcd = vol.extract_point_cloud()
+    if args.scale != 1.0:
+        mesh.scale(args.scale, center=(0, 0, 0))
+        pcd.scale(args.scale, center=(0, 0, 0))
+    o3d.io.write_triangle_mesh(str(out / "scene_mesh.ply"), mesh)
+    o3d.io.write_point_cloud(str(out / "scene_points.ply"), pcd)
+    print("done ->", out / "scene_mesh.ply", "(open in MeshLab or Blender)")
 
 
 if __name__ == "__main__":
     main()
-
