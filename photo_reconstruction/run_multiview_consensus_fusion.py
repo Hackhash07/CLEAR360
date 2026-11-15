@@ -264,7 +264,13 @@ def run_multiview_fusion(
         "multi_view_consensus_samples": int(engine_report.consensus_pts_count),
         "single_other_view_validated_samples": int(engine_report.validated_pts_count),
         "single_view_unverified_samples": int(engine_report.single_view_pts_count),
-        "rejected_samples": int(engine_report.rejected_outliers_count),
+        "samples_below_selected_support_threshold": int(
+            engine_report.single_view_pts_count
+            + (
+                engine_report.validated_pts_count
+                if minimum_support_count == 2 else 0
+            )
+        ),
     }
     verified_samples = (
         engine_counts["multi_view_consensus_samples"]
@@ -281,6 +287,13 @@ def run_multiview_fusion(
         ),
         "engine_counts": engine_counts,
         "verified_source_samples": int(verified_samples),
+        "minimum_support_count_from_other_views": int(minimum_support_count),
+        "support_interpretation": (
+            "K>=2 only; K=1 samples are exported separately as lower-confidence "
+            "diagnostics."
+            if minimum_support_count == 2
+            else "K>=1; samples with K=0 are exported separately as uncertain."
+        ),
         "verified_source_sample_rate_pct": round(
             100.0 * verified_samples
             / max(engine_counts["total_candidate_samples"], 1),
@@ -295,6 +308,27 @@ def run_multiview_fusion(
             "layer-thickness diagnostic values are deliberately not presented as measurements."
         ),
     })
+
+    if hasattr(engine, "single_other_view_pts") and len(engine.single_other_view_pts) > 0:
+        lower_confidence = o3d.geometry.PointCloud()
+        lower_confidence.points = o3d.utility.Vector3dVector(
+            np.asarray(engine.single_other_view_pts, dtype=np.float64)
+        )
+        if (
+            hasattr(engine, "single_other_view_cols")
+            and len(engine.single_other_view_cols) == len(engine.single_other_view_pts)
+        ):
+            lower_confidence.colors = o3d.utility.Vector3dVector(
+                np.asarray(engine.single_other_view_cols, dtype=np.float64)
+            )
+        lower_confidence_path = run_dir / "single_other_view_diagnostic_cloud.ply"
+        o3d.io.write_point_cloud(
+            str(lower_confidence_path), lower_confidence, write_ascii=False
+        )
+        report["single_other_view_diagnostic_cloud_file"] = str(lower_confidence_path)
+        report["single_other_view_diagnostic_point_count"] = int(
+            len(engine.single_other_view_pts)
+        )
 
     if hasattr(engine, "uncertain_pts") and len(engine.uncertain_pts) > 0:
         uncertain = o3d.geometry.PointCloud()
@@ -391,13 +425,20 @@ def main() -> int:
             "Single-other-view validated samples: "
             f"{counts['single_other_view_validated_samples']:,}"
         )
+        print(f"Single-other-view samples: {counts['single_other_view_validated_samples']:,}")
         print(f"Unverified single-view samples: {counts['single_view_unverified_samples']:,}")
+        print(f"Samples below selected support threshold: {counts['samples_below_selected_support_threshold']:,}")
         print(f"Voxel-fused output points: {report['fused_point_cloud']['point_count']:,}")
         print(
             "Fused cloud extent (COLMAP scene units): "
             f"{report['fused_point_cloud']['bounds_extent_sfm_units']}"
         )
         print(f"Saved PLY: {report['point_cloud_file']}")
+        if report.get("single_other_view_diagnostic_cloud_file"):
+            print(
+                "Saved single-other-view diagnostic PLY: "
+                f"{report['single_other_view_diagnostic_cloud_file']}"
+            )
         if report.get("uncertain_point_cloud_file"):
             print(f"Saved uncertain diagnostic PLY: {report['uncertain_point_cloud_file']}")
     else:
