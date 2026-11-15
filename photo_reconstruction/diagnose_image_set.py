@@ -165,7 +165,13 @@ def _run_depth_calibration(
     registered_paths = [
         path for path in image_paths if path.name in camera_models
     ]
-    cache_dir = output_dir / f"depth_cache_{depth_source}"
+    # Keep custom checkpoints isolated from the default small-model cache.
+    # Otherwise the estimator would silently reuse existing .npy maps from a
+    # different encoder because the cache worker skips already-present files.
+    cache_name = f"depth_cache_{depth_source}"
+    if weights_arg:
+        cache_name = f"{cache_name}_{weights_path.stem}"
+    cache_dir = output_dir / cache_name
     depth_maps = IsolatedDepthEstimator.estimate_depths_for_images(
         image_paths=registered_paths,
         cache_dir=cache_dir,
