@@ -240,6 +240,10 @@ class PhoneReconstructionPipeline:
         from photo_reconstruction.depth_helper import IsolatedDepthEstimator
         reg_paths = [img_target_dir / name for name in camera_poses.keys()]
         depth_maps = IsolatedDepthEstimator.estimate_depths_for_images(reg_paths, session_dir / "depth_cache")
+        # Only pass depth maps to texture visibility testing when the corresponding
+        # view has enough sparse SfM anchors to establish the same coordinate gauge.
+        # Raw monocular depth must never be compared directly with SfM-space mesh Z.
+        texture_depth_maps = None
 
         # Robust per-view SfM-scale depth alignment (held-out validation)
         camera_models = sfm_res.get("camera_models", {})
@@ -254,6 +258,12 @@ class PhoneReconstructionPipeline:
                 sparse_tracks=sparse_tracks,
             )
             depth_maps = align_res.aligned_depth_maps
+            aligned_texture_views = {
+                name: depth_maps[name]
+                for name, stats in align_res.view_stats.items()
+                if stats.success and name in depth_maps
+            }
+            texture_depth_maps = aligned_texture_views or None
 
             # Save depth alignment diagnostics
             align_diag = {
@@ -414,7 +424,7 @@ class PhoneReconstructionPipeline:
                     faces=mesh_f,
                     camera_models=camera_models,
                     images=img_dict,
-                    depth_maps=depth_maps,
+                    depth_maps=texture_depth_maps,
                     out_dir=mesh_dir,
                     base_name="scene_mesh",
                 )
