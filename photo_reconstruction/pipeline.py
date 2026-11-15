@@ -285,6 +285,7 @@ class PhoneReconstructionPipeline:
             sparse_colors=sparse_cols,
             use_mvs_verification=mvs_flag,
             camera_models=camera_models,
+            session_dir=session_dir,
         )
 
         # Auto-Upright Ground Plane Alignment (Gravity Alignment)

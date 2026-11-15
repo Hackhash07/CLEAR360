@@ -181,6 +181,7 @@ class DenseReconstructor:
         sparse_colors: Optional[np.ndarray] = None,
         use_mvs_verification: bool = False,
         camera_models: Optional[Dict[str, Any]] = None,
+        session_dir: Optional[Path] = None,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Produce a dense 3D point cloud with genuine photographic colors.
@@ -243,32 +244,25 @@ class DenseReconstructor:
                         all_pts.append(f_pts)
                         all_cols.append(f_cols)
                         mvs_done = True
+
+                        # M7.3.9 Phase 2: Save uncertain points strictly into separate diagnostic layer
+                        if session_dir is not None and hasattr(engine, "uncertain_pts") and len(engine.uncertain_pts) > 0:
+                            diag_dir = Path(session_dir) / "dense_cloud"
+                            diag_dir.mkdir(parents=True, exist_ok=True)
+                            pcd_unc = o3d.geometry.PointCloud()
+                            pcd_unc.points = o3d.utility.Vector3dVector(engine.uncertain_pts.astype(np.float64))
+                            if hasattr(engine, "uncertain_cols") and len(engine.uncertain_cols) == len(engine.uncertain_pts):
+                                pcd_unc.colors = o3d.utility.Vector3dVector(engine.uncertain_cols.astype(np.float64))
+                            o3d.io.write_point_cloud(str(diag_dir / "uncertain_diagnostic_cloud.ply"), pcd_unc)
                 except Exception as e:
-                    print(f"Notice: M736 consensus fallback: {e}")
+                    print(f"Notice: M736 consensus error: {e}")
                     mvs_done = False
 
-            if not mvs_done and use_mvs_verification and len(camera_poses) >= 2:
-                try:
-                    from photo_reconstruction.mvs_consistency import MVSGeometricConsistencyFilter
-                    mvs_filter = MVSGeometricConsistencyFilter(
-                        rel_depth_threshold=0.035,
-                        spatial_dist_threshold=0.20,
-                        reproj_threshold_px=2.5,
-                        min_consistent_views=1,
-                    )
-                    stride = max(4, int(self.voxel_size * 150))
-                    mvs_pts, mvs_cols, _ = mvs_filter.filter_points_with_colors(
-                        camera_models=camera_models if camera_models else camera_poses,
-                        depth_maps=depth_maps,
-                        image_dir=image_dir,
-                        stride=stride,
-                    )
-                    if len(mvs_pts) >= 500:
-                        all_pts.append(mvs_pts)
-                        all_cols.append(mvs_cols)
-                        mvs_done = True
-                except Exception:
-                    mvs_done = False
+            if not mvs_done and use_mvs_verification:
+                raise RuntimeError(
+                    "M7.3.9 Strict Geometry Integrity: Multi-view geometric consensus failed. "
+                    "Unverified monocular depth fallback is prohibited to prevent multi-sheet artifacts."
+                )
 
             if not mvs_done:
                 for img_name, T_world_cam in camera_poses.items():

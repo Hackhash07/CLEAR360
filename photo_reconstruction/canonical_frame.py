@@ -69,18 +69,20 @@ class CanonicalSceneAligner:
         target_dir: np.ndarray,
         min_alignment_dot: float = 0.70,
         dist_thresh: float = 0.05,
-        max_iters: int = 400,
+        max_iters: int = 500,
+        random_state: int = 42,
     ) -> Optional[Tuple[float, float, float, float]]:
-        """Fit a plane whose normal is constrained to align with target_dir."""
+        """Fit a plane whose normal is constrained to align with target_dir (deterministic RANSAC)."""
         if len(pts) < 10:
             return None
         target = target_dir / np.linalg.norm(target_dir)
         best_plane = None
         best_inliers_count = 0
         n_pts = len(pts)
+        rng = np.random.RandomState(random_state)
 
         for _ in range(max_iters):
-            idx = np.random.choice(n_pts, 3, replace=False)
+            idx = rng.choice(n_pts, 3, replace=False)
             p0, p1, p2 = pts[idx]
             normal = np.cross(p1 - p0, p2 - p0)
             norm_val = np.linalg.norm(normal)
@@ -112,9 +114,16 @@ class CanonicalSceneAligner:
         Uses camera trajectory priors to distinguish ground plane from wall plane.
         """
         pts = points.astype(np.float64)
-        pts_ref = sparse_points.astype(np.float64) if sparse_points is not None and len(sparse_points) > 50 else pts
+        # M7.3.9 Phase 3: Fit planes strictly on dense geometric points
+        if len(pts) > 25000:
+            rng_sample = np.random.RandomState(42)
+            pts_ref = pts[rng_sample.choice(len(pts), 25000, replace=False)]
+        else:
+            pts_ref = pts
 
-        # Camera trajectory priors
+        # Camera trajectory priors:
+        # For standard COLMAP camera: Col 1 is down (so -Col 1 is UP) and Col 2 is forward.
+        # Handles both calibrated pinhole conventions and synthetic test poses.
         cam_centers = []
         cam_up_vectors = []
         cam_fwd_vectors = []

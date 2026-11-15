@@ -228,18 +228,23 @@ class M736GeometricConsensusEngine:
         med_conf_mask = support_counts == 1
         single_view_mask = support_counts == 0
 
-        # Reject severe depth floaters: points observed by >= 2 cameras with zero agreement
-        # Retain single-view points ONLY if they are within physical courtyard depth (d <= 11.5m)
-        # to eliminate peripheral domain-shift depth hallucinations (e.g. adjacent building at 20-30m)
-        cam_centers = np.array([cam.camera_center for cam in camera_models.values()], dtype=np.float32)
-        pt_cam_c = cam_centers[all_cam_ids]
-        pt_cam_dist = np.linalg.norm(collapsed_pts - pt_cam_c, axis=1)
-        valid_single_view = single_view_mask & (pt_cam_dist <= 11.5)
+        # M7.3.9 Phase 2: Confidence-Aware Point Separation
+        # Retain ONLY geometrically verified points (high confidence + validated) in reconstruction.
+        # Single-view points are uncertain and retained exclusively in a separate diagnostic layer.
+        verified_mask = support_counts >= 1
+        clean_pts = collapsed_pts[verified_mask]
+        clean_cols = all_colors[verified_mask]
+        clean_weights = (support_counts[verified_mask] + 1).astype(np.float32)
 
-        valid_retained = (support_counts >= 1) | valid_single_view
-        clean_pts = collapsed_pts[valid_retained]
-        clean_cols = all_colors[valid_retained]
-        clean_weights = (support_counts[valid_retained] + 1).astype(np.float32)
+        # Store uncertain points for diagnostic layer
+        self.uncertain_pts = collapsed_pts[single_view_mask]
+        self.uncertain_cols = all_colors[single_view_mask]
+
+        if len(clean_pts) < 1000:
+            raise RuntimeError(
+                f"Multi-view geometric consensus failed: only {len(clean_pts)} verified points "
+                f"(requires >= 1000). Check photograph overlap and feature correspondence."
+            )
 
         # 4. Estimate Clean Normals using Source Camera Line-of-Sight
         pcd = o3d.geometry.PointCloud()

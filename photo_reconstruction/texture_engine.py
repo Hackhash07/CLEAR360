@@ -192,8 +192,17 @@ class VisibilityAwareTextureEngine:
                 d_obs = d_map[v_pix, u_pix].astype(np.float64)
                 z_proj = depth_c[inside_margin]
 
+                # Ensure scale alignment between d_obs and z_proj to prevent false occlusion rejections
+                valid_d = d_obs > 0.1
+                if np.sum(valid_d) > 20:
+                    med_obs = float(np.median(d_obs[valid_d]))
+                    med_proj = float(np.median(z_proj[valid_d]))
+                    ratio = med_proj / max(med_obs, 1e-4)
+                    if abs(ratio - 1.0) > 0.05:
+                        d_obs = d_obs * ratio
+
                 # Not occluded if projected depth <= observed depth + margin
-                not_occluded = (d_obs > 0.1) & (z_proj <= d_obs + self.occ_thresh)
+                not_occluded = (d_obs > 0.1) & (z_proj <= d_obs + max(self.occ_thresh, 0.40))
                 test_f_indices = test_f_indices[not_occluded]
                 if len(test_f_indices) == 0:
                     continue
@@ -359,12 +368,17 @@ class VisibilityAwareTextureEngine:
                 f_mtl.write("illum 1\n")
                 f_mtl.write(f"map_Kd {base_name}.png\n")
 
-            # Compute smooth vertex normals for Wavefront OBJ export
-            m_tmp = o3d.geometry.TriangleMesh()
-            m_tmp.vertices = o3d.utility.Vector3dVector(new_verts.astype(np.float64))
-            m_tmp.triangles = o3d.utility.Vector3iVector(new_faces.astype(np.int32))
-            m_tmp.compute_vertex_normals()
-            new_vn = np.asarray(m_tmp.vertex_normals, dtype=np.float32)
+            # Compute smooth vertex normals on original connected topology for photorealistic shading
+            m_orig = o3d.geometry.TriangleMesh()
+            m_orig.vertices = o3d.utility.Vector3dVector(verts.astype(np.float64))
+            m_orig.triangles = o3d.utility.Vector3iVector(faces.astype(np.int32))
+            m_orig.compute_vertex_normals()
+            orig_vn = np.asarray(m_orig.vertex_normals, dtype=np.float32)
+
+            new_vn = np.zeros_like(new_verts, dtype=np.float32)
+            for f_i in range(num_faces):
+                orig_face = faces[f_i]
+                new_vn[f_i * 3 : f_i * 3 + 3] = orig_vn[orig_face]
 
             obj_path = o_dir / f"{base_name}.obj"
             with open(obj_path, "w") as f_obj:

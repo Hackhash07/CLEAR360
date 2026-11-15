@@ -663,14 +663,16 @@ class Clear360Viewport(QtWidgets.QWidget):
                 tex_bgr = cv2.imread(str(atlas_png))
                 if tex_bgr is not None:
                     tex_rgb = cv2.cvtColor(tex_bgr, cv2.COLOR_BGR2RGB)
-                    # Load vertex and UV coordinates from OBJ
-                    obj_v, obj_vt, obj_f = [], [], []
+                    # Load vertex, UV coordinates and smooth normals from OBJ
+                    obj_v, obj_vt, obj_vn, obj_f = [], [], [], []
                     with open(obj_file, "r") as f_obj:
                         for line in f_obj:
                             if line.startswith("v "):
                                 obj_v.append([float(x) for x in line.split()[1:4]])
                             elif line.startswith("vt "):
                                 obj_vt.append([float(x) for x in line.split()[1:3]])
+                            elif line.startswith("vn "):
+                                obj_vn.append([float(x) for x in line.split()[1:4]])
                             elif line.startswith("f "):
                                 parts = line.split()[1:4]
                                 obj_f.append([int(pt.split("/")[0]) - 1 for pt in parts])
@@ -678,7 +680,13 @@ class Clear360Viewport(QtWidgets.QWidget):
                         t_verts = np.asarray(obj_v, dtype=np.float32)
                         t_faces = np.asarray(obj_f, dtype=np.uint32)
                         t_uvs = np.asarray(obj_vt, dtype=np.float32)
-                        self.visual_textured_mesh.set_data(vertices=t_verts, faces=t_faces, color="white")
+                        t_norms = np.asarray(obj_vn, dtype=np.float32) if len(obj_vn) == len(obj_v) else None
+                        self.visual_textured_mesh.set_data(
+                            vertices=t_verts,
+                            faces=t_faces,
+                            vertex_normals=t_norms,
+                            color="white"
+                        )
                         if self.texture_filter is None:
                             self.texture_filter = TextureFilter(texture=tex_rgb, texcoords=t_uvs)
                             self.visual_textured_mesh.attach(self.texture_filter)

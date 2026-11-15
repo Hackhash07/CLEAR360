@@ -308,14 +308,23 @@ class RegionSceneAssembler:
         if len(points) < 15:
             return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint32)
 
-        if radii is None:
-            radii = [0.025, 0.050, 0.090]
-
         pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points.astype(np.float64)))
         pcd = pcd.voxel_down_sample(voxel_size=0.015)
         pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.08, max_nn=30))
         pcd_pts = np.asarray(pcd.points, dtype=np.float32)
         pcd_norms = np.asarray(pcd.normals, dtype=np.float32)
+
+        if radii is None:
+            # M7.3.9 Phase 5: Adaptive BPA radii from nearest-neighbor distance distribution
+            pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+            nn_dists = []
+            sample_step = max(1, len(pcd_pts) // 500)
+            for idx in range(0, len(pcd_pts), sample_step):
+                [_, idxs, dists] = pcd_tree.search_knn_vector_3d(pcd.points[idx], 2)
+                if len(dists) > 1:
+                    nn_dists.append(np.sqrt(dists[1]))
+            d_nn = float(np.median(nn_dists)) if nn_dists else 0.020
+            radii = [float(1.2 * d_nn), float(2.5 * d_nn), float(5.0 * d_nn)]
 
         # Orient point normals towards actual camera positions
         if camera_centers is not None and len(camera_centers) > 0:
@@ -344,6 +353,17 @@ class RegionSceneAssembler:
         e2 = np.linalg.norm(v[f[:, 0]] - v[f[:, 2]], axis=1)
         valid = (e0 < max_edge_len) & (e1 < max_edge_len) & (e2 < max_edge_len)
         f = f[valid]
+
+        # M7.3.9 Phase 5: Normal divergence check - reject triangles bridging between wall and projecting basin rim
+        if len(f) > 0 and len(pcd_norms) == len(v):
+            fn0 = pcd_norms[f[:, 0]]
+            fn1 = pcd_norms[f[:, 1]]
+            fn2 = pcd_norms[f[:, 2]]
+            dot01 = np.sum(fn0 * fn1, axis=1)
+            dot12 = np.sum(fn1 * fn2, axis=1)
+            dot20 = np.sum(fn2 * fn0, axis=1)
+            consistent_normals = (dot01 > 0.15) & (dot12 > 0.15) & (dot20 > 0.15)
+            f = f[consistent_normals]
 
         v_clean, f_clean, _ = PolygonSoupRepair.repair_mesh(v, f)
 
@@ -379,14 +399,23 @@ class RegionSceneAssembler:
         if len(points) < 30:
             return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint32)
 
-        if radii is None:
-            radii = [0.035, 0.065, 0.110]
-
         pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points.astype(np.float64)))
         pcd = pcd.voxel_down_sample(voxel_size=0.025)
         pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.10, max_nn=30))
         pcd_pts = np.asarray(pcd.points, dtype=np.float32)
         pcd_norms = np.asarray(pcd.normals, dtype=np.float32)
+
+        if radii is None:
+            # M7.3.9 Phase 5: Adaptive BPA radii from nearest-neighbor distance distribution
+            pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+            nn_dists = []
+            sample_step = max(1, len(pcd_pts) // 500)
+            for idx in range(0, len(pcd_pts), sample_step):
+                [_, idxs, dists] = pcd_tree.search_knn_vector_3d(pcd.points[idx], 2)
+                if len(dists) > 1:
+                    nn_dists.append(np.sqrt(dists[1]))
+            d_nn = float(np.median(nn_dists)) if nn_dists else 0.030
+            radii = [float(1.2 * d_nn), float(2.5 * d_nn), float(5.0 * d_nn)]
 
         if camera_centers is not None and len(camera_centers) > 0:
             los = np.zeros_like(pcd_pts)
@@ -414,6 +443,17 @@ class RegionSceneAssembler:
         e2 = np.linalg.norm(v[f[:, 0]] - v[f[:, 2]], axis=1)
         valid = (e0 < max_edge_len) & (e1 < max_edge_len) & (e2 < max_edge_len)
         f = f[valid]
+
+        # M7.3.9 Phase 5: Normal divergence check - reject triangles bridging between wall and projecting basin rim
+        if len(f) > 0 and len(pcd_norms) == len(v):
+            fn0 = pcd_norms[f[:, 0]]
+            fn1 = pcd_norms[f[:, 1]]
+            fn2 = pcd_norms[f[:, 2]]
+            dot01 = np.sum(fn0 * fn1, axis=1)
+            dot12 = np.sum(fn1 * fn2, axis=1)
+            dot20 = np.sum(fn2 * fn0, axis=1)
+            consistent_normals = (dot01 > 0.15) & (dot12 > 0.15) & (dot20 > 0.15)
+            f = f[consistent_normals]
 
         v_clean, f_clean, _ = PolygonSoupRepair.repair_mesh(v, f)
 
@@ -481,6 +521,17 @@ class RegionSceneAssembler:
         e2 = np.linalg.norm(v[f[:, 0]] - v[f[:, 2]], axis=1)
         valid = (e0 < max_edge_len) & (e1 < max_edge_len) & (e2 < max_edge_len)
         f = f[valid]
+
+        # M7.3.9 Phase 5: Normal divergence check - reject triangles bridging between wall and projecting basin rim
+        if len(f) > 0 and len(pcd_norms) == len(v):
+            fn0 = pcd_norms[f[:, 0]]
+            fn1 = pcd_norms[f[:, 1]]
+            fn2 = pcd_norms[f[:, 2]]
+            dot01 = np.sum(fn0 * fn1, axis=1)
+            dot12 = np.sum(fn1 * fn2, axis=1)
+            dot20 = np.sum(fn2 * fn0, axis=1)
+            consistent_normals = (dot01 > 0.15) & (dot12 > 0.15) & (dot20 > 0.15)
+            f = f[consistent_normals]
 
         v_clean, f_clean, _ = PolygonSoupRepair.repair_mesh(v, f)
         from photo_reconstruction.normal_orientation import NormalOrientationEngine
@@ -555,26 +606,12 @@ class RegionSceneAssembler:
             print(f"  --> Meshing component '{r_id}' ({len(r_pts):,} points)...", flush=True)
 
             if r_id == "pavement":
-                if can_res.is_canonical_established:
-                    m_v, m_f = self.mesh_pavement_continuous_grid(
-                        y_wall=can_res.wall_y,
-                        half_width=max(3.8, can_res.courtyard_width / 2.0),
-                        y_front=4.2,
-                        z_ground=0.0,
-                    )
-                else:
-                    m_v, m_f = self.mesh_pavement_planar(r_pts, r_cols, r_norms)
+                # M7.3.9 Phase 4: Mesh strictly within observed support (alpha shape / bounded Delaunay)
+                m_v, m_f = self.mesh_pavement_planar(r_pts, r_cols, r_norms, max_edge_len=0.25)
 
             elif r_id == "wall":
-                if can_res.is_canonical_established:
-                    m_v, m_f = self.mesh_wall_continuous_grid(
-                        y_wall=can_res.wall_y,
-                        half_width=max(3.8, can_res.courtyard_width / 2.0),
-                        z_min=0.20,
-                        z_max=5.40,
-                    )
-                else:
-                    m_v, m_f = self.mesh_wall_planar(r_pts, r_cols, r_norms)
+                # M7.3.9 Phase 4: Mesh strictly within observed support (alpha shape / bounded Delaunay)
+                m_v, m_f = self.mesh_wall_planar(r_pts, r_cols, r_norms, max_edge_len=0.25)
 
             elif r_id == "sculpture":
                 m_v, m_f = self.mesh_sculpture_high_detail(r_pts, r_cols, r_norms, camera_centers=cam_centers)
