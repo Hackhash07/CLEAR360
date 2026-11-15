@@ -323,10 +323,30 @@ class PhoneReconstructionPipeline:
         mesh_obj = mesh_dir / "scene_mesh.obj"
         textured_ok = False
 
-        if camera_models and img_dict:
+        # Generic smartphone sessions must not use the legacy fountain-specific
+        # RegionSceneAssembler. That assembler segments fixed fountain coordinates
+        # (wall, basin, sculpture, pavement), which corrupts arbitrary rooms/objects.
+        # Keep it available only behind an explicit opt-in for a future, separately
+        # selected architectural-fountain profile. The default phone workflow uses
+        # the generic geometry produced by SfM/MVS and MeshBuilder.
+        scene_profile = "generic"
+        scene_profile_path = session_dir / "scene_profile.json"
+        try:
+            if scene_profile_path.is_file():
+                with open(scene_profile_path, "r", encoding="utf-8") as f_profile:
+                    profile_data = json.load(f_profile)
+                requested_profile = str(profile_data.get("profile", "generic")).strip().lower()
+                if requested_profile in {"generic", "architectural_fountain"}:
+                    scene_profile = requested_profile
+        except (OSError, ValueError, TypeError):
+            # Invalid optional profile metadata must never divert generic images
+            # into a specialized coordinate-based assembler.
+            scene_profile = "generic"
+
+        if scene_profile == "architectural_fountain" and camera_models and img_dict:
             try:
                 from photo_reconstruction.scene_assembly import RegionSceneAssembler
-                update_progress(80, "Building modular 3D surface mesh and outward-facing normal assembly...")
+                update_progress(80, "Building explicitly requested fountain-specific scene assembly...")
                 assembler = RegionSceneAssembler(session_dir)
                 scene_regions, final_obj, final_ply, _ = assembler.assemble_scene_graph(
                     points=dense_pts,
@@ -340,14 +360,19 @@ class PhoneReconstructionPipeline:
                 mesh_unified = o3d.io.read_triangle_mesh(str(final_ply))
                 mesh_v = np.asarray(mesh_unified.vertices, dtype=np.float32)
                 mesh_f = np.asarray(mesh_unified.triangles, dtype=np.uint32)
-                if len(mesh_unified.vertex_colors) > 0:
-                    mesh_c = np.asarray(mesh_unified.vertex_colors, dtype=np.float32)
-                else:
-                    mesh_c = np.ones((len(mesh_v), 4), dtype=np.float32) * 0.7
+                mesh_c = (
+                    np.asarray(mesh_unified.vertex_colors, dtype=np.float32)
+                    if len(mesh_unified.vertex_colors) > 0
+                    else np.ones((len(mesh_v), 3), dtype=np.float32) * 0.7
+                )
                 mesh_n = np.asarray(mesh_unified.vertex_normals, dtype=np.float32)
+                if len(mesh_v) == 0 or len(mesh_f) == 0:
+                    raise RuntimeError("Fountain assembler returned an empty mesh")
                 textured_ok = True
             except Exception as e:
-                print(f"Notice: Modular assembly fallback: {e}")
+                # Specialized mode failures are surfaced; do not silently pretend
+                # that a generic mesh is an equivalent fountain reconstruction.
+                raise RuntimeError(f"Architectural fountain assembly failed: {e}") from e
 
         if not textured_ok:
             chosen_method = mesh_method if mesh_method is not None else preset_cfg.get("mesh_method", "poisson")
