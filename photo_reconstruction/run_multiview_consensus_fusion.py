@@ -251,8 +251,8 @@ def run_multiview_fusion(
 
     run_dir = output_dir / (
         "multiview_consensus_fusion"
-        if args.minimum_support_count == 1
-        else f"multiview_consensus_fusion_support{args.minimum_support_count}"
+        if minimum_support_count == 1
+        else f"multiview_consensus_fusion_support{minimum_support_count}"
     )
     run_dir.mkdir(parents=True, exist_ok=True)
     ply_path = run_dir / "verified_multiview_consensus_cloud.ply"
@@ -363,7 +363,11 @@ def main() -> int:
         minimum_support_count=args.minimum_support_count,
     )
 
-    run_dir = output_dir / "multiview_consensus_fusion"
+    run_dir = output_dir / (
+        "multiview_consensus_fusion"
+        if args.minimum_support_count == 1
+        else f"multiview_consensus_fusion_support{args.minimum_support_count}"
+    )
     run_dir.mkdir(parents=True, exist_ok=True)
     report_path = run_dir / "fusion_report.json"
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
