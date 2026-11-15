@@ -70,11 +70,15 @@ class M736GeometricConsensusEngine:
         self,
         base_reproj_thresh_px: float = 3.0,
         normal_compat_thresh: float = 0.707,  # 45 deg max normal divergence
-        voxel_fusion_size: float = 0.025,      # 25 mm normal-compatible fusion grid
+        voxel_fusion_size: float = 0.025,      # units follow the COLMAP scene gauge
+        minimum_support_count: int = 1,
     ):
         self.base_reproj_thresh_px = float(base_reproj_thresh_px)
         self.normal_compat_thresh = float(normal_compat_thresh)
         self.voxel_fusion_size = float(voxel_fusion_size)
+        self.minimum_support_count = int(minimum_support_count)
+        if self.minimum_support_count not in (1, 2):
+            raise ValueError("minimum_support_count must be 1 or 2.")
 
     @staticmethod
     def _camera_models_at_depth_resolution(
@@ -256,14 +260,19 @@ class M736GeometricConsensusEngine:
         single_view_mask = support_counts == 0
 
         # M7.3.9 Phase 2: Confidence-Aware Point Separation
-        # Retain ONLY geometrically verified points (high confidence + validated) in reconstruction.
-        # Single-view points are uncertain and retained exclusively in a separate diagnostic layer.
-        verified_mask = support_counts >= 1
+        # Retain geometrically supported points according to minimum_support_count.
+        # K==1 and K==0 samples remain available in separate diagnostic layers.
+        # Production default keeps samples supported by >=1 other view.
+        # A stricter diagnostic mode can require >=2 other views to isolate
+        # multi-view consensus surfaces from single-other-view support.
+        verified_mask = support_counts >= self.minimum_support_count
         clean_pts = collapsed_pts[verified_mask]
         clean_cols = all_colors[verified_mask]
         clean_weights = (support_counts[verified_mask] + 1).astype(np.float32)
 
-        # Store uncertain points for diagnostic layer
+        # Preserve lower-confidence strata separately for diagnostics.
+        self.single_other_view_pts = collapsed_pts[med_conf_mask]
+        self.single_other_view_cols = all_colors[med_conf_mask]
         self.uncertain_pts = collapsed_pts[single_view_mask]
         self.uncertain_cols = all_colors[single_view_mask]
 
