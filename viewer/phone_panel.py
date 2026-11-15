@@ -516,12 +516,12 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         # Emit completion signal to open in 3D viewport
         self.reconstruction_completed.emit(session_id, mesh_path)
 
-        QtWidgets.QMessageBox.information(
-            self,
-            "Photogrammetry Complete",
-            f"3D reconstruction completed successfully!\nSession: {session_id}\n\n"
-            "The reconstructed scene has been loaded into the 3D viewer.",
-        )
+        msg_box = QtWidgets.QMessageBox(self)
+        msg_box.setIcon(QtWidgets.QMessageBox.Information)
+        msg_box.setWindowTitle("Photogrammetry Complete")
+        msg_box.setText(f"3D reconstruction completed successfully!\nSession: {session_id}\n\nThe reconstructed scene has been loaded into the 3D viewer.")
+        msg_box.setStandardButtons(QtWidgets.QMessageBox.Ok)
+        msg_box.show()
 
     @QtCore.Slot(str, str)
     def _on_reconstruction_failed(self, error_msg: str, tb_str: str):
@@ -544,7 +544,8 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         msg_box.setInformativeText("Your uploaded photographs remain in the list. You can adjust the quality preset, add more overlapping photos, or retry.")
         if tb_str:
             msg_box.setDetailedText(tb_str)
-        msg_box.exec()
+        msg_box.setStandardButtons(QtWidgets.QMessageBox.Ok)
+        msg_box.show()
 
     def _refresh_session_list(self):
         """Update sessions dropdown with all saved directories."""

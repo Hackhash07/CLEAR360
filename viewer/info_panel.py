@@ -255,32 +255,28 @@ class ViewerInfoPanel(QtWidgets.QWidget):
 
     def set_app_mode(self, mode: str):
         """Switch info panel display based on active application mode (M7.3.10 Part 10)."""
-        if mode == "phone":
-            if hasattr(self, "disclaimer_card"):
-                self.disclaimer_card.hide()
-            if hasattr(self, "grp_inspector"):
-                self.grp_inspector.hide()
-            if hasattr(self, "grp_table"):
-                self.grp_table.hide()
-            if hasattr(self, "grp_stats"):
-                self.grp_stats.hide()
-            if hasattr(self, "grp_health"):
-                self.grp_health.hide()
-            if hasattr(self, "grp_phone_diagnostics"):
-                self.grp_phone_diagnostics.show()
-        else:
-            if hasattr(self, "disclaimer_card"):
-                self.disclaimer_card.show()
-            if hasattr(self, "grp_inspector"):
-                self.grp_inspector.show()
-            if hasattr(self, "grp_table"):
-                self.grp_table.show()
-            if hasattr(self, "grp_stats"):
-                self.grp_stats.show()
-            if hasattr(self, "grp_health"):
-                self.grp_health.show()
-            if hasattr(self, "grp_phone_diagnostics"):
-                self.grp_phone_diagnostics.hide()
+        widgets_to_hide_in_phone = ["disclaimer_card", "grp_inspector", "grp_table", "grp_stats", "grp_health"]
+        try:
+            if mode == "phone":
+                for w_name in widgets_to_hide_in_phone:
+                    if hasattr(self, w_name):
+                        try:
+                            getattr(self, w_name).hide()
+                        except Exception:
+                            pass
+                if hasattr(self, "grp_phone_diagnostics"):
+                    self.grp_phone_diagnostics.show()
+            else:
+                for w_name in widgets_to_hide_in_phone:
+                    if hasattr(self, w_name):
+                        try:
+                            getattr(self, w_name).show()
+                        except Exception:
+                            pass
+                if hasattr(self, "grp_phone_diagnostics"):
+                    self.grp_phone_diagnostics.hide()
+        except Exception as e:
+            print(f"Notice: set_app_mode: {e}")
 
     def update_phone_diagnostics(
         self,

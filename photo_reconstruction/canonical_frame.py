@@ -355,34 +355,36 @@ class CanonicalSceneAligner:
             }
 
         y_wall = align_res.wall_y
-        half_fountain_w = max(2.1, align_res.fountain_width / 2.0 * 1.15)
+        half_fountain_w = max(2.4, align_res.fountain_width / 2.0 * 1.15)
         half_courtyard_w = max(4.0, align_res.courtyard_width / 2.0 * 1.05)
-        sculpture_half_w = max(0.75, align_res.fountain_width * 0.18)
+        sculpture_half_w = max(0.85, align_res.fountain_width * 0.20)
 
-        # 1. Pavement ground plane (Z <= 0.40m, in front of wall)
-        mask_pavement = (pts[:, 2] <= 0.40) & (pts[:, 1] <= y_wall + 0.30) & (np.abs(pts[:, 0]) <= half_courtyard_w)
+        # 1. Pavement ground plane (Z <= 0.38m, in front of wall)
+        mask_pavement = (pts[:, 2] <= 0.38) & (pts[:, 1] <= y_wall + 0.30) & (np.abs(pts[:, 0]) <= half_courtyard_w)
 
         # 2. Fountain architectural relief: points projecting forward from wall within horizontal envelope
+        # Extended Z upper limit to 5.95m so upper crown and pediment scrollwork are never truncated
         mask_fountain_envelope = (
             (~mask_pavement)
             & (np.abs(pts[:, 0]) <= half_fountain_w)
-            & (pts[:, 2] >= 0.40) & (pts[:, 2] <= 5.50)
+            & (pts[:, 2] >= 0.35) & (pts[:, 2] <= 5.95)
             & (pts[:, 1] >= 4.0) & (pts[:, 1] <= y_wall - 0.05)
         )
 
         # 2a. Central Sculpture: projecting feature within upper central niche
+        # Extended Z range to [1.55, 3.45] to fully preserve pedestal base, wings, and head
         mask_sculpture = (
             mask_fountain_envelope
             & (np.abs(pts[:, 0]) <= sculpture_half_w)
-            & (pts[:, 2] >= 1.70) & (pts[:, 2] <= 3.30)
-            & (pts[:, 1] <= y_wall - 0.15)
+            & (pts[:, 2] >= 1.55) & (pts[:, 2] <= 3.45)
+            & (pts[:, 1] <= y_wall - 0.12)
         )
 
         # 2b. Projecting Basin: low volume projecting forward
         mask_basin = (
             mask_fountain_envelope & (~mask_sculpture)
             & (pts[:, 2] <= 1.85)
-            & (pts[:, 1] <= y_wall - 0.30)
+            & (pts[:, 1] <= y_wall - 0.25)
         )
 
         # 2c. Fountain Frame & Architectural Scrollwork: remaining fountain envelope
@@ -391,9 +393,9 @@ class CanonicalSceneAligner:
         # 3. Background Brick Wall: points on the physical courtyard wall plane
         mask_wall = (
             (~mask_pavement) & (~mask_fountain_envelope)
-            & (np.abs(pts[:, 1] - y_wall) <= 0.35)
+            & (np.abs(pts[:, 1] - y_wall) <= 0.40)
             & (np.abs(pts[:, 0]) <= half_courtyard_w)
-            & (pts[:, 2] >= 0.40) & (pts[:, 2] <= 6.00)
+            & (pts[:, 2] >= 0.35) & (pts[:, 2] <= 6.20)
         )
 
         # 4. Adjacent Architecture: lateral buildings, steps, and peripheral scene

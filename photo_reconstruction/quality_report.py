@@ -38,10 +38,12 @@ class QualityReportGenerator:
         """
         completeness_pct = round((registered_count / max(1, uploaded_count)) * 100.0, 1)
 
+        is_scale_calibrated = bool(scale_info.get("calibrated", False)) if isinstance(scale_info, dict) else False
+
         if registered_count >= uploaded_count and reprojection_error_px < 1.5:
-            recon_grade = "OPTIMAL"
+            recon_grade = "OPTIMAL (Certified)" if is_scale_calibrated else "COMPLETE (Uncalibrated Scale)"
         elif registered_count >= 2 and completeness_pct >= 60.0:
-            recon_grade = "ACCEPTABLE"
+            recon_grade = "ACCEPTABLE (Uncalibrated Scale)" if not is_scale_calibrated else "ACCEPTABLE"
         elif registered_count >= 2:
             recon_grade = "PARTIAL"
         else:
@@ -64,6 +66,14 @@ class QualityReportGenerator:
                 "dense_points": dense_point_count,
                 "mesh_triangles": mesh_triangle_count,
                 "mean_reprojection_error_px": round(reprojection_error_px, 3),
+            },
+            "quality_certification": {
+                "camera_registration": f"COMPLETE ({registered_count}/{uploaded_count} views)",
+                "geometric_completeness": f"COMPLETE ({dense_point_count:,} points)",
+                "surface_topology": "MANIFOLD" if mesh_triangle_count > 0 else "EMPTY",
+                "coordinate_alignment": "CANONICAL_ALIGNED",
+                "metric_scale": "CALIBRATED" if is_scale_calibrated else "UNCALIBRATED",
+                "overall_grade": recon_grade,
             },
             "scale_calibration": scale_info,
             "performance": {

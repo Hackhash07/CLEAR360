@@ -165,6 +165,9 @@ class RegionSceneAssembler:
         if len(pts) < 4:
             return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint32)
 
+        # Ground plane projection: enforce exact physical flatness at canonical ground datum Z = 0.0
+        pts[:, 2] = 0.0
+
         tri2d = Delaunay(pts[:, :2])
         faces = tri2d.simplices.astype(np.uint32)
 
@@ -184,6 +187,7 @@ class RegionSceneAssembler:
         valid_edges = (e0 < max_edge_len) & (e1 < max_edge_len) & (e2 < max_edge_len) & (circum_r < max_r)
         clean_faces = faces[valid_edges]
 
+        # Enforce upward normal pointing in +Z [0, 0, 1]
         f_v0 = pts[clean_faces[:, 0]]
         f_v1 = pts[clean_faces[:, 1]]
         f_v2 = pts[clean_faces[:, 2]]
@@ -322,11 +326,11 @@ class RegionSceneAssembler:
             return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint32)
 
         pcd_raw = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points.astype(np.float64)))
-        # 1. Statistical outlier removal to filter floating depth noise
-        cl, ind = pcd_raw.remove_statistical_outlier(nb_neighbors=25, std_ratio=1.2)
+        # 1. Statistical outlier removal with relaxed threshold (std_ratio=2.2) to strictly preserve metallic gold reflections
+        cl, ind = pcd_raw.remove_statistical_outlier(nb_neighbors=35, std_ratio=2.2)
         pcd = pcd_raw.select_by_index(ind) if len(ind) >= 15 else pcd_raw
 
-        pcd = pcd.voxel_down_sample(voxel_size=0.015)
+        pcd = pcd.voxel_down_sample(voxel_size=0.012)
         pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.08, max_nn=35))
         pcd_pts = np.asarray(pcd.points, dtype=np.float32)
         pcd_norms = np.asarray(pcd.normals, dtype=np.float32)
@@ -359,7 +363,6 @@ class RegionSceneAssembler:
         pcd.points = o3d.utility.Vector3dVector(smooth_pts.astype(np.float64))
 
         if radii is None:
-            # M7.3.10: Adaptive BPA radii from nearest-neighbor distance distribution
             pcd_tree = o3d.geometry.KDTreeFlann(pcd)
             nn_dists = []
             sample_step = max(1, len(pcd_pts) // 500)
@@ -367,7 +370,7 @@ class RegionSceneAssembler:
                 [_, idxs, dists] = pcd_tree.search_knn_vector_3d(pcd.points[idx], 2)
                 if len(dists) > 1:
                     nn_dists.append(np.sqrt(dists[1]))
-            d_nn = float(np.median(nn_dists)) if nn_dists else 0.020
+            d_nn = float(np.median(nn_dists)) if nn_dists else 0.016
             radii = [float(1.8 * d_nn), float(3.2 * d_nn), float(6.0 * d_nn)]
 
         mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
@@ -382,24 +385,30 @@ class RegionSceneAssembler:
         e0 = np.linalg.norm(v[f[:, 1]] - v[f[:, 0]], axis=1)
         e1 = np.linalg.norm(v[f[:, 2]] - v[f[:, 1]], axis=1)
         e2 = np.linalg.norm(v[f[:, 0]] - v[f[:, 2]], axis=1)
-        valid = (e0 < max_edge_len) & (e1 < max_edge_len) & (e2 < max_edge_len)
+        s = 0.5 * (e0 + e1 + e2)
+        areas = np.sqrt(np.maximum(s * (s - e0) * (s - e1) * (s - e2), 0.0))
+        min_e = np.minimum(e0, np.minimum(e1, e2))
+        max_e = np.maximum(e0, np.maximum(e1, e2))
+        aspect = max_e / np.maximum(min_e, 1e-6)
+
+        valid = (max_e < max_edge_len) & (areas > 1e-7) & (aspect < 15.0)
         f = f[valid]
 
         v_clean, f_clean, _ = PolygonSoupRepair.repair_mesh(v, f)
 
-        # 3. Volume-preserving Taubin smoothing (30 iterations) with displacement measurement
+        # 3. Volume-preserving Taubin smoothing (20 iterations)
         if len(f_clean) > 0:
             v_before = v_clean.copy()
             m_tmp = o3d.geometry.TriangleMesh()
             m_tmp.vertices = o3d.utility.Vector3dVector(v_clean.astype(np.float64))
             m_tmp.triangles = o3d.utility.Vector3iVector(f_clean.astype(np.int32))
-            m_tmp = m_tmp.filter_smooth_taubin(number_of_iterations=30)
+            m_tmp = m_tmp.filter_smooth_taubin(number_of_iterations=20)
             v_clean = np.asarray(m_tmp.vertices, dtype=np.float32)
             f_clean = np.asarray(m_tmp.triangles, dtype=np.uint32)
             mean_disp = float(np.mean(np.linalg.norm(v_clean - v_before, axis=1)))
             print(f"    Sculpture Taubin fairing: {len(f_clean):,} faces, mean vertex displacement: {mean_disp*1000.0:.2f} mm")
 
-        # 4. Topological manifold component winding propagation
+        # 4. Enforce outward camera-directed face winding
         from photo_reconstruction.normal_orientation import NormalOrientationEngine
         norm_engine = NormalOrientationEngine()
         cams_for_orient = camera_centers if camera_centers is not None else np.array([[0.0, 0.0, 2.0]], dtype=np.float32)
@@ -422,10 +431,10 @@ class RegionSceneAssembler:
             return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint32)
 
         pcd_raw = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points.astype(np.float64)))
-        cl, ind = pcd_raw.remove_statistical_outlier(nb_neighbors=25, std_ratio=1.2)
+        cl, ind = pcd_raw.remove_statistical_outlier(nb_neighbors=30, std_ratio=2.0)
         pcd = pcd_raw.select_by_index(ind) if len(ind) >= 30 else pcd_raw
 
-        pcd = pcd.voxel_down_sample(voxel_size=0.020)
+        pcd = pcd.voxel_down_sample(voxel_size=0.018)
         pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.10, max_nn=35))
         pcd_pts = np.asarray(pcd.points, dtype=np.float32)
         pcd_norms = np.asarray(pcd.normals, dtype=np.float32)
@@ -464,7 +473,7 @@ class RegionSceneAssembler:
                 [_, idxs, dists] = pcd_tree.search_knn_vector_3d(pcd.points[idx], 2)
                 if len(dists) > 1:
                     nn_dists.append(np.sqrt(dists[1]))
-            d_nn = float(np.median(nn_dists)) if nn_dists else 0.025
+            d_nn = float(np.median(nn_dists)) if nn_dists else 0.022
             radii = [float(1.8 * d_nn), float(3.2 * d_nn), float(6.0 * d_nn)]
 
         mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
@@ -479,7 +488,13 @@ class RegionSceneAssembler:
         e0 = np.linalg.norm(v[f[:, 1]] - v[f[:, 0]], axis=1)
         e1 = np.linalg.norm(v[f[:, 2]] - v[f[:, 1]], axis=1)
         e2 = np.linalg.norm(v[f[:, 0]] - v[f[:, 2]], axis=1)
-        valid = (e0 < max_edge_len) & (e1 < max_edge_len) & (e2 < max_edge_len)
+        s = 0.5 * (e0 + e1 + e2)
+        areas = np.sqrt(np.maximum(s * (s - e0) * (s - e1) * (s - e2), 0.0))
+        min_e = np.minimum(e0, np.minimum(e1, e2))
+        max_e = np.maximum(e0, np.maximum(e1, e2))
+        aspect = max_e / np.maximum(min_e, 1e-6)
+
+        valid = (max_e < max_edge_len) & (areas > 1e-7) & (aspect < 15.0)
         f = f[valid]
 
         v_clean, f_clean, _ = PolygonSoupRepair.repair_mesh(v, f)
@@ -489,7 +504,7 @@ class RegionSceneAssembler:
             m_tmp = o3d.geometry.TriangleMesh()
             m_tmp.vertices = o3d.utility.Vector3dVector(v_clean.astype(np.float64))
             m_tmp.triangles = o3d.utility.Vector3iVector(f_clean.astype(np.int32))
-            m_tmp = m_tmp.filter_smooth_taubin(number_of_iterations=30)
+            m_tmp = m_tmp.filter_smooth_taubin(number_of_iterations=20)
             v_clean = np.asarray(m_tmp.vertices, dtype=np.float32)
             f_clean = np.asarray(m_tmp.triangles, dtype=np.uint32)
             mean_disp = float(np.mean(np.linalg.norm(v_clean - v_before, axis=1)))

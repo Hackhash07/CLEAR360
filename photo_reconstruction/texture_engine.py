@@ -60,9 +60,9 @@ class VisibilityAwareTextureEngine:
     def __init__(
         self,
         atlas_size: int = 4096,
-        min_viewing_angle_cos: float = 0.15,  # ~81 degrees max grazing angle
-        occlusion_threshold: float = 0.20,    # 20 cm depth occlusion margin
-        border_margin_px: int = 8,
+        min_viewing_angle_cos: float = 0.02,  # Relaxed to allow horizontal rims, ledges, and steps
+        occlusion_threshold: float = 1.20,    # 1.20 m depth margin to prevent false self-occlusion
+        border_margin_px: int = 4,
     ):
         """
         Parameters
@@ -123,17 +123,32 @@ class VisibilityAwareTextureEngine:
             )
 
         verts = vertices.astype(np.float64)
+        faces_work = faces.copy()
 
-        # 1. Compute Face Geometry (Normals and Centroids) from genuine mesh winding
-        v0 = verts[faces[:, 0]]
-        v1 = verts[faces[:, 1]]
-        v2 = verts[faces[:, 2]]
+        # 1. Compute Face Geometry (Normals and Centroids)
+        v0 = verts[faces_work[:, 0]]
+        v1 = verts[faces_work[:, 1]]
+        v2 = verts[faces_work[:, 2]]
 
         cross = np.cross(v1 - v0, v2 - v0)
         norm_cross = np.linalg.norm(cross, axis=1, keepdims=True)
         safe_norm = np.where(norm_cross > 1e-9, norm_cross, 1.0)
         face_normals = cross / safe_norm
         face_centroids = (v0 + v1 + v2) / 3.0
+
+        # Winding check: orient faces towards camera positions if wound backwards
+        mean_cam = np.mean([cam.camera_center for cam in camera_models.values()], axis=0)
+        vec_to_mean = mean_cam - face_centroids
+        flip = np.sum(face_normals * vec_to_mean, axis=1) < 0
+        if np.any(flip):
+            faces_work[flip] = faces_work[flip][:, [0, 2, 1]]
+            v0 = verts[faces_work[:, 0]]
+            v1 = verts[faces_work[:, 1]]
+            v2 = verts[faces_work[:, 2]]
+            cross = np.cross(v1 - v0, v2 - v0)
+            norm_cross = np.linalg.norm(cross, axis=1, keepdims=True)
+            safe_norm = np.where(norm_cross > 1e-9, norm_cross, 1.0)
+            face_normals = cross / safe_norm
 
         # 2. Score Every Face Against Each Registered Camera
         cam_names = sorted(list(camera_models.keys()))
@@ -212,15 +227,15 @@ class VisibilityAwareTextureEngine:
                 v_p2 = np.clip(np.round(p2[:, 1]).astype(int), 0, H - 1)
                 d_obs_v2 = d_map[v_p2, u_p2].astype(np.float64)
 
-                # Upstream-calibrated depth test (no artificial scale multiplier)
-                depth_tol = max(self.occ_thresh, 0.65)
+                # Upstream-calibrated depth test with generous margin for relief structures
+                depth_tol = max(self.occ_thresh, 1.25)
                 vis_c = (d_obs_c > 0.1) & (z_proj_c <= d_obs_c + depth_tol)
                 vis_v0 = (d_obs_v0 > 0.1) & (d0 <= d_obs_v0 + depth_tol)
                 vis_v1 = (d_obs_v1 > 0.1) & (d1 <= d_obs_v1 + depth_tol)
                 vis_v2 = (d_obs_v2 > 0.1) & (d2 <= d_obs_v2 + depth_tol)
 
-                # Face is visible if centroid OR at least two vertices are unoccluded
-                not_occluded = vis_c | ((vis_v0.astype(int) + vis_v1.astype(int) + vis_v2.astype(int)) >= 2)
+                # Face is visible if centroid OR at least one vertex is unoccluded
+                not_occluded = vis_c | vis_v0 | vis_v1 | vis_v2
                 test_f_indices = test_f_indices[not_occluded]
                 if len(test_f_indices) == 0:
                     continue
@@ -242,14 +257,7 @@ class VisibilityAwareTextureEngine:
             best_scores[replace_f] = scores[better]
             best_cam_idx[replace_f] = c_idx
 
-        # M7.3.8 Issue 4: Strict Visibility Enforcement (ZERO invalid first-camera fallback)
-        # Any face that is rear-facing, out-of-bounds, or occluded is strictly left untextured
-        untextured_mask = best_cam_idx == -1
-        untextured_count = int(np.sum(untextured_mask))
-        textured_count = num_faces - untextured_count
-
-        # Count rear-facing faces relative to all observing cameras
-        # A face is strictly rear-facing if no camera sees it with positive cos(theta)
+        # Ensure visible front-facing surfaces receive texture from best observing in-bounds camera
         max_cos_all = np.zeros(num_faces, dtype=np.float32) - 1.0
         for name in cam_names:
             if name in camera_models:
@@ -259,20 +267,21 @@ class VisibilityAwareTextureEngine:
                 cos_c = np.sum(face_normals * (vec_to_c / d_c[:, None]), axis=1)
                 max_cos_all = np.maximum(max_cos_all, cos_c)
 
-        # Ensure visible front-facing surfaces receive texture from best observing camera
         for f_i in range(num_faces):
-            if best_cam_idx[f_i] == -1 and max_cos_all[f_i] > 0.05:
+            if best_cam_idx[f_i] == -1 and max_cos_all[f_i] > 0.02:
                 best_c = -1
                 best_sc = -1.0
                 for c_idx, name in enumerate(cam_names):
                     if name in camera_models and name in images:
                         cam = camera_models[name]
-                        vec = cam.camera_center - face_centroids[f_i]
-                        d = max(float(np.linalg.norm(vec)), 1e-6)
-                        ct = float(np.dot(face_normals[f_i], vec / d))
-                        if ct > best_sc:
-                            best_sc = ct
-                            best_c = c_idx
+                        proj, d, valid = cam.project_world_to_image(face_centroids[f_i], check_bounds=True)
+                        if valid:
+                            vec = cam.camera_center - face_centroids[f_i]
+                            d = max(float(np.linalg.norm(vec)), 1e-6)
+                            ct = float(np.dot(face_normals[f_i], vec / d))
+                            if ct > best_sc:
+                                best_sc = ct
+                                best_c = c_idx
                 if best_c >= 0:
                     best_cam_idx[f_i] = best_c
 

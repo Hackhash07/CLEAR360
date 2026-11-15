@@ -267,8 +267,12 @@ class Clear360ViewerWindow(QtWidgets.QMainWindow):
 
     def _set_app_mode(self, mode: str):
         """Switch between the 3 main application capabilities."""
+        # Immediately notify info panel so automotive HUD is hidden in phone mode
         if hasattr(self, "info_panel") and hasattr(self.info_panel, "set_app_mode"):
-            self.info_panel.set_app_mode(mode)
+            try:
+                self.info_panel.set_app_mode(mode)
+            except Exception as e:
+                print(f"Notice: info panel set_app_mode: {e}")
 
         if mode == "surround":
             self.btn_mode_surround.setChecked(True)
@@ -294,7 +298,17 @@ class Clear360ViewerWindow(QtWidgets.QMainWindow):
 
             self.control_panel.hide()
             self.phone_panel.show()
+            self.info_panel.show()
             self.lbl_status_source.setText("Source: Smartphone Photogrammetry (SfM)")
+
+            # Auto-load latest session into viewport if not loaded
+            try:
+                if hasattr(self, "phone_panel") and self.phone_panel.combo_sessions.count() > 0:
+                    latest_sess = self.phone_panel.combo_sessions.currentData()
+                    if latest_sess and hasattr(self, "_on_phone_session_requested"):
+                        self._on_phone_session_requested(latest_sess)
+            except Exception as e:
+                print(f"Notice: auto-load latest session: {e}")
 
         elif mode == "engineering":
             self.btn_mode_eng.setChecked(True)
@@ -531,8 +545,26 @@ class Clear360ViewerWindow(QtWidgets.QMainWindow):
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="CLEAR360 3D Viewer")
+    parser.add_argument("--mode", type=str, default=None, choices=["1", "2", "3", "surround", "phone", "engineering"], help="Initial application mode")
+    parser.add_argument("--session", type=str, default=None, help="Phone photogrammetry session ID to load")
+    parser.add_argument("--phone", action="store_true", help="Shortcut for Mode 2 (Phone Photo 3D World)")
+    args, unknown = parser.parse_known_args()
+
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     window = Clear360ViewerWindow()
+
+    # Apply initial mode
+    if args.phone or args.mode in ("2", "phone"):
+        window._set_app_mode("phone")
+    elif args.mode in ("3", "engineering"):
+        window._set_app_mode("engineering")
+
+    # Load requested session
+    if args.session:
+        window._on_phone_session_requested(args.session)
+
     window.show()
     sys.exit(app.exec())
 

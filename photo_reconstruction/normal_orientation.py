@@ -107,87 +107,61 @@ class NormalOrientationEngine:
         # Max dot product with any camera
         face_camera_dots = np.max(np.sum(normals[:, None, :] * dirs, axis=2), axis=1)
 
-        # 1. Build edge-to-face adjacency map
+        # 1. Direct camera-directed orientation:
+        # Every face observing the scene from the camera positions must have positive
+        # projection onto the camera line of sight vector.
+        mean_cam = np.mean(c_centers, axis=0)
+        vec_to_mean = mean_cam - centroids
+        norm_to_mean = np.maximum(np.linalg.norm(vec_to_mean, axis=1, keepdims=True), 1e-6)
+        dir_to_mean = vec_to_mean / norm_to_mean
+
+        # Per-face max dot with any observing camera
+        face_to_all_cams = c_centers[None, :, :] - centroids[:, None, :]
+        dist_to_all = np.maximum(np.linalg.norm(face_to_all_cams, axis=2), 1e-6)
+        dirs_to_all = face_to_all_cams / dist_to_all[:, :, None]
+        cos_with_cams = np.max(np.sum(normals[:, None, :] * dirs_to_all, axis=2), axis=1)
+
+        # For faces where all cameras see it with negative cosine (backward-facing),
+        # flip winding order so the normal faces towards the observing cameras
+        flip_mask = cos_with_cams < -1e-4
+        f_arr[flip_mask] = f_arr[flip_mask][:, [0, 2, 1]]
+
+        # Recompute face normals after direct camera alignment
+        v0 = verts[f_arr[:, 0]]
+        v1 = verts[f_arr[:, 1]]
+        v2 = verts[f_arr[:, 2]]
+        cross = np.cross(v1 - v0, v2 - v0)
+        norm_cross = np.linalg.norm(cross, axis=1, keepdims=True)
+        safe_norm = np.where(norm_cross > 1e-9, norm_cross, 1.0)
+        normals = cross / safe_norm
+
+        # 2. Local manifold consistency pass across shared edges:
+        # Ensure adjacent faces sharing an edge have compatible normal directions
         edge_to_faces: Dict[Tuple[int, int], List[Tuple[int, int, int]]] = {}
         for f_i, (u0, u1, u2) in enumerate(f_arr):
             for u, v in ((u0, u1), (u1, u2), (u2, u0)):
                 e_key = (min(u, v), max(u, v))
                 edge_to_faces.setdefault(e_key, []).append((f_i, u, v))
 
-        # 2. Build face-to-face adjacency for manifold edges (incident between 2 distinct non-duplicate faces)
-        face_adj: Dict[int, List[int]] = {i: [] for i in range(num_faces)}
+        # Re-check edge consistency for strictly 2-manifold shared edges
         for e_key, incidents in edge_to_faces.items():
             if len(incidents) == 2:
-                fa, fb = incidents[0][0], incidents[1][0]
-                # Only link if they share exactly 2 vertices (not 3, avoiding duplicate back-to-back faces)
-                if len(set(f_arr[fa]).intersection(set(f_arr[fb]))) == 2:
-                    face_adj[fa].append(fb)
-                    face_adj[fb].append(fa)
+                fa, ua0, va0 = incidents[0]
+                fb, ub0, vb0 = incidents[1]
+                # If they share the edge in the SAME direction (both u->v), one of them is inverted
+                if (ua0 == ub0 and va0 == vb0) or (ua0 == vb0 and va0 == ub0):
+                    dot_ab = np.dot(normals[fa], normals[fb])
+                    # If their normals point in opposite directions (e.g. inverted facet),
+                    # orient the more occluded one to match the front-facing one
+                    if dot_ab < -0.2:
+                        cos_a = np.dot(normals[fa], dir_to_mean[fa])
+                        cos_b = np.dot(normals[fb], dir_to_mean[fb])
+                        if cos_a >= cos_b and cos_b < 0:
+                            f_arr[fb] = f_arr[fb][[0, 2, 1]]
+                        elif cos_b > cos_a and cos_a < 0:
+                            f_arr[fa] = f_arr[fa][[0, 2, 1]]
 
-        # 3. Propagate consistent winding within each connected manifold component
-        visited = np.zeros(num_faces, dtype=bool)
-        from collections import deque
-
-        for start_f in range(num_faces):
-            if visited[start_f]:
-                continue
-
-            # Find all faces in this component
-            comp_faces: List[int] = []
-            q_comp = deque([start_f])
-            visited_comp = {start_f}
-
-            while q_comp:
-                cf = q_comp.popleft()
-                comp_faces.append(cf)
-                for nf in face_adj[cf]:
-                    if nf not in visited_comp:
-                        visited_comp.add(nf)
-                        q_comp.append(nf)
-
-            # Choose seed face with strongest camera visibility evidence
-            seed_face = max(comp_faces, key=lambda f_idx: abs(face_camera_dots[f_idx]))
-
-            # If seed face faces away from the camera, flip it first
-            if face_camera_dots[seed_face] < 0:
-                f_arr[seed_face] = f_arr[seed_face][[0, 2, 1]]
-
-            # Propagate winding from seed across shared manifold edges
-            queue = deque([seed_face])
-            visited[seed_face] = True
-
-            while queue:
-                cf = queue.popleft()
-                cv = f_arr[cf]
-                curr_edges = {
-                    (cv[0], cv[1]),
-                    (cv[1], cv[2]),
-                    (cv[2], cv[0]),
-                }
-
-                for nf in face_adj[cf]:
-                    if visited[nf]:
-                        continue
-
-                    nv = f_arr[nf]
-                    # Find which undirected edge is shared
-                    shared_u, shared_v = None, None
-                    for eu, ev in ((nv[0], nv[1]), (nv[1], nv[2]), (nv[2], nv[0])):
-                        if (eu, ev) in curr_edges or (ev, eu) in curr_edges:
-                            shared_u, shared_v = eu, ev
-                            break
-
-                    if shared_u is not None:
-                        # If neighbor has the same directed edge as curr_f, it has opposite/inconsistent winding!
-                        # In a consistent manifold, the shared edge must be traversed in reverse:
-                        # curr has (u -> v), neighbor must have (v -> u)
-                        if (shared_u, shared_v) in curr_edges:
-                            f_arr[nf] = f_arr[nf][[0, 2, 1]]
-
-                    visited[nf] = True
-                    queue.append(nf)
-
-        # 4. Recompute final outward normals
+        # 3. Recompute final outward normals
         v0 = verts[f_arr[:, 0]]
         v1 = verts[f_arr[:, 1]]
         v2 = verts[f_arr[:, 2]]
@@ -196,9 +170,7 @@ class NormalOrientationEngine:
         safe_norm = np.where(norm_cross > 1e-9, norm_cross, 1.0)
         final_normals = (cross / safe_norm).astype(np.float32)
 
-        # Count how many faces were flipped relative to input
         flipped_faces_count = int(np.sum(f_arr[:, 1] != orig_f_arr[:, 1]))
-
         return f_arr, final_normals, flipped_faces_count
 
     def filter_triangular_artifacts(
