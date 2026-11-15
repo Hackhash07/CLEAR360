@@ -1,13 +1,18 @@
 """
-Recheck saved metric depth maps against the saved COLMAP sparse reconstruction.
+Compare metric depth maps against the saved COLMAP sparse reconstruction.
 
-This command does NOT run depth inference, dense fusion, or meshing. It rebuilds
-SfM camera models and 2D-3D tracks from sfm_work/sparse, reads cached *_depth.npy
-files, runs held-out depth calibration, and writes depth_alignment_recheck.json.
+The default 'cached' source does not run depth inference. The optional 'hypersim'
+source runs the small indoor checkpoint in an isolated process and writes to a
+separate depth_cache_hypersim/ directory. Neither mode runs MVS fusion or meshing.
+Both rebuild camera models and 2D-3D tracks from sfm_work/sparse, then run only
+held-out depth calibration.
 
-Example:
+Examples:
     python -m photo_reconstruction.diagnose_cached_depth \
         --session bedroom_8photos_m7_3_13_check
+
+    python -m photo_reconstruction.diagnose_cached_depth \
+        --session bedroom_8photos_m7_3_13_check --depth-source hypersim
 """
 
 from __future__ import annotations
