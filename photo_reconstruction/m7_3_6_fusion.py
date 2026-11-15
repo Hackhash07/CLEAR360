@@ -77,6 +77,26 @@ class M736GeometricConsensusEngine:
         self.voxel_fusion_size = float(voxel_fusion_size)
 
     @staticmethod
+    def _camera_models_at_depth_resolution(
+        camera_models: Dict[str, PhoneCameraModel],
+        depth_maps: Dict[str, np.ndarray],
+    ) -> Dict[str, PhoneCameraModel]:
+        """Return per-view cameras whose intrinsics match each depth-map pixel grid."""
+        scaled: Dict[str, PhoneCameraModel] = {}
+        for name, camera in camera_models.items():
+            if name not in depth_maps:
+                continue
+            depth = np.asarray(depth_maps[name])
+            if depth.ndim != 2:
+                continue
+            height, width = depth.shape
+            if camera.width != width or camera.height != height:
+                scaled[name] = camera.rescale(width, height)
+            else:
+                scaled[name] = camera
+        return scaled
+
+    @staticmethod
     def adaptive_depth_threshold(depth_z: float) -> float:
         """
         Calculates depth-dependent geometric threshold:
@@ -106,7 +126,11 @@ class M736GeometricConsensusEngine:
         confidence_weights : (N,) float32
         report : GeometricConsensusReport
         """
-        cam_names = sorted(list(camera_models.keys()))
+        # Depth maps may be restored at original-photo resolution while SfM
+        # intrinsics/feature coordinates use COLMAP's extraction resolution.
+        # Use a non-mutating, per-view camera copy on the depth-map pixel grid.
+        depth_camera_models = self._camera_models_at_depth_resolution(camera_models, depth_maps)
+        cam_names = sorted(depth_camera_models)
         num_cams = len(cam_names)
 
         raw_candidates_list = []
@@ -117,10 +141,13 @@ class M736GeometricConsensusEngine:
         for c_idx, name in enumerate(cam_names):
             if name not in depth_maps:
                 continue
-            cam = camera_models[name]
+            cam = depth_camera_models[name]
             d_map = depth_maps[name]
             img = images_rgb.get(name)
             H, W = d_map.shape[:2]
+            if img is not None and img.shape[:2] != (H, W):
+                interpolation = cv2.INTER_AREA if img.shape[0] > H or img.shape[1] > W else cv2.INTER_LINEAR
+                img = cv2.resize(img, (W, H), interpolation=interpolation)
 
             v_grid, u_grid = np.mgrid[0:H:stride, 0:W:stride]
             d = d_map[v_grid, u_grid]
@@ -161,7 +188,7 @@ class M736GeometricConsensusEngine:
         all_reproj_errs = []
 
         for j_idx, target_name in enumerate(cam_names):
-            target_cam = camera_models[target_name]
+            target_cam = depth_camera_models[target_name]
             target_depth = depth_maps[target_name]
             H_t, W_t = target_depth.shape[:2]
 
@@ -255,7 +282,7 @@ class M736GeometricConsensusEngine:
         raw_norms = np.asarray(pcd.normals, dtype=np.float32)
 
         # Assign normal orientation towards closest camera optical center
-        cam_centers = np.array([cam.camera_center for cam in camera_models.values()], dtype=np.float32)
+        cam_centers = np.array([cam.camera_center for cam in depth_camera_models.values()], dtype=np.float32)
         oriented_norms = np.zeros_like(raw_norms)
 
         for i, pt in enumerate(clean_pts):
