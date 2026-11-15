@@ -76,6 +76,25 @@ class VisibilityAwareTextureEngine:
         self.occ_thresh = float(occlusion_threshold)
         self.border_margin = int(border_margin_px)
 
+    @staticmethod
+    def _camera_models_at_image_resolution(
+        camera_models: Dict[str, PhoneCameraModel],
+        images: Dict[str, np.ndarray],
+    ) -> Dict[str, PhoneCameraModel]:
+        """Return per-view cameras whose intrinsics match the supplied image grids."""
+        scaled: Dict[str, PhoneCameraModel] = {}
+        for name, camera in camera_models.items():
+            image = images.get(name)
+            if image is None or image.ndim < 2:
+                scaled[name] = camera
+                continue
+            height, width = image.shape[:2]
+            if camera.width != width or camera.height != height:
+                scaled[name] = camera.rescale(width, height)
+            else:
+                scaled[name] = camera
+        return scaled
+
     def texture_mesh(
         self,
         vertices: np.ndarray,
@@ -120,6 +139,9 @@ class VisibilityAwareTextureEngine:
                 TexturingReport(num_faces, 0, num_faces, 0.0, 512, 512),
             )
 
+        # Camera intrinsics and projected pixels must share the source photo's grid.
+        # COLMAP may have extracted features from a downscaled copy of the photo.
+        image_camera_models = self._camera_models_at_image_resolution(camera_models, images)
         verts = vertices.astype(np.float64)
 
         # 1. Compute Face Geometry (Normals and Centroids) from genuine mesh winding
@@ -145,7 +167,7 @@ class VisibilityAwareTextureEngine:
             if name not in images:
                 continue
 
-            cam = camera_models[name]
+            cam = image_camera_models[name]
             img = images[name]
             H, W = img.shape[:2]
             d_map = depth_maps.get(name) if depth_maps else None
@@ -260,7 +282,7 @@ class VisibilityAwareTextureEngine:
         max_cos_all = np.zeros(num_faces, dtype=np.float32) - 1.0
         for name in cam_names:
             if name in camera_models:
-                cam = camera_models[name]
+                cam = image_camera_models[name]
                 vec_to_c = cam.camera_center - face_centroids
                 d_c = np.maximum(np.linalg.norm(vec_to_c, axis=1), 1e-6)
                 cos_c = np.sum(face_normals * (vec_to_c / d_c[:, None]), axis=1)
