@@ -163,62 +163,86 @@ class VisibilityAwareTextureEngine:
             if not np.any(valid_angle):
                 continue
 
-            test_f_indices = np.where(valid_angle)[0]
-
-            # Project face centroids
-            proj_c, depth_c, valid_c = cam.project_world_to_image(
-                face_centroids[test_f_indices], check_bounds=True
-            )
-
-            # Check border margin
-            u_c = proj_c[:, 0]
-            v_c = proj_c[:, 1]
-            inside_margin = (
-                valid_c
-                & (u_c >= self.border_margin)
-                & (u_c < float(W - self.border_margin))
-                & (v_c >= self.border_margin)
-                & (v_c < float(H - self.border_margin))
-            )
-
-            test_f_indices = test_f_indices[inside_margin]
-            if len(test_f_indices) == 0:
+            candidate_indices = np.where(valid_angle)[0]
+            if len(candidate_indices) == 0:
                 continue
 
-            # Occlusion check if depth map available
+            # Validate the entire triangle footprint, not just its centroid.
+            # Samples are vertices, centroid and edge midpoints. This prevents a
+            # face crossing an occlusion boundary from borrowing a visible centre.
+            tri_v0 = v0[candidate_indices]
+            tri_v1 = v1[candidate_indices]
+            tri_v2 = v2[candidate_indices]
+            sample_world = np.stack(
+                [
+                    tri_v0,
+                    tri_v1,
+                    tri_v2,
+                    face_centroids[candidate_indices],
+                    0.5 * (tri_v0 + tri_v1),
+                    0.5 * (tri_v1 + tri_v2),
+                    0.5 * (tri_v2 + tri_v0),
+                ],
+                axis=1,
+            )
+            sample_pixels, sample_depths, sample_valid = cam.project_world_to_image(
+                sample_world.reshape(-1, 3), check_bounds=False
+            )
+            sample_pixels = sample_pixels.reshape(-1, 7, 2)
+            sample_depths = sample_depths.reshape(-1, 7)
+            sample_valid = sample_valid.reshape(-1, 7)
+
+            sample_u = sample_pixels[:, :, 0]
+            sample_v = sample_pixels[:, :, 1]
+            all_samples_in_bounds = np.all(
+                sample_valid
+                & (sample_u >= self.border_margin)
+                & (sample_u < float(W - self.border_margin))
+                & (sample_v >= self.border_margin)
+                & (sample_v < float(H - self.border_margin)),
+                axis=1,
+            )
+            candidate_indices = candidate_indices[all_samples_in_bounds]
+            sample_pixels = sample_pixels[all_samples_in_bounds]
+            sample_depths = sample_depths[all_samples_in_bounds]
+            if len(candidate_indices) == 0:
+                continue
+
+            # Depth maps are already expected to be aligned to this camera's SfM
+            # coordinate gauge by the pipeline. Never estimate a new scale from
+            # the faces being tested: that would make occlusion checks circular.
             if d_map is not None:
-                u_pix = np.clip(np.round(proj_c[inside_margin, 0]).astype(int), 0, W - 1)
-                v_pix = np.clip(np.round(proj_c[inside_margin, 1]).astype(int), 0, H - 1)
-                d_obs = d_map[v_pix, u_pix].astype(np.float64)
-                z_proj = depth_c[inside_margin]
-
-                # Ensure scale alignment between d_obs and z_proj to prevent false occlusion rejections
-                valid_d = d_obs > 0.1
-                if np.sum(valid_d) > 20:
-                    med_obs = float(np.median(d_obs[valid_d]))
-                    med_proj = float(np.median(z_proj[valid_d]))
-                    ratio = med_proj / max(med_obs, 1e-4)
-                    if abs(ratio - 1.0) > 0.05:
-                        d_obs = d_obs * ratio
-
-                # Not occluded if projected depth <= observed depth + margin
-                not_occluded = (d_obs > 0.1) & (z_proj <= d_obs + max(self.occ_thresh, 0.40))
-                test_f_indices = test_f_indices[not_occluded]
-                if len(test_f_indices) == 0:
+                d_map = np.asarray(d_map)
+                if d_map.ndim != 2 or d_map.shape != (H, W):
+                    # Pixel/depth registration is unknown, so do not use this
+                    # camera as a texture source rather than silently mis-sampling.
                     continue
 
-            # Project full triangle vertices to compute 2D resolution
-            p0, _, val0 = cam.project_world_to_image(v0[test_f_indices], check_bounds=False)
-            p1, _, val1 = cam.project_world_to_image(v1[test_f_indices], check_bounds=False)
-            p2, _, val2 = cam.project_world_to_image(v2[test_f_indices], check_bounds=False)
+                u_samples = np.rint(sample_pixels[:, :, 0]).astype(np.int64)
+                v_samples = np.rint(sample_pixels[:, :, 1]).astype(np.int64)
+                observed_depth = d_map[v_samples, u_samples].astype(np.float64)
+                valid_observed = np.isfinite(observed_depth) & (observed_depth > 0.1)
+                not_occluded = np.all(
+                    valid_observed
+                    & (sample_depths <= observed_depth + self.occ_thresh),
+                    axis=1,
+                )
+                candidate_indices = candidate_indices[not_occluded]
+                sample_pixels = sample_pixels[not_occluded]
+                if len(candidate_indices) == 0:
+                    continue
 
-            # 2D cross product for signed area
+            # Projected triangle area uses the same validated vertex samples.
+            p0 = sample_pixels[:, 0, :]
+            p1 = sample_pixels[:, 1, :]
+            p2 = sample_pixels[:, 2, :]
             area_2d = 0.5 * np.abs(
                 (p1[:, 0] - p0[:, 0]) * (p2[:, 1] - p0[:, 1])
                 - (p2[:, 0] - p0[:, 0]) * (p1[:, 1] - p0[:, 1])
             )
 
-            scores = cos_theta[test_f_indices] * np.log1p(np.maximum(area_2d, 0.0))
+            scores = cos_theta[candidate_indices] * np.log1p(np.maximum(area_2d, 0.0))
+            test_f_indices = candidate_indices
 
             better = scores > best_scores[test_f_indices]
             replace_f = test_f_indices[better]
@@ -323,14 +347,24 @@ class VisibilityAwareTextureEngine:
             u_atlas = (x_off + pix_2d[:, 0] * s_x) / float(total_atlas_w)
             v_atlas = (y_off + pix_2d[:, 1] * s_y) / float(total_atlas_h)
 
-            # Clamp UV within atlas cell bounds to avoid seam bleeding
+            # Do not clamp invalid projections into the image/atlas: doing so
+            # paints unrelated border pixels onto faces with bad calibration.
             u_min = x_off / float(total_atlas_w)
             u_max = (x_off + cell_w) / float(total_atlas_w)
             v_min = y_off / float(total_atlas_h)
             v_max = (y_off + cell_h) / float(total_atlas_h)
-
-            u_atlas = np.clip(u_atlas, u_min + 1e-4, u_max - 1e-4)
-            v_atlas = np.clip(v_atlas, v_min + 1e-4, v_max - 1e-4)
+            if (
+                not np.all(np.isfinite(u_atlas))
+                or not np.all(np.isfinite(v_atlas))
+                or np.any(u_atlas < u_min)
+                or np.any(u_atlas >= u_max)
+                or np.any(v_atlas < v_min)
+                or np.any(v_atlas >= v_max)
+            ):
+                new_uvs[f_i * 3 : f_i * 3 + 3] = np.array(
+                    [[u_neutral, v_neutral]] * 3, dtype=np.float32
+                )
+                continue
 
             new_uvs[f_i * 3 : f_i * 3 + 3] = np.column_stack([u_atlas, v_atlas])
 
