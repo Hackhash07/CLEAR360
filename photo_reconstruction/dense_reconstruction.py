@@ -366,9 +366,20 @@ class DenseReconstructor:
                 )
             )
             if camera_poses:
-                cam_centers = [pose[:3, 3] for pose in camera_poses.values()]
-                avg_cam = np.mean(cam_centers, axis=0)
-                pcd.orient_normals_towards_camera_location(avg_cam)
+                # Camera-specific normal orientation along genuine lines-of-sight
+                cam_centers = np.array([pose[:3, 3] for pose in camera_poses.values()], dtype=np.float64)
+                pts_arr = np.asarray(pcd.points, dtype=np.float64)
+                norms_arr = np.asarray(pcd.normals, dtype=np.float64)
+                for i in range(len(pts_arr)):
+                    pt = pts_arr[i]
+                    los_vecs = cam_centers - pt
+                    los_dists = np.linalg.norm(los_vecs, axis=1, keepdims=True)
+                    los_dirs = los_vecs / np.maximum(los_dists, 1e-6)
+                    dots = np.dot(los_dirs, norms_arr[i])
+                    best_c_idx = np.argmax(np.abs(dots))
+                    if dots[best_c_idx] < 0:
+                        norms_arr[i] = -norms_arr[i]
+                pcd.normals = o3d.utility.Vector3dVector(norms_arr)
             elif len(pcd.points) > 15:
                 pcd.orient_normals_consistent_tangent_plane(k=min(15, len(pcd.points) - 1))
             normals = np.asarray(pcd.normals, dtype=np.float32)

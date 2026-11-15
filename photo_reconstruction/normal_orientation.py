@@ -278,7 +278,6 @@ class NormalOrientationEngine:
         verts = np.asarray(vertices, dtype=np.float64)
         f_arr = np.asarray(faces, dtype=np.uint32)
         c_centers = np.atleast_2d(camera_centers).astype(np.float64)
-        avg_cam = np.mean(c_centers, axis=0)
 
         v0 = verts[f_arr[:, 0]]
         v1 = verts[f_arr[:, 1]]

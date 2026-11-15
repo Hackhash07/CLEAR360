@@ -266,6 +266,9 @@ class Clear360ViewerWindow(QtWidgets.QMainWindow):
 
     def _set_app_mode(self, mode: str):
         """Switch between the 3 main application capabilities."""
+        if hasattr(self, "info_panel") and hasattr(self.info_panel, "set_app_mode"):
+            self.info_panel.set_app_mode(mode)
+
         if mode == "surround":
             self.btn_mode_surround.setChecked(True)
             self.btn_mode_surround.setStyleSheet("background-color: #0369a1; color: #ffffff; font-weight: bold; padding: 6px 14px;")
@@ -356,8 +359,39 @@ class Clear360ViewerWindow(QtWidgets.QMainWindow):
         self.viewport.load_external_mesh(mesh_path)
         self.lbl_status_frame.setText(f"Session: {session_id}")
         self.lbl_status_source.setText("Source: Smartphone Photogrammetry (SfM)")
+
+        # Update Info Panel Phone Diagnostics Card (M7.3.10 Part 10)
+        try:
+            sess_dir = Path(mesh_path).parent.parent
+            rep_path = sess_dir / "report.json"
+            sg_path = sess_dir / "scene_graph.json"
+            tex_path = sess_dir / "texturing_report.json"
+
+            rep_data = {}
+            if rep_path.exists():
+                with open(rep_path, "r") as f:
+                    rep_data = json.load(f)
+
+            sg_data = {}
+            if sg_path.exists():
+                with open(sg_path, "r") as f:
+                    sg_data = json.load(f)
+
+            tex_data = {}
+            if tex_path.exists():
+                with open(tex_path, "r") as f:
+                    tex_data = json.load(f)
+
+            if hasattr(self.info_panel, "update_phone_diagnostics"):
+                self.info_panel.update_phone_diagnostics(rep_data, sg_data, tex_data)
+        except Exception as e:
+            print(f"Notice: info panel phone diagnostics update: {e}")
+
+        # Default to textured rendering if UV atlas is present
+        atlas_png = Path(mesh_path).parent / "scene_mesh.png"
+        target_mode = "textured" if atlas_png.exists() else "mesh"
         if hasattr(self.phone_panel, "set_display_mode"):
-            self.phone_panel.set_display_mode("mesh")
+            self.phone_panel.set_display_mode(target_mode)
 
     def _on_phone_session_requested(self, session_id: str):
         """Load past photogrammetry session mesh."""

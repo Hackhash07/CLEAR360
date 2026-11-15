@@ -35,7 +35,7 @@ def main():
     print(f"Found {len(image_paths)} fountain photographs: {[p.name for p in image_paths]}")
     assert len(image_paths) == 6, f"Expected 6 fountain photos, found {len(image_paths)}"
 
-    target_session_id = "session_073_m7_3_10"
+    target_session_id = "session_m7_3_10_final"
     target_session_dir = PROJECT_ROOT / "data" / "phone_reconstruction" / target_session_id
 
     artifacts_dir = Path("/Users/vudumulasakethreddy/.gemini/antigravity/brain/90a700b0-89df-4c80-ac62-2781194ba2b5")
@@ -45,8 +45,8 @@ def main():
         print(f"Purging existing session directory {target_session_dir} to guarantee fresh execution...")
         shutil.rmtree(target_session_dir)
 
-    print(f"\n[1/4] Running PhoneReconstructionPipeline from scratch (quality_preset='high')...")
-    pipeline = PhoneReconstructionPipeline(quality_preset="high")
+    print(f"\n[1/4] Running PhoneReconstructionPipeline from scratch (quality_preset='maximum')...")
+    pipeline = PhoneReconstructionPipeline(quality_preset="maximum")
     t0 = time.time()
     result = pipeline.run_pipeline(
         image_paths=image_paths,
@@ -132,3 +132,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

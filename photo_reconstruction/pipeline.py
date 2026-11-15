@@ -347,7 +347,11 @@ class PhoneReconstructionPipeline:
                 mesh_n = np.asarray(mesh_unified.vertex_normals, dtype=np.float32)
                 textured_ok = True
             except Exception as e:
-                print(f"Notice: Modular assembly fallback: {e}")
+                import traceback
+                tb_err = traceback.format_exc()
+                print(f"Notice: Modular assembly fallback: {e}\n{tb_err}")
+                with open(session_dir / "pipeline_error.log", "a") as f_err:
+                    f_err.write(f"Modular assembly failed: {e}\n{tb_err}\n")
 
         if not textured_ok:
             chosen_method = mesh_method if mesh_method is not None else preset_cfg.get("mesh_method", "poisson")
@@ -522,8 +526,16 @@ class PhoneReconstructionPipeline:
         status_msg = "Photogrammetry complete" if validation_passed else "Photogrammetry completed with warnings"
         update_progress(100, f"{status_msg} ({t_total:.1f} s). Model saved to {session_dir.name}.")
 
+        if validation_passed and len(mesh_f) >= 500 and completeness >= 99.0:
+            exec_status = "COMPLETE"
+        elif len(camera_models) >= 2 and len(mesh_f) > 0:
+            exec_status = "PARTIAL"
+        else:
+            exec_status = "FAILED"
+
         return {
             "success": validation_passed,
+            "status": exec_status,
             "session_id": current_session_id,
             "session_dir": session_dir,
             "mesh_ply": mesh_ply,

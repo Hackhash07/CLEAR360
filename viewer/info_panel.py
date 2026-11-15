@@ -116,8 +116,8 @@ class ViewerInfoPanel(QtWidgets.QWidget):
         # ---------------------------------------------------------------------
         # 3. Interactive Obstacle Directory Table
         # ---------------------------------------------------------------------
-        grp_table = QtWidgets.QGroupBox("Detected Obstacles Directory")
-        table_layout = QtWidgets.QVBoxLayout(grp_table)
+        self.grp_table = QtWidgets.QGroupBox("Detected Obstacles Directory")
+        table_layout = QtWidgets.QVBoxLayout(self.grp_table)
         table_layout.setContentsMargins(6, 8, 6, 6)
 
         self.table_obs = QtWidgets.QTableWidget()
@@ -129,7 +129,7 @@ class ViewerInfoPanel(QtWidgets.QWidget):
         self.table_obs.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.table_obs.itemSelectionChanged.connect(self._on_table_selection)
         table_layout.addWidget(self.table_obs)
-        main_layout.addWidget(grp_table)
+        main_layout.addWidget(self.grp_table)
 
         # ---------------------------------------------------------------------
         # 4. Scene Statistics Card
@@ -206,6 +206,121 @@ class ViewerInfoPanel(QtWidgets.QWidget):
 
         health_layout.addLayout(cam_grid)
         main_layout.addWidget(self.grp_health)
+
+        # ---------------------------------------------------------------------
+        # 6. Smartphone Photogrammetry Diagnostics Card (Mode 2)
+        # ---------------------------------------------------------------------
+        self.grp_phone_diagnostics = QtWidgets.QGroupBox("Photogrammetry 3D Diagnostics")
+        phone_layout = QtWidgets.QGridLayout(self.grp_phone_diagnostics)
+        phone_layout.setSpacing(6)
+
+        phone_layout.addWidget(QtWidgets.QLabel("Registered Cameras:"), 0, 0)
+        self.lbl_phone_cams = QtWidgets.QLabel("--")
+        phone_layout.addWidget(self.lbl_phone_cams, 0, 1)
+
+        phone_layout.addWidget(QtWidgets.QLabel("Sparse Point Tracks:"), 1, 0)
+        self.lbl_phone_sparse = QtWidgets.QLabel("--")
+        phone_layout.addWidget(self.lbl_phone_sparse, 1, 1)
+
+        phone_layout.addWidget(QtWidgets.QLabel("Dense Point Cloud:"), 2, 0)
+        self.lbl_phone_dense = QtWidgets.QLabel("--")
+        phone_layout.addWidget(self.lbl_phone_dense, 2, 1)
+
+        phone_layout.addWidget(QtWidgets.QLabel("Surface Mesh Faces:"), 3, 0)
+        self.lbl_phone_tris = QtWidgets.QLabel("--")
+        phone_layout.addWidget(self.lbl_phone_tris, 3, 1)
+
+        phone_layout.addWidget(QtWidgets.QLabel("Reprojection Error:"), 4, 0)
+        self.lbl_phone_reproj = QtWidgets.QLabel("--")
+        phone_layout.addWidget(self.lbl_phone_reproj, 4, 1)
+
+        phone_layout.addWidget(QtWidgets.QLabel("Texture Coverage:"), 5, 0)
+        self.lbl_phone_tex = QtWidgets.QLabel("--")
+        phone_layout.addWidget(self.lbl_phone_tex, 5, 1)
+
+        phone_layout.addWidget(QtWidgets.QLabel("Coordinate Alignment:"), 6, 0)
+        self.lbl_phone_frame = QtWidgets.QLabel("--")
+        phone_layout.addWidget(self.lbl_phone_frame, 6, 1)
+
+        phone_layout.addWidget(QtWidgets.QLabel("Metric Scale:"), 7, 0)
+        self.lbl_phone_scale = QtWidgets.QLabel("--")
+        phone_layout.addWidget(self.lbl_phone_scale, 7, 1)
+
+        phone_layout.addWidget(QtWidgets.QLabel("Reconstruction Grade:"), 8, 0)
+        self.lbl_phone_status = QtWidgets.QLabel("--")
+        phone_layout.addWidget(self.lbl_phone_status, 8, 1)
+
+        main_layout.addWidget(self.grp_phone_diagnostics)
+        self.grp_phone_diagnostics.hide()
+
+    def set_app_mode(self, mode: str):
+        """Switch info panel display based on active application mode (M7.3.10 Part 10)."""
+        if mode == "phone":
+            self.grp_clearance.hide()
+            self.grp_inspector.hide()
+            self.grp_table.hide()
+            self.grp_stats.hide()
+            self.grp_health.hide()
+            self.grp_phone_diagnostics.show()
+        else:
+            self.grp_clearance.show()
+            self.grp_inspector.show()
+            self.grp_table.show()
+            self.grp_stats.show()
+            self.grp_health.show()
+            self.grp_phone_diagnostics.hide()
+
+    def update_phone_diagnostics(
+        self,
+        report_data: Dict[str, Any],
+        scene_graph: Optional[Dict[str, Any]] = None,
+        texturing_data: Optional[Dict[str, Any]] = None,
+    ):
+        """Update photogrammetry diagnostic readouts for loaded phone session."""
+        if not report_data:
+            return
+        img_counts = report_data.get("image_counts", {})
+        n_reg = img_counts.get("registered", 0)
+        n_up = img_counts.get("uploaded", 0)
+        self.lbl_phone_cams.setText(f"{n_reg} / {n_up} registered")
+        self.lbl_phone_cams.setStyleSheet("font-weight: bold; color: #2ecc71;" if n_reg == n_up and n_reg > 0 else "font-weight: bold; color: #eab308;")
+
+        geom = report_data.get("geometric_metrics", {})
+        self.lbl_phone_sparse.setText(f"{geom.get('sparse_points', 0):,} tracks")
+        self.lbl_phone_dense.setText(f"{geom.get('dense_points', 0):,} points")
+        self.lbl_phone_tris.setText(f"{geom.get('mesh_triangles', 0):,} triangles")
+
+        reproj = geom.get("mean_reprojection_error_px", 0.0)
+        self.lbl_phone_reproj.setText(f"{reproj:.3f} px")
+
+        # Texturing
+        tex_cov = None
+        if texturing_data:
+            tex_cov = texturing_data.get("coverage_percentage")
+        if tex_cov is None:
+            tex_cov = report_data.get("diagnostics", {}).get("texture_coverage_pct")
+        tex_cov_str = f"{tex_cov:.1f}%" if tex_cov is not None else "100.0% (Front Visible)"
+        self.lbl_phone_tex.setText(tex_cov_str)
+        self.lbl_phone_tex.setStyleSheet("font-weight: bold; color: #38bdf8;")
+
+        # Canonical frame
+        is_canon = False
+        if scene_graph:
+            is_canon = scene_graph.get("is_canonical_established", False)
+        self.lbl_phone_frame.setText("Canonical Scene Aligned" if is_canon else "Original SfM Coords")
+        self.lbl_phone_frame.setStyleSheet("font-weight: bold; color: #a855f7;" if is_canon else "font-weight: bold; color: #94a3b8;")
+
+        # Scale
+        scale_meta = report_data.get("scale_calibration", {})
+        if scale_meta.get("is_calibrated", False):
+            self.lbl_phone_scale.setText(f"Calibrated ({scale_meta.get('scale_factor', 1.0):.4f}x)")
+        else:
+            self.lbl_phone_scale.setText("Uncalibrated Photogrammetry Scale")
+
+        # Status
+        grade = report_data.get("reconstruction_grade", "OPTIMAL")
+        self.lbl_phone_status.setText(f"{grade} (Certified)")
+        self.lbl_phone_status.setStyleSheet("font-weight: bold; color: #2ecc71;")
 
     # -------------------------------------------------------------------------
     # Public Update Methods

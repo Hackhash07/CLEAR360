@@ -685,9 +685,10 @@ class Clear360Viewport(QtWidgets.QWidget):
                         self.visual_textured_mesh.set_data(
                             vertices=t_verts,
                             faces=t_faces,
-                            vertex_normals=t_norms,
                             color="white"
                         )
+                        if t_norms is not None and hasattr(self.visual_textured_mesh, "_meshdata") and self.visual_textured_mesh._meshdata is not None:
+                            self.visual_textured_mesh._meshdata._vertex_normals = t_norms
                         if self.texture_filter is None:
                             self.texture_filter = TextureFilter(texture=tex_rgb, texcoords=t_uvs)
                             self.visual_textured_mesh.attach(self.texture_filter)

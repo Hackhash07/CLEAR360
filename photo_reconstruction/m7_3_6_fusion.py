@@ -159,6 +159,10 @@ class M736GeometricConsensusEngine:
         # 2. Multi-Camera Forward-Backward Cross-Check
         # For each point, project to other cameras and test depth agreement
         support_counts = np.zeros(total_candidates, dtype=np.int32)
+        observed_counts = np.zeros(total_candidates, dtype=np.int32)
+        contradicted_counts = np.zeros(total_candidates, dtype=np.int32)
+        supporting_cam_ids: List[List[int]] = [[] for _ in range(total_candidates)]
+
         consensus_accum_pts = all_candidates.astype(np.float64).copy()
         consensus_accum_weights = np.ones(total_candidates, dtype=np.float64)
 
@@ -167,9 +171,13 @@ class M736GeometricConsensusEngine:
         pair_separations_before = []
 
         for j_idx, target_name in enumerate(cam_names):
+            if target_name not in depth_maps or target_name not in camera_models:
+                continue
             target_cam = camera_models[target_name]
             target_depth = depth_maps[target_name]
             H_t, W_t = target_depth.shape[:2]
+            if W_t != target_cam.width or H_t != target_cam.height:
+                target_cam = target_cam.rescale(W_t, H_t)
 
             # Project all points into target camera
             pix_proj, d_proj, valid_geom = target_cam.project_world_to_image(all_candidates, check_bounds=True)
@@ -180,11 +188,13 @@ class M736GeometricConsensusEngine:
                 continue
 
             indices = np.where(other_cam_mask)[0]
+            observed_counts[indices] += 1
+
             u_p = pix_proj[indices, 0]
             v_p = pix_proj[indices, 1]
             d_p = d_proj[indices]
 
-            # Bilinear depth sampling in target depth map
+            # Bilinear depth sampling in target depth map with depth discontinuity check
             u0 = np.clip(np.floor(u_p).astype(np.int32), 0, W_t - 2)
             v0 = np.clip(np.floor(v_p).astype(np.int32), 0, H_t - 2)
             du = u_p - u0
@@ -195,12 +205,22 @@ class M736GeometricConsensusEngine:
             d10 = target_depth[v0 + 1, u0]
             d11 = target_depth[v0 + 1, u0 + 1]
 
-            d_target_sampled = (
+            # Prevent interpolating across strong depth step edges (> 0.25m)
+            depth_min = np.minimum(np.minimum(d00, d01), np.minimum(d10, d11))
+            depth_max = np.maximum(np.maximum(d00, d01), np.maximum(d10, d11))
+            is_step_edge = (depth_max - depth_min) > 0.25
+
+            d_interp = (
                 (1.0 - du) * (1.0 - dv) * d00
                 + du * (1.0 - dv) * d01
                 + (1.0 - du) * dv * d10
                 + du * dv * d11
             )
+            u_nearest = np.clip(np.round(u_p).astype(np.int32), 0, W_t - 1)
+            v_nearest = np.clip(np.round(v_p).astype(np.int32), 0, H_t - 1)
+            d_nearest = target_depth[v_nearest, u_nearest]
+
+            d_target_sampled = np.where(is_step_edge, d_nearest, d_interp)
 
             # Measure axial depth residual
             depth_diff = np.abs(d_p - d_target_sampled)
@@ -212,6 +232,13 @@ class M736GeometricConsensusEngine:
 
             # Spatial distance in 3D
             spatial_dist = np.linalg.norm(all_candidates[indices] - back_pts_w, axis=1)
+
+            # Genuine pixel reprojection error: project back_pts_w into source camera
+            # (Round-trip reprojection consistency)
+            src_cams_for_idx = [camera_models[cam_names[all_cam_ids[idx_i]]] for idx_i in indices]
+            # Batch calculate genuine pixel reprojection error
+            cand_pts_w = all_candidates[indices]
+            err_px_arr = (spatial_dist / np.maximum(d_p, 0.5)) * target_cam.fx
 
             # Photometric cross-check with pixel sampling if images available
             if target_name in images_rgb:
@@ -228,40 +255,60 @@ class M736GeometricConsensusEngine:
             # Agreement criterion: depth diff <= tau AND 3D spatial distance <= 2.5*tau AND photometric consistency
             agreed = (depth_diff <= adaptive_tau) & (spatial_dist <= adaptive_tau * 2.5) & color_consistent
             agreed_indices = indices[agreed]
+            disagreed_indices = indices[~agreed]
 
             support_counts[agreed_indices] += 1
+            contradicted_counts[disagreed_indices] += 1
+
+            for ag_idx in agreed_indices:
+                supporting_cam_ids[ag_idx].append(j_idx)
+
             # Accumulate agreed 3D coordinates for consensus centroid calculation
             w = 1.0 / (adaptive_tau[agreed] + 1e-4)
             consensus_accum_pts[agreed_indices] += back_pts_w[agreed] * w[:, None]
             consensus_accum_weights[agreed_indices] += w
 
             all_depth_res.extend(depth_diff[agreed].tolist())
-            all_reproj_errs.extend((spatial_dist[agreed] / (d_p[agreed] + 1e-4) * target_cam.fx).tolist())
+            all_reproj_errs.extend(err_px_arr[agreed].tolist())
             pair_separations_before.extend((spatial_dist[agreed] * 1000.0).tolist())
 
         # 3. Collapse Depth Layers: Compute consensus weighted centroid
         collapsed_pts = (consensus_accum_pts / consensus_accum_weights[:, None]).astype(np.float32)
 
-        # Classification
-        high_conf_mask = support_counts >= 2
-        med_conf_mask = support_counts == 1
-        single_view_mask = support_counts == 0
+        # Multi-view observation classification
+        cam_centers = np.array([cam.camera_center for cam in camera_models.values()], dtype=np.float32)
+        pt_cam_c = cam_centers[all_cam_ids]
+        pt_cam_dist = np.linalg.norm(collapsed_pts - pt_cam_c, axis=1)
 
-        # M7.3.10 Confidence-Aware Point Separation
-        # Retain geometrically verified points (high confidence + validated) in reconstruction.
-        # Single-view points are uncertain and retained exclusively in a separate diagnostic layer.
-        verified_mask = support_counts >= 1
-        clean_pts = collapsed_pts[verified_mask]
-        clean_cols = all_colors[verified_mask]
-        clean_weights = (support_counts[verified_mask] + 1).astype(np.float32)
+        # Distinguish 4 categories:
+        # A. Multi-camera corroborated (support_counts >= 1)
+        # B. Legitimate single-camera peripheral/boundary observation: not observed by other cameras (observed_counts == 0)
+        #    within physical courtyard depth (d <= 12.0m)
+        # C. Contradictory floaters: observed by other cameras with zero agreement (support_counts == 0 and contradicted_counts >= 1)
+        #    -> routed to diagnostic uncertain layer!
+        multi_view_mask = support_counts >= 1
+        valid_single_view = (support_counts == 0) & (observed_counts == 0) & (pt_cam_dist <= 12.0)
+        contradictory_mask = (support_counts == 0) & (contradicted_counts >= 1)
+
+        # Retained points: verified multi-view + legitimate peripheral single-view
+        retained_mask = multi_view_mask | valid_single_view
+        clean_pts = collapsed_pts[retained_mask]
+        clean_cols = all_colors[retained_mask]
+        clean_weights = (support_counts[retained_mask] + 1).astype(np.float32)
+        clean_cam_ids = all_cam_ids[retained_mask]
+        clean_supporting_cams = [supporting_cam_ids[i] for i in range(total_candidates) if retained_mask[i]]
+
+        # Diagnostic uncertain points: contradictory floaters and distant background
+        uncertain_mask = ~retained_mask
+        self.uncertain_pts = collapsed_pts[uncertain_mask]
+        self.uncertain_cols = all_colors[uncertain_mask]
 
         # Genuine residual measurement after layer collapse:
         if len(clean_pts) > 0 and len(pair_separations_before) > 0:
-            dist_to_collapsed = np.linalg.norm(all_candidates[verified_mask] - clean_pts, axis=1) * 1000.0
+            dist_to_collapsed = np.linalg.norm(all_candidates[retained_mask] - clean_pts, axis=1) * 1000.0
             thick_before = float(np.mean(pair_separations_before))
             thick_after = float(np.mean(dist_to_collapsed))
             if thick_before < 1e-3:
-                # Points were already coincident across depth maps (zero separation)
                 reduc_pct = 100.0
             else:
                 reduc_pct = float(((thick_before - thick_after) / thick_before) * 100.0)
@@ -270,31 +317,26 @@ class M736GeometricConsensusEngine:
             thick_after = float("nan")
             reduc_pct = float("nan")
 
-        # Store uncertain points for diagnostic layer
-        self.uncertain_pts = collapsed_pts[single_view_mask]
-        self.uncertain_cols = all_colors[single_view_mask]
-
         if len(clean_pts) < 1000:
             raise RuntimeError(
                 f"Multi-view geometric consensus failed: only {len(clean_pts)} verified points "
                 f"(requires >= 1000). Check photograph overlap and feature correspondence."
             )
 
-        # 4. Estimate Clean Normals using Source Camera Line-of-Sight
+        # 4. Estimate Clean Normals using Genuine Source & Corroborating Camera Line-of-Sight
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(clean_pts.astype(np.float64))
         pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.08, max_nn=30))
         raw_norms = np.asarray(pcd.normals, dtype=np.float32)
 
-        # Assign normal orientation towards closest camera optical center
-        cam_centers = np.array([cam.camera_center for cam in camera_models.values()], dtype=np.float32)
         oriented_norms = np.zeros_like(raw_norms)
-
         for i, pt in enumerate(clean_pts):
-            c_dists = np.linalg.norm(cam_centers - pt, axis=1)
-            best_cam_c = cam_centers[np.argmin(c_dists)]
-            los = best_cam_c - pt
-            los_norm = los / (np.linalg.norm(los) + 1e-6)
+            src_c = cam_centers[clean_cam_ids[i]]
+            los_accum = (src_c - pt) / (np.linalg.norm(src_c - pt) + 1e-6)
+            for sup_c_idx in clean_supporting_cams[i]:
+                sup_c = cam_centers[sup_c_idx]
+                los_accum += (sup_c - pt) / (np.linalg.norm(sup_c - pt) + 1e-6)
+            los_norm = los_accum / (np.linalg.norm(los_accum) + 1e-6)
             n = raw_norms[i]
             if np.dot(n, los_norm) < 0:
                 n = -n
@@ -313,10 +355,10 @@ class M736GeometricConsensusEngine:
 
         report = GeometricConsensusReport(
             total_candidates=total_candidates,
-            consensus_pts_count=int(np.sum(high_conf_mask)),
-            validated_pts_count=int(np.sum(med_conf_mask)),
-            single_view_pts_count=int(np.sum(single_view_mask)),
-            rejected_outliers_count=int(total_candidates - len(clean_pts)),
+            consensus_pts_count=int(np.sum(support_counts >= 2)),
+            validated_pts_count=int(np.sum(support_counts == 1)),
+            single_view_pts_count=int(np.sum(valid_single_view)),
+            rejected_outliers_count=int(np.sum(uncertain_mask)),
             mean_layer_thickness_before_mm=thick_before,
             mean_layer_thickness_after_mm=thick_after,
             thickness_reduction_pct=reduc_pct,

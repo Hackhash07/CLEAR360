@@ -479,3 +479,4 @@ class M7310VisualGenerator:
             out_filename="m7_3_10_13_sculpture_closeup.png",
             crop_bbox=(-1.5, 1.5, 7.0, 9.2, 1.2, 3.2),
         )
+

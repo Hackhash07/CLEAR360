@@ -175,7 +175,13 @@ class RegionSceneAssembler:
         e1 = np.linalg.norm(v2 - v1, axis=1)
         e2 = np.linalg.norm(v0 - v2, axis=1)
 
-        valid_edges = (e0 < max_edge_len) & (e1 < max_edge_len) & (e2 < max_edge_len)
+        # Bounded Delaunay Alpha Filtering: circumradius and edge length filtering
+        s = 0.5 * (e0 + e1 + e2)
+        areas = np.sqrt(np.maximum(s * (s - e0) * (s - e1) * (s - e2), 1e-10))
+        circum_r = (e0 * e1 * e2) / np.maximum(4.0 * areas, 1e-6)
+        max_r = min(0.18, max_edge_len * 0.75)
+
+        valid_edges = (e0 < max_edge_len) & (e1 < max_edge_len) & (e2 < max_edge_len) & (circum_r < max_r)
         clean_faces = faces[valid_edges]
 
         f_v0 = pts[clean_faces[:, 0]]
@@ -217,7 +223,14 @@ class RegionSceneAssembler:
         e1 = np.linalg.norm(v2 - v1, axis=1)
         e2 = np.linalg.norm(v0 - v2, axis=1)
         delta_y = np.maximum.reduce([v0[:, 1], v1[:, 1], v2[:, 1]]) - np.minimum.reduce([v0[:, 1], v1[:, 1], v2[:, 1]])
-        valid = (e0 < max_edge_len) & (e1 < max_edge_len) & (e2 < max_edge_len) & (delta_y < 0.35)
+
+        # Bounded Delaunay Alpha Filtering: circumradius and edge length filtering
+        s = 0.5 * (e0 + e1 + e2)
+        areas = np.sqrt(np.maximum(s * (s - e0) * (s - e1) * (s - e2), 1e-10))
+        circum_r = (e0 * e1 * e2) / np.maximum(4.0 * areas, 1e-6)
+        max_r = min(0.18, max_edge_len * 0.75)
+
+        valid = (e0 < max_edge_len) & (e1 < max_edge_len) & (e2 < max_edge_len) & (circum_r < max_r) & (delta_y < 0.35)
         clean_faces = faces[valid]
 
         f_v0 = pts[clean_faces[:, 0]]
@@ -625,6 +638,7 @@ class RegionSceneAssembler:
         scene_regions: Dict[str, SceneRegion] = {}
         all_scene_verts: List[np.ndarray] = []
         all_scene_faces: List[np.ndarray] = []
+        all_scene_region_labels: List[str] = []
         vert_offset = 0
 
         # 3. Reconstruct each region component with physical topology
@@ -638,29 +652,10 @@ class RegionSceneAssembler:
             print(f"  --> Meshing component '{r_id}' ({len(r_pts):,} points)...", flush=True)
 
             if r_id == "pavement":
-                if can_res.is_canonical_established:
-                    y_front = min(4.2, float(np.min(r_pts[:, 1])) if len(r_pts) > 0 else 4.2)
-                    m_v, m_f = self.mesh_pavement_continuous_grid(
-                        y_wall=can_res.wall_y,
-                        half_width=max(3.8, can_res.courtyard_width / 2.0),
-                        y_front=y_front,
-                        z_ground=0.0,
-                        grid_step=0.06,
-                    )
-                else:
-                    m_v, m_f = self.mesh_pavement_planar(r_pts, r_cols, r_norms, max_edge_len=0.35)
+                m_v, m_f = self.mesh_pavement_planar(r_pts, r_cols, r_norms, max_edge_len=0.25)
 
             elif r_id == "wall":
-                if can_res.is_canonical_established:
-                    m_v, m_f = self.mesh_wall_continuous_grid(
-                        y_wall=can_res.wall_y,
-                        half_width=max(3.8, can_res.courtyard_width / 2.0),
-                        z_min=0.35,
-                        z_max=5.40,
-                        grid_step=0.06,
-                    )
-                else:
-                    m_v, m_f = self.mesh_wall_planar(r_pts, r_cols, r_norms, max_edge_len=0.35)
+                m_v, m_f = self.mesh_wall_planar(r_pts, r_cols, r_norms, max_edge_len=0.25)
 
             elif r_id == "sculpture":
                 m_v, m_f = self.mesh_sculpture_high_detail(r_pts, r_cols, r_norms, camera_centers=cam_centers)
@@ -680,6 +675,7 @@ class RegionSceneAssembler:
 
                 all_scene_verts.append(m_v)
                 all_scene_faces.append(m_f + vert_offset)
+                all_scene_region_labels.extend([r_id] * len(m_f))
                 vert_offset += len(m_v)
 
             scene_regions[r_id] = SceneRegion(
@@ -700,13 +696,13 @@ class RegionSceneAssembler:
         # 4. Save Scene Graph hierarchy JSON
         sg_dict = {
             "coordinate_frame": "CANONICAL_SCENE_ALIGNED_M7_3_8",
-            "is_canonical_established": can_res.is_canonical_established,
-            "wall_y": can_res.wall_y,
+            "is_canonical_established": bool(can_res.is_canonical_established),
+            "wall_y": float(can_res.wall_y),
             "components": {k: reg.to_dict() for k, reg in scene_regions.items()},
         }
         sg_path = self.session_dir / "scene_graph.json"
         with open(sg_path, "w") as f_sg:
-            json.dump(sg_dict, f_sg, indent=2)
+            json.dump(sg_dict, f_sg, indent=2, default=lambda o: bool(o) if isinstance(o, (np.bool_, bool)) else (float(o) if isinstance(o, (np.floating, float)) else int(o)))
 
         # 5. Generate Unified Assembled Textured Mesh (OBJ + MTL + PNG)
         mesh_dir = self.session_dir / "mesh"
@@ -733,21 +729,31 @@ class RegionSceneAssembler:
                 depth_maps=depth_maps,
                 out_dir=mesh_dir,
                 base_name="scene_mesh",
+                face_region_labels=all_scene_region_labels,
             )
 
+            # Build connected manifold surface mesh with smooth vertex normals (M7.3.10)
             mesh_unified = o3d.geometry.TriangleMesh()
-            mesh_unified.vertices = o3d.utility.Vector3dVector(tex_v.astype(np.float64))
-            mesh_unified.triangles = o3d.utility.Vector3iVector(tex_f.astype(np.int32))
+            mesh_unified.vertices = o3d.utility.Vector3dVector(unified_v.astype(np.float64))
+            mesh_unified.triangles = o3d.utility.Vector3iVector(unified_f.astype(np.int32))
+            mesh_unified.compute_vertex_normals()
 
-            # Compute authentic vertex colors from texture atlas for standalone PLY viewing
+            # Assign authentic photographic vertex colors from texture atlas for smooth standalone PLY viewing
             if len(tex_uv) == len(tex_v) and tex_atlas is not None and len(tex_atlas) > 0:
                 H_at, W_at = tex_atlas.shape[:2]
-                u_c = np.clip(tex_uv[:, 0] * (W_at - 1), 0, W_at - 1).astype(int)
-                v_c = np.clip((1.0 - tex_uv[:, 1]) * (H_at - 1), 0, H_at - 1).astype(int)
-                v_cols = tex_atlas[v_c, u_c, :3].astype(np.float64) / 255.0
+                v_cols = np.ones((len(unified_v), 3), dtype=np.float64) * 0.55
+                for f_i in range(len(unified_f)):
+                    orig_face = unified_f[f_i]
+                    for corner in range(3):
+                        v_idx = orig_face[corner]
+                        uv_idx = f_i * 3 + corner
+                        u_c = int(np.clip(tex_uv[uv_idx, 0] * (W_at - 1), 0, W_at - 1))
+                        v_c = int(np.clip((1.0 - tex_uv[uv_idx, 1]) * (H_at - 1), 0, H_at - 1))
+                        c = tex_atlas[v_c, u_c, :3].astype(np.float64) / 255.0
+                        if not (138 <= tex_atlas[v_c, u_c, 0] <= 142 and 138 <= tex_atlas[v_c, u_c, 1] <= 142):
+                            v_cols[v_idx] = c
                 mesh_unified.vertex_colors = o3d.utility.Vector3dVector(v_cols)
 
-            mesh_unified.compute_vertex_normals()
             o3d.io.write_triangle_mesh(str(final_ply), mesh_unified)
 
             with open(self.session_dir / "texturing_report.json", "w") as f_tex:
@@ -761,6 +767,7 @@ class RegionSceneAssembler:
                     "atlas_width": tex_rep.atlas_width,
                     "atlas_height": tex_rep.atlas_height,
                     "camera_face_distribution": tex_rep.camera_face_distribution,
+                    "region_texture_stats": tex_rep.region_texture_stats,
                 }, f_tex, indent=2)
 
         return scene_regions, final_obj, final_ply, sg_path

@@ -159,14 +159,25 @@ class CanonicalSceneAligner:
         if len(ground_cands) < 30:
             ground_cands = pts_ref[pts_ref[:, 2] < np.percentile(pts_ref[:, 2], 30)]
 
+        is_ground_found = False
         plane_g = self._fit_plane_constrained(ground_cands, prior_up, min_alignment_dot=0.85, dist_thresh=self.ground_dist_thresh)
-        if plane_g is None:
-            # Fallback to prior UP
-            n_g = prior_up
+        if plane_g is not None:
+            n_g_cand = np.array(plane_g[:3], dtype=np.float64)
+            d_g_cand = plane_g[3]
+            dists_g = np.abs(np.dot(ground_cands, n_g_cand) + d_g_cand)
+            g_inliers = int(np.sum(dists_g < self.ground_dist_thresh))
+            g_ratio = float(g_inliers / max(len(ground_cands), 1))
+            if g_inliers >= 30 and g_ratio >= 0.12:
+                is_ground_found = True
+                n_g = n_g_cand
+                if np.dot(n_g, prior_up) < 0:
+                    n_g = -n_g
+            else:
+                n_g = prior_up
         else:
-            n_g = np.array(plane_g[:3], dtype=np.float64)
-            if np.dot(n_g, prior_up) < 0:
-                n_g = -n_g
+            n_g = prior_up
+            g_inliers = 0
+            g_ratio = 0.0
         u_z = n_g / np.linalg.norm(n_g)
 
         # ---------------------------------------------------------------------
@@ -179,18 +190,26 @@ class CanonicalSceneAligner:
         if len(wall_cands) < 50:
             wall_cands = pts_ref[pts_ref[:, 1] > cam_y_mean + 1.0]
 
+        is_wall_found = False
         plane_w = self._fit_plane_constrained(wall_cands, prior_fwd, min_alignment_dot=0.75, dist_thresh=self.wall_dist_thresh)
-        is_wall_found = plane_w is not None
-
         if plane_w is not None:
-            n_w_raw = np.array(plane_w[:3], dtype=np.float64)
-            v_wall = n_w_raw - np.dot(n_w_raw, u_z) * u_z
-            v_norm = np.linalg.norm(v_wall)
-            if v_norm > 1e-4:
-                cand_u_y = v_wall / v_norm
-                if np.dot(cand_u_y, prior_fwd) < 0:
-                    cand_u_y = -cand_u_y
-                u_y = cand_u_y
+            n_w_cand = np.array(plane_w[:3], dtype=np.float64)
+            d_w_cand = plane_w[3]
+            dists_w = np.abs(np.dot(wall_cands, n_w_cand) + d_w_cand)
+            w_inliers = int(np.sum(dists_w < self.wall_dist_thresh))
+            w_ratio = float(w_inliers / max(len(wall_cands), 1))
+            if w_inliers >= 30 and w_ratio >= 0.12:
+                is_wall_found = True
+                n_w_raw = n_w_cand
+                v_wall = n_w_raw - np.dot(n_w_raw, u_z) * u_z
+                v_norm = np.linalg.norm(v_wall)
+                if v_norm > 1e-4:
+                    cand_u_y = v_wall / v_norm
+                    if np.dot(cand_u_y, prior_fwd) < 0:
+                        cand_u_y = -cand_u_y
+                    u_y = cand_u_y
+                else:
+                    u_y = prior_fwd
             else:
                 u_y = prior_fwd
         else:
@@ -273,13 +292,20 @@ class CanonicalSceneAligner:
         courtyard_pts = aligned_pts[(aligned_pts[:, 2] > 0.2) & (aligned_pts[:, 1] > y_wall - 0.4)]
         courtyard_w = float(np.percentile(courtyard_pts[:, 0], 98) - np.percentile(courtyard_pts[:, 0], 2)) if len(courtyard_pts) > 20 else 7.6
 
-        confidence = 0.98 if (is_wall_found and len(relief_pts) > 50) else 0.85
-        notes = (
-            f"Canonical frame anchored: ground plane at Z = 0.00 m (z0 shift: {z0:.3f} m), "
-            f"wall plane at Y = {y_wall:.3f} m, "
-            f"fountain symmetry center at X = 0.00 m (x0 shift: {x0:.3f} m). "
-            f"Rotation det: {det_R:.4f}."
-        )
+        is_established = bool(is_ground_found and is_wall_found and (np.abs(det_R - 1.0) < 1e-4))
+        confidence = float(0.98 if (is_established and len(relief_pts) > 50) else (0.85 if is_established else 0.0))
+        if is_established:
+            notes = (
+                f"Canonical frame anchored: ground plane at Z = 0.00 m (z0 shift: {z0:.3f} m), "
+                f"wall plane at Y = {y_wall:.3f} m, "
+                f"fountain symmetry center at X = 0.00 m (x0 shift: {x0:.3f} m). "
+                f"Rotation det: {det_R:.4f}."
+            )
+        else:
+            notes = (
+                f"Canonical frame unavailable (ground_found={is_ground_found}, wall_found={is_wall_found}); "
+                f"falling back to original SfM coordinate frame with alignment marked unavailable."
+            )
 
         return CanonicalAlignmentResult(
             aligned_points=aligned_pts.astype(np.float32),
@@ -296,7 +322,7 @@ class CanonicalSceneAligner:
             courtyard_width=courtyard_w,
             fountain_width=fountain_width,
             fountain_height=fountain_height,
-            is_canonical_established=is_wall_found,
+            is_canonical_established=is_established,
             confidence=confidence,
             audit_notes=notes,
         )
@@ -310,41 +336,53 @@ class CanonicalSceneAligner:
     ) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
         """
         Data-driven region segmentation relative to detected canonical landmarks.
-        Replaces hardcoded bounding boxes with landmark-relative geometric definitions.
+        Preserves 100% of points, assigning unclassified geometry to 'adjacent' / 'general'.
         """
         pts = points.astype(np.float32)
         cols = colors.astype(np.float32)
         norms = normals.astype(np.float32)
+        n_total = len(pts)
+
+        if not align_res.is_canonical_established:
+            # When canonical frame is unavailable, preserve all points into general/adjacent regions
+            return {
+                "pavement": (pts[:0], cols[:0], norms[:0]),
+                "sculpture": (pts[:0], cols[:0], norms[:0]),
+                "basin": (pts[:0], cols[:0], norms[:0]),
+                "fountain_frame": (pts[:0], cols[:0], norms[:0]),
+                "wall": (pts[:0], cols[:0], norms[:0]),
+                "adjacent": (pts, cols, norms),
+            }
 
         y_wall = align_res.wall_y
-        half_fountain_w = max(1.8, align_res.fountain_width / 2.0 * 1.1)
-        half_courtyard_w = max(3.5, align_res.courtyard_width / 2.0 * 1.05)
+        half_fountain_w = max(2.1, align_res.fountain_width / 2.0 * 1.15)
+        half_courtyard_w = max(4.0, align_res.courtyard_width / 2.0 * 1.05)
+        sculpture_half_w = max(0.75, align_res.fountain_width * 0.18)
 
         # 1. Pavement ground plane (Z <= 0.40m, in front of wall)
-        mask_pavement = (pts[:, 2] <= 0.40) & (pts[:, 1] <= y_wall + 0.15) & (np.abs(pts[:, 0]) <= half_courtyard_w)
+        mask_pavement = (pts[:, 2] <= 0.40) & (pts[:, 1] <= y_wall + 0.30) & (np.abs(pts[:, 0]) <= half_courtyard_w)
 
-        # 2. Fountain architectural relief: all points projecting forward from wall
-        # within fountain horizontal envelope (|X| <= half_fountain_w, Z in [0.40, 5.2])
+        # 2. Fountain architectural relief: points projecting forward from wall within horizontal envelope
         mask_fountain_envelope = (
             (~mask_pavement)
             & (np.abs(pts[:, 0]) <= half_fountain_w)
-            & (pts[:, 2] >= 0.40) & (pts[:, 2] <= 5.40)
-            & (pts[:, 1] >= 4.5) & (pts[:, 1] <= y_wall - 0.02)
+            & (pts[:, 2] >= 0.40) & (pts[:, 2] <= 5.50)
+            & (pts[:, 1] >= 4.0) & (pts[:, 1] <= y_wall - 0.05)
         )
 
-        # 2a. Central Sculpture: projecting feature within upper niche (|X| <= 0.65m, Z in [1.9, 3.1])
+        # 2a. Central Sculpture: projecting feature within upper central niche
         mask_sculpture = (
             mask_fountain_envelope
-            & (np.abs(pts[:, 0]) <= 0.65)
-            & (pts[:, 2] >= 1.90) & (pts[:, 2] <= 3.10)
-            & (pts[:, 1] <= y_wall - 0.20)
+            & (np.abs(pts[:, 0]) <= sculpture_half_w)
+            & (pts[:, 2] >= 1.70) & (pts[:, 2] <= 3.30)
+            & (pts[:, 1] <= y_wall - 0.15)
         )
 
-        # 2b. Projecting Basin: low volume projecting forward (Z in [0.40, 1.85], Y projecting forward)
+        # 2b. Projecting Basin: low volume projecting forward
         mask_basin = (
             mask_fountain_envelope & (~mask_sculpture)
             & (pts[:, 2] <= 1.85)
-            & (pts[:, 1] <= y_wall - 0.40)
+            & (pts[:, 1] <= y_wall - 0.30)
         )
 
         # 2c. Fountain Frame & Architectural Scrollwork: remaining fountain envelope
@@ -353,12 +391,12 @@ class CanonicalSceneAligner:
         # 3. Background Brick Wall: points on the physical courtyard wall plane
         mask_wall = (
             (~mask_pavement) & (~mask_fountain_envelope)
-            & (np.abs(pts[:, 1] - y_wall) <= 0.25)
+            & (np.abs(pts[:, 1] - y_wall) <= 0.35)
             & (np.abs(pts[:, 0]) <= half_courtyard_w)
-            & (pts[:, 2] >= 0.40) & (pts[:, 2] <= 5.80)
+            & (pts[:, 2] >= 0.40) & (pts[:, 2] <= 6.00)
         )
 
-        # 4. Adjacent Architecture: lateral buildings and outer courtyard steps
+        # 4. Adjacent Architecture: lateral buildings, steps, and peripheral scene
         mask_adjacent = (
             (~mask_pavement) & (~mask_fountain_envelope) & (~mask_wall)
         )

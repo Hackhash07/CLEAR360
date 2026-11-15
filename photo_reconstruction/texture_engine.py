@@ -49,6 +49,7 @@ class TexturingReport:
     rear_facing_faces: int = 0
     occluded_faces: int = 0
     camera_face_distribution: Dict[str, int] = field(default_factory=dict)
+    region_texture_stats: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     atlas_png_path: Optional[str] = None
     obj_path: Optional[str] = None
 
@@ -85,6 +86,7 @@ class VisibilityAwareTextureEngine:
         depth_maps: Optional[Dict[str, np.ndarray]] = None,
         out_dir: Optional[Path] = None,
         base_name: str = "scene_mesh",
+        face_region_labels: Optional[List[str]] = None,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, TexturingReport]:
         """
         Compute visibility-aware texture mapping, UV coordinates, and texture atlas.
@@ -374,6 +376,22 @@ class VisibilityAwareTextureEngine:
 
         coverage_pct = float(textured_count / float(num_faces) * 100.0) if num_faces > 0 else 0.0
 
+        region_stats: Dict[str, Dict[str, Any]] = {}
+        if face_region_labels is not None and len(face_region_labels) == num_faces:
+            labels_arr = np.array(face_region_labels)
+            for r_name in np.unique(labels_arr):
+                r_mask = labels_arr == r_name
+                r_total = int(np.sum(r_mask))
+                r_tex = int(np.sum(r_mask & (~untextured_mask)))
+                r_untex = r_total - r_tex
+                r_cov = round(float(r_tex / max(r_total, 1) * 100.0), 1)
+                region_stats[str(r_name)] = {
+                    "total_faces": r_total,
+                    "textured_faces": r_tex,
+                    "untextured_faces": r_untex,
+                    "coverage_pct": r_cov,
+                }
+
         report = TexturingReport(
             total_faces=num_faces,
             textured_faces=textured_count,
@@ -384,6 +402,7 @@ class VisibilityAwareTextureEngine:
             rear_facing_faces=rear_facing_count,
             occluded_faces=occluded_count,
             camera_face_distribution=cam_counts,
+            region_texture_stats=region_stats,
         )
 
         # 5. Export OBJ + MTL + PNG if output directory specified

@@ -190,27 +190,32 @@ class SfMDepthAligner:
             n = len(ratios)
 
             if n >= self.min_anchors:
-                s_indep = float(np.median(ratios))
-                s_mean = float(np.mean(ratios))
-                s_std = float(np.std(ratios))
-                s_mad = float(np.median(np.abs(ratios - s_indep)))
-                s_iqr = float(np.percentile(ratios, 75) - np.percentile(ratios, 25))
+                # 1. Held-out validation split FIRST to prevent validation data leakage
+                np.random.seed(42)
+                perm = np.random.permutation(n)
+                n_train = max(5, int(n * (1.0 - self.val_split)))
+                train_idx, test_idx = perm[:n_train], perm[n_train:]
+
+                train_pairs = pairs[train_idx]
+                test_pairs = pairs[test_idx] if len(test_idx) > 0 else train_pairs
+
+                # 2. Estimate scale factor strictly on training anchors
+                train_ratios = train_pairs[:, 0] / train_pairs[:, 1]
+                s_indep = float(np.median(train_ratios))
+                s_mean = float(np.mean(train_ratios))
+                s_std = float(np.std(train_ratios))
+                s_mad = float(np.median(np.abs(train_ratios - s_indep)))
+                s_iqr = float(np.percentile(train_ratios, 75) - np.percentile(train_ratios, 25))
 
                 if self.mode == "global":
                     chosen_scale = global_scale
                 elif self.mode == "per_view":
                     chosen_scale = s_indep
                 else:  # regularized
-                    weight = float(n) / (float(n) + self.prior_weight)
+                    weight = float(len(train_ratios)) / (float(len(train_ratios)) + self.prior_weight)
                     chosen_scale = weight * s_indep + (1.0 - weight) * global_scale
 
-                # Held-out validation split
-                np.random.seed(42)
-                perm = np.random.permutation(n)
-                n_train = max(5, int(n * (1.0 - self.val_split)))
-                train_idx, test_idx = perm[:n_train], perm[n_train:]
-
-                test_pairs = pairs[test_idx] if len(test_idx) > 0 else pairs
+                # 3. Evaluate validation residuals strictly on independent held-out test anchors
                 raw_res = np.abs(test_pairs[:, 0] - test_pairs[:, 1])
                 aligned_res = np.abs(test_pairs[:, 0] - test_pairs[:, 1] * chosen_scale)
 
@@ -234,7 +239,7 @@ class SfMDepthAligner:
                     aligned_residual_median=aligned_med,
                     residual_reduction_pct=red_pct,
                     success=True,
-                    status_message=f"Aligned ({n} anchors, {red_pct:.1f}% residual reduction).",
+                    status_message=f"Aligned ({n} anchors, {red_pct:.1f}% held-out residual reduction).",
                 )
             else:
                 chosen_scale = global_scale
