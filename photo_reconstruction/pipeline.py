@@ -344,11 +344,27 @@ class PhoneReconstructionPipeline:
                     f"Accepted views: {accepted_names}. Rejected views: {rejected}"
                 )
 
+        if mvs_flag and not (raw_depth_maps and camera_models and sparse_tracks):
+            reason = (
+                f"depth maps={len(raw_depth_maps)}, camera models={len(camera_models)}, "
+                f"tracked views={len(sparse_tracks)}"
+            )
+            with open(session_dir / "depth_alignment_report.json", "w", encoding="utf-8") as f_diag:
+                json.dump({
+                    "status": "not_run",
+                    "reason": "Strict MVS requires depth maps, SfM camera models, and sparse feature tracks.",
+                    "available_inputs": reason,
+                }, f_diag, indent=2)
+            raise RuntimeError(
+                "Strict multi-view reconstruction stopped: depth calibration could not run. "
+                f"Available inputs: {reason}. No unverified monocular depth was fused."
+            )
+
         if mvs_flag and len(depth_maps) < 2:
             raise RuntimeError(
                 "Strict multi-view reconstruction stopped: fewer than two depth maps are "
-                "available for validated geometric fusion. Check the saved depth alignment "
-                "diagnostics; no unverified monocular depth was substituted."
+                "available for validated geometric fusion. See depth_alignment_report.json; "
+                "no unverified monocular depth was substituted."
             )
 
         dense_engine = DenseReconstructor(voxel_size=preset_cfg["voxel_size"])
