@@ -240,10 +240,13 @@ class M736GeometricConsensusEngine:
         self.uncertain_pts = collapsed_pts[single_view_mask]
         self.uncertain_cols = all_colors[single_view_mask]
 
-        if len(clean_pts) < 1000:
+        # Keep the pre-fusion minimum consistent with DenseReconstructor's
+        # post-fusion acceptance gate (>= 500 points). The caller still rejects
+        # the result if normal-compatible voxel fusion leaves fewer than 500.
+        if len(clean_pts) < 500:
             raise RuntimeError(
                 f"Multi-view geometric consensus failed: only {len(clean_pts)} verified points "
-                f"(requires >= 1000). Check photograph overlap and feature correspondence."
+                f"(requires >= 500 before fusion). Check photograph overlap and feature correspondence."
             )
 
         # 4. Estimate Clean Normals using Source Camera Line-of-Sight
