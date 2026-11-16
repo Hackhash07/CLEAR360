@@ -176,6 +176,12 @@ class OpenMVSBackend:
             progress_cb: ProgressCallback = None,
             photo_set_report: Optional[dict] = None) -> dict:
         """Reconstruct uploaded images and return session output paths."""
+        if len(image_paths) < 6:
+            raise ValueError(
+                "OpenMVS reconstruction requires at least 6 overlapping photographs. "
+                "Use a walk-around photo sequence with substantial shared scene content."
+            )
+
         from photo_reconstruction.photo_set_auditor import PhotoSetQualityAuditor
 
         photo_set_report = photo_set_report or PhotoSetQualityAuditor.audit_paths(image_paths)
