@@ -103,6 +103,7 @@ class ReconstructionWorker(QtCore.QThread):
                 )
                 import json
                 from datetime import datetime
+                from photo_reconstruction.quality_report import classify_reconstruction_grade
 
                 registration = result.get("registration", {})
                 mesh_quality = result.get("mesh_quality", {})
@@ -110,8 +111,22 @@ class ReconstructionWorker(QtCore.QThread):
                 geometry_quality = mesh_quality.get("geometry") or {}
                 mesh_warnings = mesh_quality.get("warnings", [])
                 registration_warnings = registration.get("warnings", [])
+                registered_count = result.get("registered_count", 0)
+                reprojection_error = result.get("reprojection_error_px")
+                reconstruction_grade = classify_reconstruction_grade(
+                    uploaded_count=len(copied),
+                    registered_count=registered_count,
+                    reprojection_error_px=reprojection_error,
+                    mesh_quality=mesh_quality,
+                    camera_overlap=registration.get("camera_overlap", {}),
+                    photo_set=actual_photo_set_report,
+                )
                 report = {
                     "session_id": session_dir.name,
+                    "reconstruction_grade": reconstruction_grade,
+                    "completeness_percentage": round(
+                        100.0 * registered_count / max(1, len(copied)), 1
+                    ),
                     "backend": "COLMAP + OpenMVS",
                     "uploaded_count": len(copied),
                     "registered_count": result.get("registered_count", 0),
