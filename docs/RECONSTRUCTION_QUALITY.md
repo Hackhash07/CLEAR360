@@ -105,3 +105,20 @@ camera with identical settings. Different resolutions cannot safely be forced
 into a single shared camera calibration; per-image calibration is used instead.
 The selected strategy and reason are recorded under
 `registration.camera_calibration` in the OpenMVS session report.
+
+## Original uploads and SfM working images
+
+CLEAR360 preserves the exact bytes uploaded by the user in the session's
+`source_uploads/` directory. The `original_images/` directory is the working
+set consumed by SfM and dense reconstruction:
+
+- JPG, JPEG and PNG uploads are copied byte-for-byte.
+- HEIC/HEIF, TIFF and BMP uploads are converted to JPEG for the current SfM
+  readers. Original files remain archived.
+- EXIF is copied to the normalized JPEG when the source decoder exposes it.
+- `input_manifest.json` records the original filename, archive path, working
+  filename, working format and whether conversion occurred.
+
+Session reports use original filenames for user-facing diagnostics. Internal
+camera-pose and working-image paths continue to use the normalized filenames
+so every downstream stage references the same pixels.
