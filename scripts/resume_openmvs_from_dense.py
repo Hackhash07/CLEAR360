@@ -27,19 +27,19 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import numpy as np
+import numpy as np  # noqa: E402
 
-from photo_reconstruction.openmvs_assets import copy_mtl_diffuse_maps
-from photo_reconstruction.openmvs_quality import (
+from photo_reconstruction.openmvs_assets import copy_mtl_diffuse_maps  # noqa: E402
+from photo_reconstruction.openmvs_quality import (  # noqa: E402
     reconstruct_mesh_options,
     refine_mesh_options,
     texture_mesh_options,
 )
-from photo_reconstruction.openmvs_tools import (
+from photo_reconstruction.openmvs_tools import (  # noqa: E402
     configured_openmvs_root,
     find_openmvs_executable,
 )
-from photo_reconstruction.scene_orientation import (
+from photo_reconstruction.scene_orientation import (  # noqa: E402
     align_glb_file,
     align_obj_file,
     align_open3d_geometry_file,
