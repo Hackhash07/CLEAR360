@@ -99,6 +99,7 @@ class PhoneReconstructionPipeline:
         quality_preset: Optional[str] = None,
         mesh_method: Optional[str] = None,
         use_mvs: Optional[bool] = None,
+        photo_set_report: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Execute full photogrammetry pipeline on a collection of smartphone images.
@@ -149,29 +150,50 @@ class PhoneReconstructionPipeline:
         image_arrays = []
         camera_infos = []
         quality_evals = []
+        photo_set_records = []
 
         for idx, p in enumerate(image_paths):
             src = Path(p)
             if not src.is_file():
+                photo_set_records.append({
+                    "path": str(src),
+                    "error": "Source image file does not exist.",
+                })
                 continue
             dest = img_target_dir / src.name
             if dest.exists() and dest.resolve() != src.resolve():
                 dest = img_target_dir / f"{src.stem}_{idx:03d}{src.suffix}"
             if not dest.exists() or dest.resolve() != src.resolve():
                 shutil.copy2(src, dest)
+
+            try:
+                # Load, assess and retain a shared record for the set-level audit.
+                rgb, meta = ImageLoader.load_image(dest)
+                q_res = ImageQualityAssessor.evaluate(rgb)
+                c_info = ExifReader.get_camera_info(dest, meta["width"], meta["height"])
+            except Exception as exc:
+                photo_set_records.append({
+                    "path": str(dest),
+                    "error": str(exc),
+                })
+                continue
+
             copied_paths.append(dest)
-
-            # Load and analyze
-            rgb, meta = ImageLoader.load_image(dest)
             image_arrays.append(rgb)
-
-            # Quality Assessment
-            q_res = ImageQualityAssessor.evaluate(rgb)
             quality_evals.append({"file": dest.name, **q_res})
-
-            # EXIF Extraction
-            c_info = ExifReader.get_camera_info(dest, meta["width"], meta["height"])
             camera_infos.append({"file": dest.name, **c_info})
+            photo_set_records.append({
+                "path": str(dest),
+                "meta": meta,
+                "exif": c_info,
+                "quality": q_res,
+            })
+
+        from photo_reconstruction.photo_set_auditor import PhotoSetQualityAuditor
+
+        photo_set_report = photo_set_report or PhotoSetQualityAuditor.audit(photo_set_records)
+        with open(session_dir / "photo_set_report.json", "w", encoding="utf-8") as f_photo:
+            json.dump(photo_set_report, f_photo, indent=2)
 
         # Save metadata JSON
         with open(exif_dir / "camera_infos.json", "w") as f:
@@ -182,8 +204,8 @@ class PhoneReconstructionPipeline:
         # Check for mixed lenses
         is_mixed, mixed_warnings = ExifReader.check_mixed_lenses(camera_infos)
 
-        if len(copied_paths) < 2:
-            update_progress(100, "Reconstruction failed: fewer than 2 valid images.")
+        if len(copied_paths) < 2 or not photo_set_report.get("can_reconstruct", True):
+            update_progress(100, "Reconstruction failed: fewer than 2 distinct valid images.")
             report = QualityReportGenerator.generate_report(
                 session_id=current_session_id,
                 uploaded_count=len(image_paths),
@@ -195,8 +217,9 @@ class PhoneReconstructionPipeline:
                 reprojection_error_px=0.0,
                 processing_time_s=time.perf_counter() - t_start,
                 scale_info=self.scale_calibrator.get_calibration_info(),
-                notes="Failed: At least 2 valid photographs required.",
+                notes="Failed: At least 2 distinct, readable photographs required.",
                 quality_preset=active_preset,
+                photo_set=photo_set_report,
             )
             QualityReportGenerator.save_report_json(report, session_dir / "report.json")
             return {"success": False, "report": report, "session_dir": session_dir, "quality_preset": active_preset}
@@ -221,6 +244,7 @@ class PhoneReconstructionPipeline:
                 scale_info=self.scale_calibrator.get_calibration_info(),
                 notes=sfm_res["message"],
                 quality_preset=active_preset,
+                photo_set=photo_set_report,
             )
             QualityReportGenerator.save_report_json(report, session_dir / "report.json")
             return {"success": False, "report": report, "session_dir": session_dir, "quality_preset": active_preset}
@@ -462,6 +486,7 @@ class PhoneReconstructionPipeline:
             quality_preset=active_preset,
             mesh_quality=mesh_quality,
             camera_overlap=camera_overlap,
+            photo_set=photo_set_report,
         )
         QualityReportGenerator.save_report_json(report, session_dir / "report.json")
 
@@ -512,6 +537,7 @@ class PhoneReconstructionPipeline:
             "quality_preset": active_preset,
             "report": report,
             "camera_overlap": camera_overlap,
+            "photo_set_report": photo_set_report,
         }
 
 
