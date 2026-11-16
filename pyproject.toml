@@ -48,6 +48,7 @@ testpaths = [
     "scene/tests",
     "obstacles/tests",
     "viewer/tests",
+    "photo_reconstruction/tests",
     "validation/",
 ]
 python_files = ["test_*.py"]
