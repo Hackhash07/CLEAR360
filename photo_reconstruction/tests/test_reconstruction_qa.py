@@ -1,0 +1,102 @@
+from pathlib import Path
+
+import numpy as np
+import trimesh
+
+from photo_reconstruction.quality_report import QualityReportGenerator
+from photo_reconstruction.reconstruction_qa import (
+    audit_obj_materials,
+    audit_reconstruction_outputs,
+)
+
+
+def _write_open_quad(path: Path) -> None:
+    mesh = trimesh.Trimesh(
+        vertices=np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            dtype=np.float64,
+        ),
+        faces=np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int64),
+        process=False,
+    )
+    mesh.export(path)
+
+
+def test_open_scene_surface_is_not_mistaken_for_a_failed_solid(tmp_path: Path):
+    mesh_path = tmp_path / "scene.ply"
+    _write_open_quad(mesh_path)
+
+    report = audit_reconstruction_outputs(mesh_path)
+
+    assert report["status"] == "healthy"
+    assert report["score"] >= 90.0
+    assert report["geometry"]["surface_type"] == "open_surface"
+    assert report["policy"]["watertight_mesh_required"] is False
+    assert report["checks"]["open_surface_allowed"] is True
+
+
+def test_obj_material_and_diffuse_map_references_are_checked(tmp_path: Path):
+    obj = tmp_path / "scene.obj"
+    mtl = tmp_path / "scene.mtl"
+    texture = tmp_path / "diffuse.png"
+    texture.write_bytes(b"test texture")
+
+    obj.write_text("mtllib scene.mtl\n", encoding="utf-8")
+    mtl.write_text(
+        "newmtl material_0\n"
+        "Kd 1.0 1.0 1.0\n"
+        "map_Kd diffuse.png\n",
+        encoding="utf-8",
+    )
+
+    valid = audit_obj_materials(obj)
+    assert valid["all_references_resolve"] is True
+    assert valid["diffuse_maps"] == [str(texture.resolve())]
+
+    texture.unlink()
+    invalid = audit_obj_materials(obj)
+    assert invalid["all_references_resolve"] is False
+    assert invalid["missing_diffuse_maps"]
+
+
+def test_reconstruction_qa_records_unresolved_obj_texture(tmp_path: Path):
+    mesh_path = tmp_path / "scene.ply"
+    obj_path = tmp_path / "scene.obj"
+    _write_open_quad(mesh_path)
+    obj_path.write_text("mtllib missing.mtl\n", encoding="utf-8")
+
+    report = audit_reconstruction_outputs(mesh_path, obj_path=obj_path)
+
+    assert report["status"] == "healthy"
+    assert report["checks"]["obj_material_references_resolve"] is False
+    assert any("diffuse-texture references" in warning for warning in report["warnings"])
+
+
+def test_reconstruction_report_preserves_backend_independent_mesh_quality():
+    mesh_quality = {
+        "schema_version": 1,
+        "status": "review",
+        "score": 84.5,
+        "warnings": ["Inspect disconnected components."],
+    }
+    report = QualityReportGenerator.generate_report(
+        session_id="session_test",
+        uploaded_count=6,
+        registered_count=5,
+        failed_images=["frame_006.jpg"],
+        sparse_point_count=1200,
+        dense_point_count=25000,
+        mesh_triangle_count=45000,
+        reprojection_error_px=0.9,
+        processing_time_s=12.4,
+        scale_info={"is_calibrated": False},
+        mesh_quality=mesh_quality,
+    )
+
+    assert report["mesh_quality"] == mesh_quality
+    assert report["image_counts"]["registered"] == 5
