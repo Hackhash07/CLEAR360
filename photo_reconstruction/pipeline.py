@@ -263,9 +263,19 @@ class PhoneReconstructionPipeline:
             return {"success": False, "report": report, "session_dir": session_dir, "quality_preset": active_preset}
 
         # 3. Structure from Motion (SfM)
-        update_progress(25, f"Running camera pose estimation & feature matching ({active_preset} preset)...")
+        from photo_reconstruction.camera_calibration import resolve_colmap_camera_mode
+
+        camera_calibration = resolve_colmap_camera_mode(photo_set_report)
+        update_progress(
+            25,
+            f"Running camera pose estimation ({camera_calibration['strategy']}; {active_preset} preset)...",
+        )
         sfm = SfMEngine(work_dir=session_dir / "sfm_work", quality_preset=active_preset)
-        sfm_res = sfm.run_reconstruction(img_target_dir, progress_cb=update_progress)
+        sfm_res = sfm.run_reconstruction(
+            img_target_dir,
+            progress_cb=update_progress,
+            camera_mode=camera_calibration["strategy"],
+        )
 
         failed_source_names = [
             original_name_by_sfm_name.get(name, name)
@@ -288,6 +298,7 @@ class PhoneReconstructionPipeline:
                 notes=sfm_res["message"],
                 quality_preset=active_preset,
                 photo_set=photo_set_report,
+                camera_calibration=camera_calibration,
             )
             QualityReportGenerator.save_report_json(report, session_dir / "report.json")
             return {"success": False, "report": report, "session_dir": session_dir, "quality_preset": active_preset}
@@ -530,6 +541,7 @@ class PhoneReconstructionPipeline:
             mesh_quality=mesh_quality,
             camera_overlap=camera_overlap,
             photo_set=photo_set_report,
+            camera_calibration=camera_calibration,
         )
         QualityReportGenerator.save_report_json(report, session_dir / "report.json")
 
