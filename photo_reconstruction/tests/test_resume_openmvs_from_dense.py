@@ -34,18 +34,34 @@ def test_resume_requires_saved_dense_scene_pair(tmp_path: Path):
         resume_from_dense(session)
 
 
-def test_resume_refuses_existing_backup_before_running_tools(tmp_path: Path):
+def test_resume_refuses_existing_backup_before_running_tools(tmp_path: Path, monkeypatch):
+    import scripts.resume_openmvs_from_dense as resume_module
+
     session = _valid_session(tmp_path)
-    (session / "mesh_before_dense_resume").mkdir()
+    (session / "mesh_before_dense_resume_v2").mkdir()
+
+    def should_not_run(name):
+        pytest.fail(f"OpenMVS tool {name} must not be called")
+
+    monkeypatch.setattr(resume_module, "_binary", should_not_run)
+
     with pytest.raises(FileExistsError, match="Backup already exists"):
         resume_from_dense(session)
 
 
-def test_resume_refuses_nonempty_stage_before_running_tools(tmp_path: Path):
+def test_resume_refuses_nonempty_stage_before_running_tools(tmp_path: Path, monkeypatch):
+    import scripts.resume_openmvs_from_dense as resume_module
+
     session = _valid_session(tmp_path)
-    stage = session / "openmvs" / "mesh_from_existing_dense"
+    stage = session / "openmvs" / "mesh_from_existing_dense_v2"
     stage.mkdir()
     (stage / "partial.obj").write_text("partial", encoding="utf-8")
+
+    def should_not_run(name):
+        pytest.fail(f"OpenMVS tool {name} must not be called")
+
+    monkeypatch.setattr(resume_module, "_binary", should_not_run)
+
     with pytest.raises(FileExistsError, match="staging directory"):
         resume_from_dense(session)
 
@@ -81,7 +97,11 @@ def test_resume_runs_every_openmvs_stage_from_session_working_directory(tmp_path
         elif stage_name == "Export textured GLB":
             output.write_bytes(b"glb" * 1000)
         elif stage_name == "Export textured OBJ and MTL":
-            output.write_text("mtllib scene_textured.mtl\nv 0 0 0\n", encoding="utf-8")
+            output.write_text(
+                "mtllib scene_textured.mtl\n"
+                + "v 0.0 0.0 0.0\n" * 250,
+                encoding="utf-8",
+            )
             (output.parent / "scene_textured.mtl").write_text(
                 "newmtl material_00\nmap_Kd texture.jpg\n", encoding="utf-8"
             )
