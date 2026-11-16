@@ -653,30 +653,47 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
     def _on_show_capture_guide(self):
         """Display smartphone capture guidelines dialog."""
         dlg = QtWidgets.QDialog(self)
-        dlg.setWindowTitle("Smartphone Photogrammetry Capture Guidelines")
-        dlg.resize(550, 420)
+        dlg.setWindowTitle("CLEAR360 — Photo-to-3D Capture Guide")
+        dlg.resize(620, 560)
         layout = QtWidgets.QVBoxLayout(dlg)
 
         text = QtWidgets.QTextBrowser()
         text.setHtml("""
-        <h3 style='color: #a855f7;'>CLEAR360 — Smartphone Photogrammetry Capture Guidelines</h3>
-        <p>Follow these best practices to ensure successful 3D Structure-from-Motion reconstruction:</p>
+        <h3 style='color: #a855f7;'>CLEAR360 — Capture Guide for Any Static Subject</h3>
+        <p>CLEAR360 reconstructs objects and environments from overlapping photographs. The goal is to show the same physical surfaces in several images while moving the camera around the subject.</p>
+
+        <h4>1. Capture a connected sequence</h4>
         <ul>
-            <li><b>60–80% Visual Overlap:</b> Adjacent photographs must share significant overlapping scene features.</li>
-            <li><b>Stationary Environment:</b> Photograph static scenes (parked cars, walls, alleys, pillars). Avoid moving objects or pedestrians.</li>
-            <li><b>Move Physically:</b> Walk around the subject in an arc or grid. Do not stand in one place and simply pan/rotate the camera.</li>
-            <li><b>Consistent Main Lens:</b> Use your phone's primary 1x wide lens for all photos. Do not switch between ultra-wide (0.5x) and telephoto (3x/5x).</li>
-            <li><b>Avoid Digital Zoom:</b> Digital zoom crops pixels and destroys optical geometry calibration.</li>
-            <li><b>Ensure Sharp Focus:</b> Tap to focus. Avoid motion blur, low light, and dirty camera lenses.</li>
-            <li><b>Feature-Rich Surfaces:</b> Avoid blank featureless white walls or uniform asphalt without visual landmarks.</li>
-            <li><b>Recommended Photo Counts:</b>
-                <ul>
-                    <li>Single obstacle or small vehicle: <b>4–12 photographs</b></li>
-                    <li>Parking bay or small street corner: <b>12–25 photographs</b></li>
-                    <li>Full urban scene or large alleyway: <b>25–40+ photographs</b></li>
-                </ul>
-            </li>
+            <li><b>60–80% visual overlap:</b> Each photo should share recognizable details with nearby photos. Avoid large gaps between viewpoints.</li>
+            <li><b>Move the camera physically:</b> Walk around the subject in a loop, arc or grid. Panning from one standing position does not create enough viewpoint change.</li>
+            <li><b>Cover different heights:</b> Capture low, eye-level and elevated/oblique views where accessible. Include the top and lower surfaces when they matter.</li>
+            <li><b>Keep the subject in view:</b> Do not crop important edges or let the subject disappear between consecutive photographs.</li>
         </ul>
+
+        <h4>2. Keep camera settings consistent</h4>
+        <ul>
+            <li>Use the same physical camera and lens for one sequence whenever possible. Avoid switching between ultra-wide, 1x and telephoto lenses.</li>
+            <li>Avoid digital zoom. Keep image dimensions and orientation consistent where practical.</li>
+            <li>Use sharp focus, adequate light and a steady hand. Avoid motion blur, strong exposure changes and aggressive filters.</li>
+            <li>Upload original-resolution photographs. CLEAR360 keeps original uploads and creates working copies where format conversion is needed.</li>
+        </ul>
+
+        <h4>3. Choose a capture path for the subject</h4>
+        <ul>
+            <li><b>Single object:</b> Capture a complete orbit with overlapping front, side, rear and elevated views. Include close views for fine details without losing wider context.</li>
+            <li><b>Vehicle or large object:</b> Move around the full perimeter and capture multiple elevations. Include wheels, undersides or recesses only where they are visible from safe viewpoints.</li>
+            <li><b>Room or building:</b> Capture connected paths through the space and overlapping views of corners, openings, walls and ceiling/floor transitions.</li>
+            <li><b>Outdoor environment:</b> Move along a continuous route with overlapping views. Keep enough common landmarks between adjacent positions.</li>
+        </ul>
+
+        <h4>4. Avoid difficult surfaces and motion</h4>
+        <ul>
+            <li>Keep people, vehicles, trees in strong wind, water and other moving objects out of the capture where possible.</li>
+            <li>Plain, glossy, reflective, transparent or textureless surfaces are difficult to reconstruct. Add more viewpoints and diffuse lighting; do not expect missing surfaces to be inferred reliably.</li>
+            <li>Avoid repetitive patterns without unique landmarks and avoid large blank regions.</li>
+        </ul>
+
+        <p><b>Before processing:</b> CLEAR360 checks readability, exact duplicates, blur, exposure, feature density, camera/lens metadata and image dimensions. True visual overlap is assessed during camera matching, not guessed from image sharpness alone.</p>
         """)
         layout.addWidget(text)
 
