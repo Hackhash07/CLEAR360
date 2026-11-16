@@ -244,11 +244,25 @@ class PhoneReconstructionPipeline:
 
         if len(copied_paths) < 2 or not photo_set_report.get("can_reconstruct", True):
             update_progress(100, "Reconstruction failed: fewer than 2 distinct valid images.")
+            invalid_source_names = [
+                item.get("image", "unknown image")
+                for item in photo_set_report.get("invalid_images", [])
+            ]
+            duplicate_source_names = [
+                name
+                for group in photo_set_report.get("duplicate_groups", [])
+                for name in group[1:]
+            ]
+            failed_input_names = list(dict.fromkeys(
+                invalid_source_names + duplicate_source_names
+            ))
+            if not failed_input_names:
+                failed_input_names = [Path(p).name for p in image_paths]
             report = QualityReportGenerator.generate_report(
                 session_id=current_session_id,
                 uploaded_count=len(image_paths),
                 registered_count=0,
-                failed_images=[Path(p).name for p in image_paths],
+                failed_images=failed_input_names,
                 sparse_point_count=0,
                 dense_point_count=0,
                 mesh_triangle_count=0,
@@ -277,16 +291,22 @@ class PhoneReconstructionPipeline:
             camera_mode=camera_calibration["strategy"],
         )
 
-        failed_source_names = [
-            original_name_by_sfm_name.get(name, name)
-            for name in sfm_res["failed_images"]
-        ]
+        failed_source_names = list(dict.fromkeys(
+            [
+                original_name_by_sfm_name.get(name, name)
+                for name in sfm_res["failed_images"]
+            ]
+            + [
+                item.get("image", "unknown image")
+                for item in photo_set_report.get("invalid_images", [])
+            ]
+        ))
 
         if not sfm_res["success"] or sfm_res["registered_count"] < 2:
             update_progress(100, "Reconstruction incomplete: could not register camera poses.")
             report = QualityReportGenerator.generate_report(
                 session_id=current_session_id,
-                uploaded_count=len(copied_paths),
+                uploaded_count=len(image_paths),
                 registered_count=sfm_res["registered_count"],
                 failed_images=failed_source_names,
                 sparse_point_count=len(sfm_res["sparse_points"]),
@@ -521,7 +541,7 @@ class PhoneReconstructionPipeline:
 
         report = QualityReportGenerator.generate_report(
             session_id=current_session_id,
-            uploaded_count=len(copied_paths),
+            uploaded_count=len(image_paths),
             registered_count=len(camera_poses),
             failed_images=failed_source_names,
             sparse_point_count=len(sparse_pts),
