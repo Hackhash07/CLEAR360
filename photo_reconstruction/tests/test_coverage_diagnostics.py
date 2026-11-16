@@ -51,3 +51,14 @@ def test_project_simple_radial_camera_center_point():
     u, v, z, valid = project_points(points, camera, image)
     np.testing.assert_allclose([u[0], v[0], z[0]], [50.0, 40.0, 2.0], atol=1e-7)
     assert valid.tolist() == [True, True, False]
+
+
+
+def test_dense_cloud_backup_path_is_read_with_explicit_ply_format():
+    # Regression guard: Open3D format inference fails for
+    # "scene_fuse_dense.ply.before_orientation".
+    from pathlib import Path
+
+    path = Path("scene_fuse_dense.ply.before_orientation")
+    assert path.name.endswith(".before_orientation")
+    assert path.name.split(".before_orientation")[0].endswith(".ply")

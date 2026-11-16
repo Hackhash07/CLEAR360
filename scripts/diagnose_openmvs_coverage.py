@@ -63,7 +63,14 @@ def main() -> int:
     images = parse_images_txt(images_path)
     sparse_count, observations, pairwise = parse_points3d_tracks(points_path)
 
-    cloud = o3d.io.read_point_cloud(str(dense_ply))
+    # Orientation backups retain a suffix after the .ply extension, so Open3D
+    # cannot infer the format from the whole filename. Pass the format explicitly.
+    cloud = o3d.io.read_point_cloud(
+        str(dense_ply),
+        format="ply",
+        remove_nan_points=True,
+        remove_infinite_points=True,
+    )
     if len(cloud.points) == 0:
         raise ValueError(f"Dense point cloud is empty: {dense_ply}")
     points = np.asarray(cloud.points, dtype=np.float64)
