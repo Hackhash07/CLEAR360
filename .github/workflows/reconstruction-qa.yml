@@ -25,7 +25,13 @@ on:
       - ".github/workflows/reconstruction-qa.yml"
   pull_request:
     paths:
+      - "pyproject.toml"
+      - "requirements.txt"
       - "photo_reconstruction/__init__.py"
+      - "photo_reconstruction/image_preparation.py"
+      - "photo_reconstruction/tests/test_image_preparation.py"
+      - "photo_reconstruction/image_loader.py"
+      - "photo_reconstruction/tests/test_phone_reconstruction.py"
       - "photo_reconstruction/reconstruction_qa.py"
       - "photo_reconstruction/openmvs_backend.py"
       - "photo_reconstruction/quality_report.py"
