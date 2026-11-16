@@ -100,17 +100,44 @@ class ReconstructionWorker(QtCore.QThread):
                 import json
                 from datetime import datetime
 
+                registration = result.get("registration", {})
+                mesh_quality = result.get("mesh_quality", {})
+                geometry_quality = mesh_quality.get("geometry") or {}
+                mesh_warnings = mesh_quality.get("warnings", [])
                 report = {
                     "session_id": session_dir.name,
                     "backend": "COLMAP + OpenMVS",
                     "uploaded_count": len(copied),
-                    "registered_count": None,
+                    "registered_count": result.get("registered_count", 0),
+                    "failed_images": result.get("failed_images", []),
+                    "image_counts": {
+                        "uploaded": len(copied),
+                        "registered": result.get("registered_count", 0),
+                        "failed": len(result.get("failed_images", [])),
+                    },
+                    "registration": registration,
+                    "geometric_metrics": {
+                        "sparse_points": result.get("sparse_point_count", 0),
+                        "mesh_vertices": geometry_quality.get("vertex_count", 0),
+                        "mesh_triangles": geometry_quality.get("face_count", 0),
+                        "mean_reprojection_error_px": result.get("reprojection_error_px", 0.0),
+                    },
+                    "mesh_quality": mesh_quality,
+                    "diagnostics": {
+                        "has_failures": bool(result.get("failed_images")),
+                        "failure_reasons": [],
+                        "guidance": (
+                            "Review the reconstruction quality warnings before using this model."
+                            if mesh_warnings else "No mesh or export QA warnings were reported."
+                        ),
+                    },
                     "notes": "COLMAP + OpenMVS reconstruction completed.",
                     "mesh_ply": str(result["mesh_ply"]),
                     "mesh_obj": str(result.get("mesh_obj", "")),
                     "mesh_glb": str(result["mesh_glb"]),
                     "dense_ply": str(result["dense_ply"]),
                     "log_file": str(result["log_file"]),
+                    "mesh_quality_report": str(result.get("mesh_quality_report", "")),
                     "orientation": result.get("orientation"),
                     "created_at": datetime.now().astimezone().isoformat(),
                 }
