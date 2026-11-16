@@ -48,6 +48,6 @@ def test_project_simple_radial_camera_center_point():
         tx=0, ty=0, tz=0, camera_id=1, name="frame.jpg",
     )
     points = np.array([[0.0, 0.0, 2.0], [0.4, 0.0, 2.0], [0.0, 0.0, -1.0]])
-    u, v, valid = project_points(points, camera, image)
-    np.testing.assert_allclose([u[0], v[0]], [50.0, 40.0], atol=1e-7)
+    u, v, z, valid = project_points(points, camera, image)
+    np.testing.assert_allclose([u[0], v[0], z[0]], [50.0, 40.0, 2.0], atol=1e-7)
     assert valid.tolist() == [True, True, False]

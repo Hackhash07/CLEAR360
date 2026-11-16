@@ -131,7 +131,7 @@ def project_points(
 
     The backend currently uses SIMPLE_RADIAL, but common COLMAP pinhole and
     OpenCV camera models are implemented to make the diagnostic reusable.
-    Returns (u, v, valid_in_front_and_finite).
+    Returns (u, v, camera_z, valid_in_front_and_finite).
     """
     points = np.asarray(points_world, dtype=np.float64)
     rotation = quaternion_to_rotation(image.qw, image.qx, image.qy, image.qz)
@@ -180,4 +180,4 @@ def project_points(
     v = fy * yd + cy
     valid &= np.isfinite(u) & np.isfinite(v)
     valid &= (u >= 0) & (u < camera.width) & (v >= 0) & (v < camera.height)
-    return u, v, valid
+    return u, v, z, valid

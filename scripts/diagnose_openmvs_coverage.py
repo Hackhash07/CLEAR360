@@ -94,16 +94,22 @@ def main() -> int:
         else:
             scale_x = scale_y = 1.0
 
-        u, v, valid = project_points(points, camera, image)
+        u, v, camera_z, valid = project_points(points, camera, image)
         px = np.rint(u[valid] * scale_x).astype(np.int32)
         py = np.rint(v[valid] * scale_y).astype(np.int32)
+        depth = camera_z[valid]
         inside = (
             (px >= 0) & (px < frame.shape[1]) &
             (py >= 0) & (py < frame.shape[0])
         )
-        px, py = px[inside], py[inside]
-        mask = np.zeros(frame.shape[:2], dtype=np.uint8)
-        mask[py, px] = 255
+        px, py, depth = px[inside], py[inside], depth[inside]
+
+        # Z-buffer: only the nearest projected dense point at each pixel counts.
+        flat_index = py * frame.shape[1] + px
+        z_buffer = np.full(frame.shape[0] * frame.shape[1], np.inf, dtype=np.float32)
+        np.minimum.at(z_buffer, flat_index, depth.astype(np.float32))
+        visible = np.isfinite(z_buffer)
+        mask = visible.reshape(frame.shape[:2]).astype(np.uint8) * 255
         # A 3x3 dilated footprint is a visualization aid, not a reconstruction.
         dilated = cv2.dilate(mask, np.ones((3, 3), dtype=np.uint8), iterations=1)
         covered_pixels = int(np.count_nonzero(dilated))
@@ -117,7 +123,7 @@ def main() -> int:
             "image": image.name,
             "registered_image_id": image.image_id,
             "sparse_track_observations": observations.get(image.image_id, 0),
-            "projected_dense_points": int(len(px)),
+            "projected_dense_points": int(np.count_nonzero(visible)),
             "projected_coverage_percent_3x3": round(coverage_pct, 3),
             "overlay": str(output_dir / f"{Path(image.name).stem}_dense_coverage.jpg"),
         })
