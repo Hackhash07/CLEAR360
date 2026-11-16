@@ -242,15 +242,21 @@ def summarize_camera_overlap(
         name for name, neighbours in adjacency.items() if not neighbours
     )
     warnings = []
-    if len(names) >= 2 and len(components) > 1:
+    if len(names) < 2:
+        warnings.append("At least two registered cameras are required to assess camera overlap.")
+        overlap_status = "insufficient"
+    elif len(components) > 1:
         warnings.append(
             f"Registered cameras form {len(components)} separate co-visibility "
             f"components at the {minimum_shared_tracks}-shared-track threshold."
         )
+        overlap_status = "disconnected"
+    else:
+        overlap_status = "connected"
 
     return {
         "available": True,
-        "status": "connected" if len(components) <= 1 else "disconnected",
+        "status": overlap_status,
         "minimum_shared_3d_tracks": minimum_shared_tracks,
         "registered_camera_count": len(names),
         "supported_pair_count": len(supported_pairs),
