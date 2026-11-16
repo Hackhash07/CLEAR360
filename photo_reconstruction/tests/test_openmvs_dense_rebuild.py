@@ -23,7 +23,8 @@ def test_dense_rebuild_refuses_when_backup_name_already_exists(tmp_path: Path):
     (session / "original_images").mkdir()
     (session / "mesh").mkdir()
     (session / "mesh_before_dense_quality_rebuild").mkdir()
-    (session / "original_images" / f"fountain_{index:04d}.jpg").write_bytes(b"x")
+    for index in range(6):
+        (session / "original_images" / f"fountain_{index:04d}.jpg").write_bytes(b"x")
     for name in ("cameras.txt", "images.txt"):
         (work / "sparse_text" / name).write_text("# empty\n", encoding="utf-8")
     with pytest.raises(FileExistsError, match="Backup already exists"):
