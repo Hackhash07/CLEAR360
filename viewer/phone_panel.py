@@ -125,7 +125,10 @@ class ReconstructionWorker(QtCore.QThread):
                     "mesh_quality": mesh_quality,
                     "diagnostics": {
                         "has_failures": bool(result.get("failed_images")),
-                        "failure_reasons": [],
+                        "failure_reasons": [
+                            f"Image '{name}' was not registered by COLMAP."
+                            for name in result.get("failed_images", [])
+                        ],
                         "guidance": (
                             "Some uploaded photographs were not registered. "
                             "Review failed_images and the mesh quality warnings."
