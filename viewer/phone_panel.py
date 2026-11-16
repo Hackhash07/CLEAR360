@@ -104,6 +104,7 @@ class ReconstructionWorker(QtCore.QThread):
                 mesh_quality = result.get("mesh_quality", {})
                 geometry_quality = mesh_quality.get("geometry") or {}
                 mesh_warnings = mesh_quality.get("warnings", [])
+                registration_warnings = registration.get("warnings", [])
                 report = {
                     "session_id": session_dir.name,
                     "backend": "COLMAP + OpenMVS",
@@ -129,12 +130,15 @@ class ReconstructionWorker(QtCore.QThread):
                             f"Image '{name}' was not registered by COLMAP."
                             for name in result.get("failed_images", [])
                         ],
+                        "registration_warnings": registration_warnings,
+                        "mesh_warnings": mesh_warnings,
                         "guidance": (
                             "Some uploaded photographs were not registered. "
-                            "Review failed_images and the mesh quality warnings."
+                            "Review failed_images and the reconstruction diagnostics."
                             if result.get("failed_images") else
-                            "Review the reconstruction quality warnings before using this model."
-                            if mesh_warnings else "No mesh or export QA warnings were reported."
+                            "Review camera overlap and mesh quality warnings before using this model."
+                            if registration_warnings or mesh_warnings else
+                            "No camera-overlap or mesh QA warnings were reported."
                         ),
                     },
                     "notes": "COLMAP + OpenMVS reconstruction completed.",
