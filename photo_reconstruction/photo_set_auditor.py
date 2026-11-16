@@ -84,13 +84,19 @@ class PhotoSetQualityAuditor:
                 int(actual_camera.get("metadata_available_count", 0) or 0),
                 int(source_camera.get("metadata_available_count", 0) or 0),
             )
+            camera["metadata_coverage_percentage"] = max(
+                float(actual_camera.get("metadata_coverage_percentage", 0.0) or 0.0),
+                float(source_camera.get("metadata_coverage_percentage", 0.0) or 0.0),
+            )
             merged["camera"] = camera
 
         merged["warnings"] = list(dict.fromkeys(
             list(actual_report.get("warnings") or [])
             + list(source_report.get("warnings") or [])
         ))
-        merged["source_camera_metadata_preserved"] = bool(source_camera)
+        merged["source_camera_metadata_preserved"] = bool(
+            int(source_camera.get("metadata_available_count", 0) or 0) > 0
+        )
         return merged
 
     @classmethod
