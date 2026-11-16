@@ -15,7 +15,6 @@ from typing import Any
 import numpy as np
 import trimesh
 
-from photo_reconstruction.mesh_diagnostics import MeshQualityAuditor
 
 
 def _load_triangle_mesh(path: Path) -> trimesh.Trimesh:
@@ -42,6 +41,95 @@ def _load_triangle_mesh(path: Path) -> trimesh.Trimesh:
     if int(mesh.faces.min()) < 0 or int(mesh.faces.max()) >= len(mesh.vertices):
         raise ValueError(f"Mesh contains invalid face indices: {path}")
     return mesh
+
+
+def _audit_geometry(mesh: trimesh.Trimesh) -> dict[str, Any]:
+    """Calculate topology and triangle metrics without requiring Open3D."""
+    vertices = np.asarray(mesh.vertices, dtype=np.float64)
+    faces = np.asarray(mesh.faces, dtype=np.int64)
+    vertex_count, face_count = len(vertices), len(faces)
+
+    sorted_edges = np.sort(mesh.edges, axis=1)
+    _, edge_counts = np.unique(sorted_edges, axis=0, return_counts=True)
+    non_manifold_edges = int(np.sum(edge_counts > 2))
+    boundary_edges = int(np.sum(edge_counts == 1))
+    interior_edges = int(np.sum(edge_counts == 2))
+
+    v0, v1, v2 = vertices[faces[:, 0]], vertices[faces[:, 1]], vertices[faces[:, 2]]
+    a = np.linalg.norm(v1 - v0, axis=1)
+    b = np.linalg.norm(v2 - v1, axis=1)
+    c = np.linalg.norm(v0 - v2, axis=1)
+    semiperimeter = (a + b + c) / 2.0
+    area_argument = np.maximum(
+        0.0,
+        semiperimeter
+        * (semiperimeter - a)
+        * (semiperimeter - b)
+        * (semiperimeter - c),
+    )
+    areas = np.sqrt(area_argument)
+    degenerate_faces = int(np.sum(areas <= 1e-8))
+
+    denominator = (
+        8.0
+        * (semiperimeter - a)
+        * (semiperimeter - b)
+        * (semiperimeter - c)
+    )
+    aspect_ratios = np.where(
+        denominator > 1e-12,
+        (a * b * c) / (denominator + 1e-12),
+        100.0,
+    )
+    sliver_faces = int(np.sum(aspect_ratios > 20.0))
+
+    unique_edge_lengths = mesh.edges_unique_length
+    try:
+        connected_components = int(
+            trimesh.graph.connected_component_count(mesh.face_adjacency)
+        )
+    except Exception:
+        connected_components = 1
+
+    is_watertight = bool(mesh.is_watertight)
+    boundary_edge_count = boundary_edges
+    surface_type = (
+        "closed_volume"
+        if boundary_edge_count == 0 and is_watertight
+        else "open_surface"
+    )
+
+    return {
+        "vertex_count": vertex_count,
+        "face_count": face_count,
+        "is_watertight": is_watertight,
+        "is_winding_consistent": bool(mesh.is_winding_consistent),
+        "euler_number": int(mesh.euler_number),
+        "surface_type": surface_type,
+        "connected_components": connected_components,
+        "non_manifold_edges": non_manifold_edges,
+        "boundary_edges": boundary_edges,
+        "manifold_interior_edges": interior_edges,
+        "degenerate_faces": degenerate_faces,
+        "sliver_faces": sliver_faces,
+        "sliver_ratio": float(sliver_faces / max(1, face_count)),
+        "mean_aspect_ratio": float(np.mean(aspect_ratios)),
+        "median_aspect_ratio": float(np.median(aspect_ratios)),
+        "min_edge_length_coordinate_units": (
+            float(unique_edge_lengths.min()) if len(unique_edge_lengths) else 0.0
+        ),
+        "max_edge_length_coordinate_units": (
+            float(unique_edge_lengths.max()) if len(unique_edge_lengths) else 0.0
+        ),
+        "median_edge_length_coordinate_units": (
+            float(np.median(unique_edge_lengths)) if len(unique_edge_lengths) else 0.0
+        ),
+        "surface_area_coordinate_units_squared": float(np.sum(areas)),
+        "bounding_box_extent": (
+            vertices.max(axis=0) - vertices.min(axis=0)
+        ).round(4).tolist(),
+        "coordinate_scale": "un-calibrated SfM units unless scale calibration is supplied",
+    }
 
 
 def audit_obj_materials(obj_path: str | Path) -> dict[str, Any]:
@@ -159,21 +247,7 @@ def audit_reconstruction_outputs(
 
     try:
         mesh = _load_triangle_mesh(mesh_file)
-        audit = MeshQualityAuditor.audit_mesh(
-            np.asarray(mesh.vertices, dtype=np.float64),
-            np.asarray(mesh.faces, dtype=np.int64),
-            expected_closed=False,
-        ).to_dict()
-
-        # The model may not have a known metric scale. Rename dimensional values
-        # so consumers cannot mistake arbitrary SfM units for metres.
-        audit["min_edge_length_coordinate_units"] = audit.pop("min_edge_length_m")
-        audit["max_edge_length_coordinate_units"] = audit.pop("max_edge_length_m")
-        audit["median_edge_length_coordinate_units"] = audit.pop("median_edge_length_m")
-        audit["surface_area_coordinate_units_squared"] = audit.pop("total_surface_area_m2")
-        audit["coordinate_scale"] = "un-calibrated SfM units unless scale calibration is supplied"
-
-        geometry = audit
+        geometry = _audit_geometry(mesh)
         checks["mesh_file_readable"] = True
         checks["vertices_finite"] = True
         checks["faces_valid"] = True
