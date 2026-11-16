@@ -378,6 +378,16 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.lbl_photo_count.setStyleSheet("font-size: 10px; color: #94a3b8;")
         grp_up_layout.addWidget(self.lbl_photo_count)
 
+        self.lbl_photo_set_summary = QtWidgets.QLabel(
+            "Photo-set check: add photographs to inspect duplicates, image quality and camera consistency."
+        )
+        self.lbl_photo_set_summary.setWordWrap(True)
+        self.lbl_photo_set_summary.setStyleSheet(
+            "font-size: 10px; color: #94a3b8; padding: 4px; "
+            "background-color: #161821; border-radius: 4px;"
+        )
+        grp_up_layout.addWidget(self.lbl_photo_set_summary)
+
         self.btn_capture_guide = QtWidgets.QPushButton("📖 Capture Guidelines")
         self.btn_capture_guide.setStyleSheet("background-color: #1e2230; font-size: 11px;")
         self.btn_capture_guide.clicked.connect(self._on_show_capture_guide)
@@ -563,10 +573,71 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.lbl_photo_count.setText(f"{count} photographs selected (min 2, rec 4–40+)")
         if count > 0 and self.list_photos.currentRow() == -1:
             self.list_photos.setCurrentRow(0)
+        self._refresh_photo_set_summary()
         if count >= 2:
             self.lbl_status.setText(
                 f"{count} photographs ready. CLEAR360 will select the reconstruction engine automatically."
             )
+
+    def _refresh_photo_set_summary(self):
+        """Show whole-upload diagnostics before users start expensive reconstruction."""
+        if not self.selected_image_paths:
+            self.lbl_photo_set_summary.setText(
+                "Photo-set check: add photographs to inspect duplicates, image quality and camera consistency."
+            )
+            self.lbl_photo_set_summary.setStyleSheet(
+                "font-size: 10px; color: #94a3b8; padding: 4px; "
+                "background-color: #161821; border-radius: 4px;"
+            )
+            return None
+
+        records = []
+        for image_path in self.selected_image_paths:
+            key = str(image_path.resolve())
+            record = dict(self.image_metadata.get(key) or {})
+            record.setdefault("path", key)
+            records.append(record)
+        report = PhotoSetQualityAuditor.audit(records)
+
+        quality = report.get("image_quality", {})
+        camera = report.get("camera", {})
+        overlap = report.get("overlap", {})
+        lines = [
+            f"Photo set: {str(report.get('status', 'unknown')).upper()}",
+            (
+                f"{report.get('valid_photo_count', 0)}/{report.get('photo_count', len(records))} readable"
+                f" · {report.get('unique_photo_count', 0)} unique"
+                f" · {report.get('duplicate_image_count', 0)} exact duplicates"
+            ),
+            (
+                f"Image quality: avg {quality.get('mean_score') if quality.get('mean_score') is not None else 'n/a'}/100"
+                f" · blurry {quality.get('blurry_count', 0)}"
+                f" · low-feature {quality.get('low_feature_count', 0)}"
+                f" · rejected {quality.get('rejected_count', 0)}"
+            ),
+            (
+                "Camera/lens mix detected"
+                if camera.get("mixed_lenses_detected")
+                else f"EXIF camera metadata: {camera.get('metadata_coverage_percentage', 0)}% available"
+            ),
+            (
+                "Visual overlap: measured during camera reconstruction"
+                if not overlap.get("available")
+                else f"Visual overlap: {overlap.get('status', 'measured')}"
+            ),
+        ]
+        warnings = report.get("warnings", [])
+        if warnings:
+            lines.append("Review: " + " ".join(warnings[:2]))
+
+        self.lbl_photo_set_summary.setText("\n".join(lines))
+        status = report.get("status")
+        color = "#22c55e" if status == "ready" else "#eab308" if status == "review" else "#ef4444"
+        self.lbl_photo_set_summary.setStyleSheet(
+            f"font-size: 10px; color: {color}; padding: 4px; "
+            "background-color: #161821; border-radius: 4px;"
+        )
+        return report
 
     def _on_clear_photos_clicked(self):
         """Clear selected images."""
@@ -575,6 +646,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.list_photos.clear()
         self.lbl_photo_count.setText("0 photographs selected (min 2, rec 4–40+)")
         self._reset_meta_labels()
+        self._refresh_photo_set_summary()
 
     def _on_show_capture_guide(self):
         """Display smartphone capture guidelines dialog."""
