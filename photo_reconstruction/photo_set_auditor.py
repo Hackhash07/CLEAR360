@@ -103,8 +103,9 @@ class PhotoSetQualityAuditor:
         for index, record in enumerate(records):
             meta = record.get("meta") or {}
             raw_path = record.get("path") or meta.get("file_path")
-            display_name = (
-                Path(str(raw_path)).name if raw_path else str(meta.get("file_name") or f"image_{index + 1}")
+            display_name = str(
+                meta.get("file_name")
+                or (Path(str(raw_path)).name if raw_path else f"image_{index + 1}")
             )
             error = record.get("error")
             if error:
