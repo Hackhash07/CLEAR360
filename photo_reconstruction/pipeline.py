@@ -138,55 +138,81 @@ class PhoneReconstructionPipeline:
         current_session_id = session_dir.name
 
         img_target_dir = session_dir / "original_images"
+        source_archive_dir = session_dir / "source_uploads"
         exif_dir = session_dir / "exif_metadata"
         poses_dir = session_dir / "camera_poses"
         sparse_dir = session_dir / "sparse_cloud"
         dense_dir = session_dir / "dense_cloud"
         mesh_dir = session_dir / "mesh"
 
-        # 2. Ingest & Validate Source Images
+        # 2. Ingest, preserve originals, and prepare SfM-readable working images.
         update_progress(10, f"Validating and ingesting {len(image_paths)} images...")
+        from photo_reconstruction.image_preparation import stage_reconstruction_image
+
         copied_paths = []
         image_arrays = []
         camera_infos = []
         quality_evals = []
         photo_set_records = []
+        input_manifest = []
+        original_name_by_sfm_name: dict[str, str] = {}
 
         for idx, p in enumerate(image_paths):
-            src = Path(p)
+            src = Path(p).expanduser()
             if not src.is_file():
                 photo_set_records.append({
                     "path": str(src),
                     "error": "Source image file does not exist.",
                 })
                 continue
-            dest = img_target_dir / src.name
-            if dest.exists() and dest.resolve() != src.resolve():
-                dest = img_target_dir / f"{src.stem}_{idx:03d}{src.suffix}"
-            if not dest.exists() or dest.resolve() != src.resolve():
-                shutil.copy2(src, dest)
 
             try:
-                # Load, assess and retain a shared record for the set-level audit.
-                rgb, meta = ImageLoader.load_image(dest)
+                # Decode and score the original upload before format conversion.
+                rgb, meta = ImageLoader.load_image(src)
                 q_res = ImageQualityAssessor.evaluate(rgb)
-                c_info = ExifReader.get_camera_info(dest, meta["width"], meta["height"])
+                c_info = ExifReader.get_camera_info(
+                    src, meta["width"], meta["height"]
+                )
+                staged = stage_reconstruction_image(
+                    src,
+                    rgb,
+                    source_archive_dir,
+                    img_target_dir,
+                    index=idx,
+                )
             except Exception as exc:
                 photo_set_records.append({
-                    "path": str(dest),
+                    "path": str(src),
                     "error": str(exc),
                 })
                 continue
 
-            copied_paths.append(dest)
+            sfm_path = Path(staged["sfm_image_path"])
+            archived_path = Path(staged["source_archive_path"])
+            copied_paths.append(sfm_path)
             image_arrays.append(rgb)
-            quality_evals.append({"file": dest.name, **q_res})
-            camera_infos.append({"file": dest.name, **c_info})
+            quality_evals.append({"file": src.name, **q_res})
+            camera_infos.append({"file": src.name, **c_info})
+            original_name_by_sfm_name[sfm_path.name] = src.name
+
+            # The auditor hashes the archived original but keeps the upload name.
+            source_meta = dict(meta)
+            source_meta["file_name"] = src.name
+            source_meta["file_path"] = str(archived_path)
             photo_set_records.append({
-                "path": str(dest),
-                "meta": meta,
+                "path": str(archived_path),
+                "meta": source_meta,
                 "exif": c_info,
                 "quality": q_res,
+            })
+            input_manifest.append({
+                "original_filename": src.name,
+                "source_archive": archived_path.relative_to(session_dir).as_posix(),
+                "sfm_filename": sfm_path.name,
+                "working_format": staged["working_format"],
+                "converted_for_sfm": staged["converted_for_sfm"],
+                "source_size_bytes": staged["source_size_bytes"],
+                "working_size_bytes": staged["working_size_bytes"],
             })
 
         from photo_reconstruction.photo_set_auditor import PhotoSetQualityAuditor
@@ -200,6 +226,14 @@ class PhoneReconstructionPipeline:
             }
         with open(session_dir / "photo_set_report.json", "w", encoding="utf-8") as f_photo:
             json.dump(photo_set_report, f_photo, indent=2)
+        with open(session_dir / "input_manifest.json", "w", encoding="utf-8") as f_manifest:
+            json.dump({
+                "uploaded_count": len(image_paths),
+                "sfm_ready_count": len(copied_paths),
+                "source_archive_directory": source_archive_dir.name,
+                "sfm_working_directory": img_target_dir.name,
+                "images": input_manifest,
+            }, f_manifest, indent=2)
 
         # Save metadata JSON
         with open(exif_dir / "camera_infos.json", "w") as f:
@@ -237,11 +271,15 @@ class PhoneReconstructionPipeline:
 
         if not sfm_res["success"] or sfm_res["registered_count"] < 2:
             update_progress(100, "Reconstruction incomplete: could not register camera poses.")
+            failed_source_names = [
+                original_name_by_sfm_name.get(name, name)
+                for name in sfm_res["failed_images"]
+            ]
             report = QualityReportGenerator.generate_report(
                 session_id=current_session_id,
                 uploaded_count=len(copied_paths),
                 registered_count=sfm_res["registered_count"],
-                failed_images=sfm_res["failed_images"],
+                failed_images=failed_source_names,
                 sparse_point_count=len(sfm_res["sparse_points"]),
                 dense_point_count=0,
                 mesh_triangle_count=0,
@@ -544,6 +582,7 @@ class PhoneReconstructionPipeline:
             "report": report,
             "camera_overlap": camera_overlap,
             "photo_set_report": photo_set_report,
+            "input_manifest": input_manifest,
         }
 
 
