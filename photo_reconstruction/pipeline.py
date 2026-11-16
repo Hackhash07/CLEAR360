@@ -191,7 +191,13 @@ class PhoneReconstructionPipeline:
 
         from photo_reconstruction.photo_set_auditor import PhotoSetQualityAuditor
 
-        photo_set_report = photo_set_report or PhotoSetQualityAuditor.audit(photo_set_records)
+        upload_preflight_snapshot = photo_set_report
+        photo_set_report = PhotoSetQualityAuditor.audit(photo_set_records)
+        if upload_preflight_snapshot is not None:
+            photo_set_report["upload_preflight_snapshot"] = {
+                "status": upload_preflight_snapshot.get("status"),
+                "warnings": upload_preflight_snapshot.get("warnings", []),
+            }
         with open(session_dir / "photo_set_report.json", "w", encoding="utf-8") as f_photo:
             json.dump(photo_set_report, f_photo, indent=2)
 
