@@ -106,7 +106,7 @@ def rotation_from_to(source: np.ndarray, target: np.ndarray) -> np.ndarray:
     return np.eye(3) + skew + (skew @ skew) / (1.0 + dot)
 
 
-def align_obj_file(path: str | Path, rotation: np.ndarray) -> bool:
+def align_obj_file(\n    path: str | Path, rotation: np.ndarray, center: np.ndarray | None = None\n) -> bool:
     """Rotate OBJ positions and normals while preserving independent UV indices."""
     obj_path = Path(path)
     if not obj_path.is_file():
@@ -125,8 +125,7 @@ def align_obj_file(path: str | Path, rotation: np.ndarray) -> bool:
     if not vertex_rows:
         return False
 
-    center = np.median(np.vstack([v for _, v in vertex_rows]), axis=0)
-    for index, values in vertex_rows:
+    if center is None:\n        center = np.median(np.vstack([v for _, v in vertex_rows]), axis=0)\n    else:\n        center = np.asarray(center, dtype=np.float64)\n    for index, values in vertex_rows:
         transformed = rotation @ (values - center) + center
         prefix = lines[index][: len(lines[index]) - len(lines[index].lstrip())]
         parts = lines[index].lstrip().split()
