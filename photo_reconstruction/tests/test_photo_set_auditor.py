@@ -154,6 +154,37 @@ def test_photo_set_overlap_is_not_claimed_before_feature_matching(tmp_path: Path
     assert report["overlap"]["status"] == "not_measured"
 
 
+def test_source_camera_metadata_survives_conversion_that_strips_exif():
+    actual_report = {
+        "camera": {
+            "mixed_lenses_detected": False,
+            "warnings": [],
+            "metadata_available_count": 0,
+        },
+        "warnings": [],
+    }
+    source_report = {
+        "camera": {
+            "mixed_lenses_detected": True,
+            "warnings": ["Mixed camera lenses detected in original uploads."],
+            "metadata_available_count": 4,
+            "metadata_coverage_percentage": 100.0,
+        },
+        "warnings": ["Review original lens metadata."],
+    }
+
+    merged = PhotoSetQualityAuditor.merge_source_camera_metadata(
+        actual_report,
+        source_report,
+    )
+
+    assert merged["camera"]["mixed_lenses_detected"] is True
+    assert merged["camera"]["metadata_available_count"] == 4
+    assert merged["source_camera_metadata_preserved"] is True
+    assert "Mixed camera lenses detected in original uploads." in merged["camera"]["warnings"]
+    assert "Review original lens metadata." in merged["warnings"]
+
+
 def test_photo_set_audit_reports_unreadable_uploads(tmp_path: Path):
     first = tmp_path / "valid.jpg"
     missing = tmp_path / "missing.jpg"
