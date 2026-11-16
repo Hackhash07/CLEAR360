@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6 import QtCore, QtGui, QtWidgets
+from PIL import Image
 
 
 class PhotoPolygonView(QtWidgets.QGraphicsView):
@@ -30,9 +31,22 @@ class PhotoPolygonView(QtWidgets.QGraphicsView):
         self._region_items: list[QtWidgets.QGraphicsPolygonItem] = []
 
     def set_photo(self, path: str | Path) -> None:
-        pixmap = QtGui.QPixmap(str(path))
+        # Decode with Pillow so the editor also handles the same HEIC/TIFF
+        # inputs accepted by CLEAR360's image loader.
+        try:
+            with Image.open(path) as opened:
+                rgb = opened.convert("RGB")
+                width, height = rgb.size
+                pixels = rgb.tobytes()
+            qimage = QtGui.QImage(
+                pixels, width, height, width * 3,
+                QtGui.QImage.Format.Format_RGB888
+            ).copy()
+            pixmap = QtGui.QPixmap.fromImage(qimage)
+        except Exception as exc:
+            raise ValueError(f"Could not open reference image {path}: {exc}") from exc
         if pixmap.isNull():
-            raise ValueError(f"Could not open reference image: {path}")
+            raise ValueError(f"Could not render reference image: {path}")
         self._scene.clear()
         self._pixmap_item = self._scene.addPixmap(pixmap)
         self._pixmap_item.setZValue(-100)
