@@ -45,18 +45,29 @@ def densify_common_options(
 
 
 def reconstruct_mesh_options(
-    *, max_threads: int = 1, remove_spurious: float = 20.0
+    *,
+    max_threads: int = 1,
+    remove_spurious: float = 20.0,
+    free_space_support: bool = False,
 ) -> list[str]:
-    """Mesh cleanup; lower remove-spurious factors remove more long-edge faces."""
+    """Mesh cleanup with optional recovery of weakly represented surfaces.
+
+    OpenMVS 2.4.0 documents free-space support as using free-space evidence
+    to reconstruct weakly represented surfaces. It is opt-in because it can
+    trade some precision for completeness and needs visual comparison.
+    """
     if max_threads < 1 or remove_spurious < 0:
         raise ValueError("Invalid mesh cleanup settings.")
-    return [
+    options = [
         "--archive-type", "2",
         "--max-threads", str(max_threads),
         "--remove-spurious", f"{remove_spurious:g}",
         "--close-holes", "30",
         "--smooth", "2",
     ]
+    if free_space_support:
+        options.append("--free-space-support")
+    return options
 
 
 def refine_mesh_options(

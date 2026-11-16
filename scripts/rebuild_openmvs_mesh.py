@@ -92,6 +92,7 @@ def rebuild_session(
     output_tag: str = "mesh_quality_rebuild_v2",
     backup_name: str = "mesh_before_quality_rebuild_v2",
     remove_spurious: float = 20.0,
+    free_space_support: bool = True,
 ) -> dict:
     session_dir = session_dir.expanduser().resolve()
     work = session_dir / "openmvs"
@@ -140,7 +141,11 @@ def rebuild_session(
     mesh_ply = stage / "scene_mesh.ply"
     _run(
         [reconstruct, "-i", str(dense_scene), "-o", str(mesh_scene),
-         *reconstruct_mesh_options(max_threads=1, remove_spurious=remove_spurious)],
+         *reconstruct_mesh_options(
+             max_threads=1,
+             remove_spurious=remove_spurious,
+             free_space_support=free_space_support,
+         )],
         work,
         log_file,
     )
@@ -232,6 +237,7 @@ def rebuild_session(
         "estimated_up_before_alignment": [float(value) for value in up_vector],
         "reconstruct_mesh": {
             "remove_spurious": remove_spurious, "close_holes": 30, "smooth_iterations": 2,
+            "free_space_support": free_space_support,
             "note": "20 is the OpenMVS 2.4.0 default; smaller values remove more long-edge faces",
         },
         "refine_mesh": {
@@ -289,6 +295,10 @@ def main() -> int:
         "--remove-spurious", type=float, default=20.0,
         help="OpenMVS long-edge / isolated-component filter multiplier (20 is the 2.4.0 default; smaller is more aggressive)",
     )
+    parser.add_argument(
+        "--no-free-space-support", action="store_true",
+        help="Disable OpenMVS free-space support (enabled by default for this comparison rebuild)",
+    )
     args = parser.parse_args()
     session_dir = args.data_root.expanduser().resolve() / args.session
 
@@ -297,6 +307,7 @@ def main() -> int:
         output_tag=args.output_tag,
         backup_name=args.backup_name,
         remove_spurious=args.remove_spurious,
+        free_space_support=not args.no_free_space_support,
     )
     return 0
 

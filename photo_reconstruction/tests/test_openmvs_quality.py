@@ -39,3 +39,11 @@ def test_texture_exports_use_seam_leveling():
     options = texture_mesh_options()
     assert _value(options, "--global-seam-leveling") == "1"
     assert _value(options, "--local-seam-leveling") == "1"
+
+
+
+def test_reconstruct_mesh_free_space_support_is_explicit_opt_in():
+    default_options = reconstruct_mesh_options()
+    experimental_options = reconstruct_mesh_options(free_space_support=True)
+    assert "--free-space-support" not in default_options
+    assert "--free-space-support" in experimental_options
