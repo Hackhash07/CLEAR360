@@ -506,15 +506,12 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             return
 
         backend, backend_reason = resolve_reconstruction_backend()
-        minimum_photos = 6 if backend == "openmvs" else 2
-        if len(self.selected_image_paths) < minimum_photos:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "More overlapping photographs needed",
-                "The automatic COLMAP + OpenMVS engine needs at least six overlapping "
-                "photographs. Add more views of the same scene.",
+        if backend == "openmvs" and len(self.selected_image_paths) < 6:
+            backend = "native"
+            backend_reason = (
+                "built-in CLEAR360 engine selected automatically because this upload "
+                "has fewer than six photos (COLMAP + OpenMVS needs at least six)"
             )
-            return
 
         self.btn_start.setEnabled(False)
         self.btn_add_photos.setEnabled(False)
