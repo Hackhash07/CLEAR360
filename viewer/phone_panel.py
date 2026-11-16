@@ -708,9 +708,12 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             or {}
         )
         if overlap:
+            overlap_status_value = overlap.get("status")
             if not overlap.get("available", False):
                 overlap_status = "NOT AVAILABLE"
-            elif overlap.get("component_count", 0) > 1:
+            elif overlap_status_value == "insufficient":
+                overlap_status = "INSUFFICIENT"
+            elif overlap_status_value == "disconnected":
                 overlap_status = "REVIEW"
             else:
                 overlap_status = "CONNECTED"
