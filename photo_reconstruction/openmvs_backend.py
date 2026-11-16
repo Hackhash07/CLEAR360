@@ -13,6 +13,7 @@ from typing import Callable, Optional
 
 import numpy as np
 
+from photo_reconstruction.openmvs_assets import copy_mtl_diffuse_maps
 from photo_reconstruction.openmvs_tools import (
     configured_openmvs_root,
     find_openmvs_executable,
@@ -195,7 +196,8 @@ class OpenMVSBackend:
         self._run(
             [reconstruct, "-i", str(dense_scene), "-o", str(mesh_scene),
              "--archive-type", "2", "--max-threads", str(threads),
-             "--close-holes", "0", "--smooth", "0"],
+             # Clean long unsupported triangles and close only small boundary loops.
+             "--remove-spurious", "4", "--close-holes", "30", "--smooth", "2"],
             work, log_file, progress_cb, 80, "Reconstructing triangular surface mesh...",
         )
         mesh_ply = work / "scene_mesh.ply"
@@ -207,8 +209,8 @@ class OpenMVSBackend:
             [refine, "-i", str(mesh_scene), "-m", str(mesh_ply), "-o", str(refined_scene),
              "--archive-type", "2", "--max-threads", str(threads),
              "--resolution-level", "1", "--min-resolution", "320",
-             "--max-views", "4", "--decimate", "1", "--close-holes", "0",
-             "--scales", "1", "--reduce-memory", "1"],
+             "--max-views", "4", "--decimate", "1", "--close-holes", "30",
+             "--scales", "2", "--reduce-memory", "1"],
             work, log_file, progress_cb, 86, "Refining mesh geometry...",
         )
         texture_options = [
@@ -262,35 +264,28 @@ class OpenMVSBackend:
             shutil.copy2(atlas, mesh_dir / target_name)
             atlas_name_map[atlas.name] = target_name
 
-        if texture_mtl.exists():
-            # Keep every MTL map_Kd reference valid after renaming/copying atlases.
-            rewritten_lines = []
-            for line in texture_mtl.read_text(
-                encoding="utf-8", errors="replace"
-            ).splitlines():
-                stripped = line.lstrip()
-                if stripped.lower().startswith("map_kd "):
-                    tokens = stripped.split()
-                    original_name = Path(tokens[-1]).name
-                    target_name = atlas_name_map.get(original_name)
-                    if target_name:
-                        indent = line[: len(line) - len(stripped)]
-                        line = f"{indent}map_Kd {target_name}"
-                rewritten_lines.append(line)
-            (mesh_dir / "scene_mesh.mtl").write_text(
-                "\n".join(rewritten_lines) + "\n", encoding="utf-8"
-            )
+        if not texture_mtl.exists():
+            raise RuntimeError("OpenMVS OBJ export did not create scene_textured.mtl.")
 
-            # Keep the copied OBJ linked to the material file copied beside it.
-            obj_lines = []
-            for line in final_obj.read_text(
-                encoding="utf-8", errors="replace"
-            ).splitlines():
-                if line.lstrip().lower().startswith("mtllib "):
-                    indent = line[: len(line) - len(line.lstrip())]
-                    line = f"{indent}mtllib scene_mesh.mtl"
-                obj_lines.append(line)
-            final_obj.write_text("\n".join(obj_lines) + "\n", encoding="utf-8")
+        # OBJ export writes its own JPEG diffuse maps. The PNGs above belong to
+        # the separate GLB export and are not necessarily the maps referenced by
+        # the OBJ's MTL. Copy every map_Kd asset and rewrite it relative to MTL.
+        copy_mtl_diffuse_maps(
+            texture_mtl,
+            mesh_dir,
+            output_name="scene_mesh.mtl",
+        )
+
+        # Keep the copied OBJ linked to the material file copied beside it.
+        obj_lines = []
+        for line in final_obj.read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines():
+            if line.lstrip().lower().startswith("mtllib "):
+                indent = line[: len(line) - len(line.lstrip())]
+                line = f"{indent}mtllib scene_mesh.mtl"
+            obj_lines.append(line)
+        final_obj.write_text("\n".join(obj_lines) + "\n", encoding="utf-8")
 
         orientation = None
         estimated_up = estimate_world_up(images_txt)
