@@ -51,6 +51,48 @@ class PhotoSetQualityAuditor:
                 })
         return cls.audit(records)
 
+    @staticmethod
+    def merge_source_camera_metadata(
+        actual_report: Mapping[str, Any],
+        source_report: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Preserve original EXIF camera metadata after format conversion.
+
+        The worker may convert HEIC/PNG images to JPEG for COLMAP. Image pixels
+        remain usable, but that conversion can remove EXIF. Re-audit the exact
+        working files for readability/quality while retaining stronger camera
+        metadata already extracted from the original uploaded files.
+        """
+        merged = dict(actual_report)
+        if not source_report:
+            return merged
+
+        actual_camera = dict(actual_report.get("camera") or {})
+        source_camera = dict(source_report.get("camera") or {})
+        if source_camera:
+            camera = dict(actual_camera)
+            camera.update(source_camera)
+            camera["mixed_lenses_detected"] = bool(
+                actual_camera.get("mixed_lenses_detected", False)
+                or source_camera.get("mixed_lenses_detected", False)
+            )
+            camera["warnings"] = list(dict.fromkeys(
+                list(actual_camera.get("warnings") or [])
+                + list(source_camera.get("warnings") or [])
+            ))
+            camera["metadata_available_count"] = max(
+                int(actual_camera.get("metadata_available_count", 0) or 0),
+                int(source_camera.get("metadata_available_count", 0) or 0),
+            )
+            merged["camera"] = camera
+
+        merged["warnings"] = list(dict.fromkeys(
+            list(actual_report.get("warnings") or [])
+            + list(source_report.get("warnings") or [])
+        ))
+        merged["source_camera_metadata_preserved"] = bool(source_camera)
+        return merged
+
     @classmethod
     def audit(cls, records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         warnings: list[str] = []
