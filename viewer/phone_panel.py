@@ -601,8 +601,8 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             answer = QtWidgets.QMessageBox.question(
                 self,
                 "Review uploaded photographs",
-                "CLEAR360 found issues that may reduce reconstruction quality:\\n\\n"
-                f"{details}\\n\\nProceed with reconstruction anyway?",
+                "CLEAR360 found issues that may reduce reconstruction quality:\n\n"
+                f"{details}\n\nProceed with reconstruction anyway?",
                 QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
                 QtWidgets.QMessageBox.No,
             )
