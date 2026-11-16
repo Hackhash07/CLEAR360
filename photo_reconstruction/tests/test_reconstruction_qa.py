@@ -140,6 +140,7 @@ def test_reconstruction_report_preserves_backend_independent_mesh_quality():
         "warnings": ["Inspect disconnected components."],
     }
     camera_overlap = {"available": True, "status": "connected", "warnings": []}
+    photo_set = {"status": "review", "can_reconstruct": True, "warnings": ["One blurry image."]}
     report = QualityReportGenerator.generate_report(
         session_id="session_test",
         uploaded_count=6,
@@ -153,10 +154,13 @@ def test_reconstruction_report_preserves_backend_independent_mesh_quality():
         scale_info={"is_calibrated": False},
         mesh_quality=mesh_quality,
         camera_overlap=camera_overlap,
+        photo_set=photo_set,
     )
 
     assert report["mesh_quality"] == mesh_quality
     assert report["camera_overlap"] == camera_overlap
+    assert report["photo_set"] == photo_set
+    assert report["diagnostics"]["photo_set_warnings"] == photo_set["warnings"]
     assert report["image_counts"]["registered"] == 5
 
 def test_missing_reprojection_residuals_cannot_receive_optimal_grade():
