@@ -45,18 +45,28 @@ class ImageQualityAssessor:
           - recommendations: List[str]
         """
         H, W = rgb_image.shape[:2]
+        if rgb_image.ndim != 3 or rgb_image.shape[2] != 3 or H < 2 or W < 2:
+            raise ValueError("Image quality assessment expects an RGB image with at least 2x2 pixels.")
         gray = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2GRAY)
 
         recommendations = []
 
         # 1. Blur Detection (Laplacian Variance)
-        # Resize to standard width for scale-invariant blur measurement
-        target_w = 1280
-        scale = target_w / float(W)
+        # Bound the longest side, not the width: portrait images must receive
+        # the same analysis scale as landscape images.
+        target_max_dimension = 1280
+        scale = min(1.0, target_max_dimension / float(max(H, W)))
         if scale < 1.0:
-            gray_scaled = cv2.resize(gray, (target_w, int(H * scale)), interpolation=cv2.INTER_AREA)
+            analysis_width = max(2, int(round(W * scale)))
+            analysis_height = max(2, int(round(H * scale)))
+            gray_scaled = cv2.resize(
+                gray,
+                (analysis_width, analysis_height),
+                interpolation=cv2.INTER_AREA,
+            )
         else:
             gray_scaled = gray
+            analysis_height, analysis_width = gray_scaled.shape[:2]
 
         laplacian = cv2.Laplacian(gray_scaled, cv2.CV_64F)
         blur_score = float(laplacian.var())
@@ -97,10 +107,13 @@ class ImageQualityAssessor:
         detector = cv2.FastFeatureDetector_create(threshold=25)
         kps = detector.detect(gray_scaled)
         kp_count = len(kps)
+        analysis_pixels = max(1, analysis_width * analysis_height)
+        reference_pixels = 1280 * 720
+        normalized_kp_count = float(kp_count * reference_pixels / analysis_pixels)
 
-        if kp_count >= cls.MIN_KEYPOINTS_GOOD:
+        if normalized_kp_count >= cls.MIN_KEYPOINTS_GOOD:
             feat_subscore = 100.0
-        elif kp_count >= cls.MIN_KEYPOINTS_WARN:
+        elif normalized_kp_count >= cls.MIN_KEYPOINTS_WARN:
             feat_subscore = 60.0
             recommendations.append("Moderate feature density. Ensure surfaces contain visible visual texture.")
         else:
@@ -128,6 +141,13 @@ class ImageQualityAssessor:
             "exposure_mean": round(mean_exp, 1),
             "clipping_ratio": round(clipping_ratio, 3),
             "keypoint_count": kp_count,
+            "normalized_keypoint_count": round(normalized_kp_count, 1),
+            "analysis_dimensions": {
+                "width": analysis_width,
+                "height": analysis_height,
+                "max_dimension": max(analysis_width, analysis_height),
+                "scale_from_input": round(scale, 4),
+            },
             "recommendations": recommendations,
         }
 
