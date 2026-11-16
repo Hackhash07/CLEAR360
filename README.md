@@ -66,6 +66,8 @@ CLEAR360 automatically:
 - Falls back to the built-in **CLEAR360 Python / Open3D** reconstruction pipeline when the external tools are unavailable.
 - Uses the balanced `standard` quality preset to keep memory use and runtime reasonable on laptop hardware.
 - Saves a reconstruction session, textured OBJ/MTL/PNG for the built-in viewer, and a textured GLB for Blender/external tools when using OpenMVS.
+- Estimates the scene's vertical axis from registered COLMAP camera poses and aligns OBJ, PLY, dense cloud and GLB exports to +Z when the camera-up directions are consistent.
+- The built-in OBJ loader resolves independent vertex/UV/normal indices and combines multiple diffuse material atlases, so UV seams do not silently fall back to a grey mesh.
 
 For automatic COLMAP + OpenMVS detection, install the tools locally and set the OpenMVS executable directory:
 
@@ -77,6 +79,13 @@ export CLEAR360_COLMAP_BIN="$(command -v colmap)"
 The backend selector checks for COLMAP and all required OpenMVS executables before starting. Its decision is shown in the reconstruction status label. The OpenMVS processing log is saved at `data/phone_reconstruction/<session>/openmvs_pipeline.log`.
 
 The OpenMVS result remains in uncalibrated photogrammetry units. The automatic workflow does not request a manually supplied scale measurement.
+
+For a session created before camera-up alignment was added, update the code and run the one-time post-process helper below. It aligns the newest saved OpenMVS session without rerunning dense reconstruction; original OBJ/PLY/GLB files are backed up with a `.before_orientation` suffix:
+
+```bash
+python scripts/align_openmvs_session.py
+```
+
 
 **Capture requirements still matter:** photographs must show the same static scene from physically different viewpoints, with strong visual overlap. Each important surface should be visible in multiple images. Six unrelated views or photographs taken from one position by only rotating the camera do not provide enough parallax for a complete 3D model. COLMAP's guidance recommends high overlap, different viewpoints, consistent illumination, and good surface texture. See the [COLMAP reconstruction tutorial](https://colmap.github.io/tutorial.html).
 
