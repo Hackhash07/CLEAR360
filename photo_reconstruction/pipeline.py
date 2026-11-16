@@ -407,7 +407,7 @@ class PhoneReconstructionPipeline:
 
         mesh_quality = audit_reconstruction_outputs(
             mesh_ply,
-            obj_path=mesh_obj if mesh_obj.is_file() else None,
+            obj_path=mesh_obj,
             texturing_report_path=(
                 session_dir / "texturing_report.json"
                 if (session_dir / "texturing_report.json").is_file()
