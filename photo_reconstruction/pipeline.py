@@ -269,12 +269,13 @@ class PhoneReconstructionPipeline:
         sfm = SfMEngine(work_dir=session_dir / "sfm_work", quality_preset=active_preset)
         sfm_res = sfm.run_reconstruction(img_target_dir, progress_cb=update_progress)
 
+        failed_source_names = [
+            original_name_by_sfm_name.get(name, name)
+            for name in sfm_res["failed_images"]
+        ]
+
         if not sfm_res["success"] or sfm_res["registered_count"] < 2:
             update_progress(100, "Reconstruction incomplete: could not register camera poses.")
-            failed_source_names = [
-                original_name_by_sfm_name.get(name, name)
-                for name in sfm_res["failed_images"]
-            ]
             report = QualityReportGenerator.generate_report(
                 session_id=current_session_id,
                 uploaded_count=len(copied_paths),
@@ -477,7 +478,7 @@ class PhoneReconstructionPipeline:
         )
 
         camera_track_ids = {
-            image_name: {
+            original_name_by_sfm_name.get(image_name, image_name): {
                 int(track["point3D_id"])
                 for track in observations
                 if track.get("point3D_id") is not None
@@ -513,7 +514,7 @@ class PhoneReconstructionPipeline:
             session_id=current_session_id,
             uploaded_count=len(copied_paths),
             registered_count=len(camera_poses),
-            failed_images=sfm_res["failed_images"],
+            failed_images=failed_source_names,
             sparse_point_count=len(sparse_pts),
             dense_point_count=len(dense_pts),
             mesh_triangle_count=len(mesh_f),
