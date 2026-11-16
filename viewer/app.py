@@ -354,17 +354,28 @@ class Clear360ViewerWindow(QtWidgets.QMainWindow):
     def _on_phone_mesh_loaded(self, session_id: str, mesh_path: str):
         """Callback when photogrammetry completes."""
         self.viewport.load_external_mesh(mesh_path)
+        # Keep MODE 2 active so the automotive default scene does not overwrite
+        # the newly reconstructed independent scene on the next mode switch.
+        self._set_app_mode("phone")
         self.lbl_status_frame.setText(f"Session: {session_id}")
         self.lbl_status_source.setText("Source: Smartphone Photogrammetry (SfM)")
         if hasattr(self.phone_panel, "set_display_mode"):
-            self.phone_panel.set_display_mode("mesh")
+            from pathlib import Path
+            display_mode = "textured" if Path(mesh_path).suffix.lower() == ".obj" else "mesh"
+            self.phone_panel.set_display_mode(display_mode)
 
     def _on_phone_session_requested(self, session_id: str):
         """Load past photogrammetry session mesh."""
         sess_dir = self.data_loader.data_dir / "phone_reconstruction" / session_id
         mesh_ply = sess_dir / "mesh" / "scene_mesh.ply"
-        if mesh_ply.exists():
+        mesh_obj = sess_dir / "mesh" / "scene_mesh.obj"
+        mesh_glb = sess_dir / "mesh" / "scene_textured.glb"
+        if mesh_obj.exists():
+            self._on_phone_mesh_loaded(session_id, str(mesh_obj))
+        elif mesh_ply.exists():
             self._on_phone_mesh_loaded(session_id, str(mesh_ply))
+        elif mesh_glb.exists():
+            self._on_phone_mesh_loaded(session_id, str(mesh_glb))
         else:
             self.statusBar().showMessage(f"No mesh found in {session_id}", 4000)
 

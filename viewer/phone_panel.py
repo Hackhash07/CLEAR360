@@ -41,6 +41,7 @@ class ReconstructionWorker(QtCore.QThread):
         image_paths: List[Path],
         quality_preset: str,
         reference_distance_m: Optional[float],
+        backend: str = "native",
         parent: Optional[QtCore.QObject] = None,
     ):
         super().__init__(parent)
@@ -48,18 +49,89 @@ class ReconstructionWorker(QtCore.QThread):
         self.image_paths = list(image_paths)
         self.quality_preset = quality_preset
         self.reference_distance_m = reference_distance_m
+        self.backend = backend
 
     def run(self):
         try:
             def progress_callback(pct: int, msg: str):
                 self.progress.emit(pct, msg)
 
-            res = self.pipeline.run_pipeline(
-                image_paths=self.image_paths,
-                quality_preset=self.quality_preset,
-                reference_distance_m=self.reference_distance_m,
-                progress_cb=progress_callback,
-            )
+            if self.backend == "openmvs":
+                from photo_reconstruction.openmvs_backend import OpenMVSBackend
+                import os
+
+                session_dir = self.pipeline.session_manager.create_session()
+                copied = []
+                source_dir = session_dir / "original_images"
+                import shutil
+                from PIL import Image
+
+                for index, source in enumerate(self.image_paths):
+                    if not source.is_file():
+                        continue
+                    suffix = source.suffix.lower()
+                    out_suffix = suffix if suffix in {".jpg", ".jpeg", ".png"} else ".jpg"
+                    destination = source_dir / f"{source.stem}{out_suffix}"
+                    if destination.exists():
+                        destination = source_dir / f"{source.stem}_{index:03d}{out_suffix}"
+
+                    if out_suffix == suffix:
+                        shutil.copy2(source, destination)
+                    else:
+                        rgb, _ = ImageLoader.load_image(source)
+                        Image.fromarray(rgb).save(
+                            destination, format="JPEG", quality=95, optimize=True
+                        )
+                    copied.append(destination)
+
+                openmvs_dir = os.environ.get("CLEAR360_OPENMVS_DIR")
+                colmap_bin = os.environ.get("CLEAR360_COLMAP_BIN")
+                backend_runner = OpenMVSBackend(
+                    openmvs_dir=Path(openmvs_dir) if openmvs_dir else None,
+                    colmap_bin=colmap_bin,
+                )
+                result = backend_runner.run(
+                    copied,
+                    session_dir=session_dir,
+                    quality_preset=self.quality_preset,
+                    progress_cb=progress_callback,
+                )
+                import json
+                from datetime import datetime
+
+                report = {
+                    "session_id": session_dir.name,
+                    "backend": "COLMAP + OpenMVS",
+                    "uploaded_count": len(copied),
+                    "registered_count": None,
+                    "notes": "COLMAP + OpenMVS reconstruction completed.",
+                    "mesh_ply": str(result["mesh_ply"]),
+                    "mesh_obj": str(result.get("mesh_obj", "")),
+                    "mesh_glb": str(result["mesh_glb"]),
+                    "dense_ply": str(result["dense_ply"]),
+                    "log_file": str(result["log_file"]),
+                    "created_at": datetime.now().astimezone().isoformat(),
+                }
+                (session_dir / "report.json").write_text(
+                    json.dumps(report, indent=2), encoding="utf-8"
+                )
+                res = {
+                    "success": True,
+                    "session_id": session_dir.name,
+                    "session_dir": session_dir,
+                    "mesh_ply": result["mesh_ply"],
+                    "mesh_viewer": result.get("mesh_obj", result["mesh_ply"]),
+                    "mesh_glb": result["mesh_glb"],
+                    "dense_ply": result["dense_ply"],
+                    "report": report,
+                }
+            else:
+                res = self.pipeline.run_pipeline(
+                    image_paths=self.image_paths,
+                    quality_preset=self.quality_preset,
+                    reference_distance_m=self.reference_distance_m,
+                    progress_cb=progress_callback,
+                )
 
             if res.get("success", False):
                 self.finished_success.emit(res)
@@ -198,6 +270,18 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         grp_set_layout.addWidget(lbl_qual)
         grp_set_layout.addWidget(self.combo_quality)
 
+        lbl_backend = QtWidgets.QLabel("Reconstruction Backend:")
+        lbl_backend.setStyleSheet("font-size: 11px; font-weight: bold;")
+        self.combo_backend = QtWidgets.QComboBox()
+        self.combo_backend.addItem("CLEAR360 (Python / Open3D)", "native")
+        self.combo_backend.addItem("COLMAP + OpenMVS (Textured GLB)", "openmvs")
+        self.combo_backend.setToolTip(
+            "OpenMVS requires COLMAP and the OpenMVS command-line tools installed locally. "
+            "The Python backend remains the default."
+        )
+        grp_set_layout.addWidget(lbl_backend)
+        grp_set_layout.addWidget(self.combo_backend)
+
         # Metric scale calibration
         self.chk_scale = QtWidgets.QCheckBox("Apply Known Metric Distance")
         self.chk_scale.setChecked(False)  # Unchecked by default
@@ -220,6 +304,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         scale_row.addWidget(lbl_dist)
         scale_row.addWidget(self.spin_scale)
         grp_set_layout.addLayout(scale_row)
+        self.combo_backend.currentIndexChanged.connect(self._on_backend_changed)
 
         layout.addWidget(grp_settings)
 
@@ -349,7 +434,9 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
 
         count = len(self.selected_image_paths)
         self.lbl_photo_count.setText(f"{count} photographs selected (min 2, rec 4–40+)")
-        if count > 0 and self.list_photos.currentRow() == -1:
+        if self.combo_backend.currentData() == "openmvs" and count < 6:
+            self.lbl_status.setText("COLMAP + OpenMVS needs at least 6 overlapping photos. Add more viewpoints.")
+        elif count > 0 and self.list_photos.currentRow() == -1:
             self.list_photos.setCurrentRow(0)
 
     def _on_clear_photos_clicked(self):
@@ -439,18 +526,42 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.lbl_meta_quality.setStyleSheet("font-weight: bold; color: #94a3b8;")
 
     def _on_scale_toggled(self, checked: bool):
-        """Enable or disable metric reference distance spinbox."""
-        self.spin_scale.setEnabled(checked)
+        """Enable the scale field only when the selected backend supports calibration."""
+        self.spin_scale.setEnabled(
+            checked and self.combo_backend.currentData() != "openmvs"
+        )
+
+    def _on_backend_changed(self, _index: int = -1):
+        """Keep backend-specific options explicit in the upload panel."""
+        is_openmvs = self.combo_backend.currentData() == "openmvs"
+        self.chk_scale.setEnabled(not is_openmvs)
+        self.spin_scale.setEnabled(not is_openmvs and self.chk_scale.isChecked())
+        if is_openmvs:
+            self.chk_scale.setToolTip(
+                "Metric scale calibration is currently available in the CLEAR360 Python backend only."
+            )
+        else:
+            self.chk_scale.setToolTip(
+                "Only enable if you have two identifiable scene points separated by this exact distance. "
+                "Leave unchecked to preserve natural unscaled photogrammetry coordinates."
+            )
 
     def _on_start_clicked(self):
         """Trigger photogrammetry pipeline in dedicated background worker thread."""
-        if len(self.selected_image_paths) < 2:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Insufficient Photographs",
-                "Please add at least 2 overlapping smartphone photographs to begin 3D reconstruction.\n\n"
-                "Tip: 4 photographs covering the surround view or 8–40+ overlapping views yield optimal results.",
-            )
+        backend = self.combo_backend.currentData() or "native"
+        minimum_photos = 6 if backend == "openmvs" else 2
+        if len(self.selected_image_paths) < minimum_photos:
+            if backend == "openmvs":
+                message = (
+                    "COLMAP + OpenMVS requires at least 6 overlapping photographs. "
+                    "Capture a walk-around sequence with substantial shared scene content."
+                )
+            else:
+                message = (
+                    "Please add at least 2 overlapping smartphone photographs to begin 3D reconstruction.\n\n"
+                    "Tip: 4 photographs covering the surround view or 8–40+ overlapping views yield optimal results."
+                )
+            QtWidgets.QMessageBox.warning(self, "Insufficient Photographs", message)
             return
 
         self.btn_start.setEnabled(False)
@@ -477,6 +588,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             image_paths=self.selected_image_paths,
             quality_preset=preset,
             reference_distance_m=ref_dist,
+            backend=backend,
             parent=self,
         )
         self.worker.progress.connect(self._update_progress_ui)
@@ -506,10 +618,15 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.prog_bar.setValue(100)
 
         session_id = str(res.get("session_id", ""))
-        mesh_path = str(res.get("mesh_ply", ""))
+        # The desktop viewport can display the OpenMVS textured OBJ/atlas
+        # directly; keep the GLB in the session for export and external viewers.
+        mesh_path = str(res.get("mesh_viewer") or res.get("mesh_ply", ""))
         self.current_session_id = session_id
 
-        self.lbl_status.setText(f"Reconstruction successful! Saved to {session_id}.")
+        backend_label = "COLMAP + OpenMVS" if res.get("mesh_glb") else "CLEAR360 Python"
+        self.lbl_status.setText(
+            f"Reconstruction successful! {backend_label} backend: {session_id}."
+        )
         self.lbl_status.setStyleSheet("font-size: 10px; color: #22c55e;")
         self._refresh_session_list()
 

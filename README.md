@@ -57,6 +57,25 @@ Executes:
 
 ---
 
+## Photo Reconstruction Backend Selection
+
+In **MODE 2: Phone Photo 3D World**, select one of two reconstruction backends:
+
+- **CLEAR360 (Python / Open3D)** — the existing default reconstruction pipeline.
+- **COLMAP + OpenMVS** — optional external SfM/MVS backend that exports a textured GLB and a PLY mesh into the session folder.
+
+For the OpenMVS backend, install COLMAP and OpenMVS locally, then set the environment variable to the directory containing the OpenMVS executables (including `InterfaceCOLMAP`):
+
+```bash
+export CLEAR360_OPENMVS_DIR="$HOME/Applications/OpenMVS-2.4.0"
+```
+
+The COLMAP executable must also be available on `PATH`, or set `CLEAR360_COLMAP_BIN` to its full path. The backend runs in the application's reconstruction worker thread and writes its log to `data/phone_reconstruction/<session>/openmvs_pipeline.log`. Install the GLB loader dependency with `pip install -e .` (or `pip install trimesh`).
+
+The OpenMVS backend exports a textured OBJ/PNG atlas for the built-in desktop viewer and a textured GLB for Blender or other 3D tools. Its result remains in uncalibrated photogrammetry units; metric scale calibration is currently supported by the CLEAR360 Python backend only.
+
+Use photographs captured with physical camera movement and substantial overlap. A collection of six cameras facing outwards from fixed positions around a vehicle does **not** automatically provide the same parallax as a walk-around photo set; for the eventual six-camera rig, calibration, synchronization, and cross-camera overlap must be validated before expecting a complete fused 3D world.
+
 ## 4. Documentation Reports
 
 - **M7.2 Photorealistic Viewer Report**: [docs/m7_2_photorealistic_report.md](docs/m7_2_photorealistic_report.md)

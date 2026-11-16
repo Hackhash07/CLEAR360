@@ -626,35 +626,155 @@ class Clear360Viewport(QtWidgets.QWidget):
 
     def load_external_mesh(self, mesh_path: str):
         """
-        Load and display an independent photogrammetry mesh (M7.3).
-        Preserves the reconstruction's native coordinate frame without forcing into vehicle coords.
+        Load an external photogrammetry mesh from PLY or a textured GLB.
+        The GLB path is preferred for OpenMVS outputs because it embeds its atlas.
         """
         from pathlib import Path
         import open3d as o3d
-        p = Path(mesh_path)
-        if not p.exists():
+
+        path = Path(mesh_path)
+        if not path.exists():
+            self.canvas.native.setToolTip(f"Reconstruction output not found: {path}")
             return
-        mesh = o3d.io.read_triangle_mesh(str(p))
+
+        if path.suffix.lower() == ".obj":
+            # The OpenMVS backend writes UVs in the OBJ and the atlas at
+            # mesh/scene_mesh.png. Use VisPy's texture filter for this path.
+            try:
+                from vispy.visuals.filters import TextureFilter
+                mesh = o3d.io.read_triangle_mesh(str(path))
+                verts = np.asarray(mesh.vertices, dtype=np.float32)
+                faces = np.asarray(mesh.triangles, dtype=np.uint32)
+                atlas = path.with_name("scene_mesh.png")
+                if len(verts) and len(faces) and atlas.exists():
+                    obj_uvs = []
+                    obj_faces = []
+                    uv_row_count = 0
+                    with path.open("r", encoding="utf-8", errors="replace") as handle:
+                        for line in handle:
+                            if line.startswith("vt "):
+                                vals = line.split()[1:3]
+                                obj_uvs.append([float(vals[0]), float(vals[1])])
+                            elif line.startswith("f "):
+                                row = []
+                                for item in line.split()[1:]:
+                                    bits = item.split("/")
+                                    if len(bits) > 1 and bits[1]:
+                                        row.append(int(bits[1]) - 1)
+                                if len(row) == 3:
+                                    obj_faces.append(row)
+                                    uv_row_count += 1
+                    if len(obj_uvs) and len(obj_faces) == len(faces):
+                        # Expand vertices by per-corner UV indices where needed;
+                        # OBJ UV indexing is independent of OBJ vertex indexing.
+                        face_uv = np.asarray(obj_faces, dtype=np.int64)
+                        if face_uv.min() < 0 or face_uv.max() >= len(obj_uvs):
+                            raise ValueError("OBJ contains out-of-range texture coordinates.")
+                        expanded_vertices = verts[faces.reshape(-1)]
+                        expanded_uv = np.asarray(obj_uvs, dtype=np.float32)[face_uv.reshape(-1)]
+                        expanded_faces = np.arange(len(expanded_vertices), dtype=np.uint32).reshape(-1, 3)
+                        tex_bgr = cv2.imread(str(atlas), cv2.IMREAD_COLOR)
+                        if tex_bgr is not None:
+                            tex_rgb = cv2.cvtColor(tex_bgr, cv2.COLOR_BGR2RGB)
+                            self.visual_textured_mesh.set_data(
+                                vertices=expanded_vertices, faces=expanded_faces, color="white"
+                            )
+                            if self.texture_filter is None:
+                                self.texture_filter = TextureFilter(
+                                    texture=tex_rgb, texcoords=expanded_uv
+                                )
+                                self.visual_textured_mesh.attach(self.texture_filter)
+                            else:
+                                self.texture_filter.texture = tex_rgb
+                                self.texture_filter.texcoords = expanded_uv
+                            self.visual_textured_mesh.visible = True
+                            self.visual_surface_mesh.visible = False
+                            center = np.mean(verts, axis=0)
+                            extent = float(np.max(np.linalg.norm(verts - center, axis=1)))
+                            self.view.camera.center = tuple(center)
+                            self.view.camera.distance = max(4.0, extent * 2.2)
+                            self.view.camera.elevation = 25.0
+                            self.view.camera.azimuth = -45.0
+                            self._hide_non_scene_overlays()
+                            self.request_update()
+                            return
+            except Exception as exc:
+                print(f"Notice: OBJ atlas preview fallback: {exc}")
+            # If no UV atlas is available, let the generic mesh loader try the OBJ.
+
+        if path.suffix.lower() in {".glb", ".gltf"}:
+            try:
+                import trimesh
+                loaded = trimesh.load(str(path), force="scene", process=False)
+                if isinstance(loaded, trimesh.Scene):
+                    # Flatten the scene graph so node transforms are applied before display.
+                    try:
+                        loaded = loaded.to_geometry()
+                    except Exception:
+                        geometries = []
+                        for node_name in loaded.graph.nodes_geometry:
+                            transform, geometry_name = loaded.graph.get(node_name)
+                            geometry = loaded.geometry[geometry_name].copy()
+                            geometry.apply_transform(transform)
+                            geometries.append(geometry)
+                        loaded = trimesh.util.concatenate(geometries)
+                mesh = loaded
+                if not hasattr(mesh, "vertices") or len(mesh.vertices) == 0:
+                    raise ValueError("GLB contains no mesh geometry.")
+                verts = np.asarray(mesh.vertices, dtype=np.float32)
+                faces = np.asarray(mesh.faces, dtype=np.uint32)
+                visual = getattr(mesh, "visual", None)
+                colors = None
+                if visual is not None and hasattr(visual, "vertex_colors"):
+                    vc = np.asarray(visual.vertex_colors)
+                    if len(vc) == len(verts):
+                        colors = vc.astype(np.float32) / (255.0 if vc.max(initial=0) > 1.0 else 1.0)
+                if colors is None or colors.shape[1] < 3:
+                    colors = np.ones((len(verts), 4), dtype=np.float32) * 0.78
+                elif colors.shape[1] == 3:
+                    colors = np.hstack([colors[:, :3], np.ones((len(colors), 1), dtype=np.float32)])
+                self.visual_surface_mesh.set_data(vertices=verts, faces=faces, vertex_colors=colors)
+                self.visual_surface_mesh.visible = True
+                self.visual_textured_mesh.visible = False
+                center = np.mean(verts, axis=0)
+                extent = float(np.max(np.linalg.norm(verts - center, axis=1)))
+                self.view.camera.center = tuple(center)
+                self.view.camera.distance = max(4.0, extent * 2.2)
+                self.view.camera.elevation = 25.0
+                self.view.camera.azimuth = -45.0
+                self._hide_non_scene_overlays()
+                self.request_update()
+                return
+            except Exception as exc:
+                print(f"Notice: GLB preview fallback: {exc}")
+                fallback_ply = path.with_suffix(".ply")
+                if fallback_ply.exists():
+                    path = fallback_ply
+                else:
+                    self.canvas.native.setToolTip(
+                        "GLB preview requires trimesh. Install it with: pip install trimesh"
+                    )
+                    return
+
+        mesh = o3d.io.read_triangle_mesh(str(path))
         if len(mesh.vertices) == 0:
             return
 
         verts = np.asarray(mesh.vertices, dtype=np.float32)
         faces = np.asarray(mesh.triangles, dtype=np.uint32)
         cols = np.asarray(mesh.vertex_colors, dtype=np.float32)
-
         if len(cols) == 0:
             cols = np.ones((len(verts), 4), dtype=np.float32) * 0.75
         elif cols.shape[1] == 3:
-            alpha = np.ones((len(cols), 1), dtype=np.float32)
-            cols = np.hstack([cols, alpha])
+            cols = np.hstack([cols, np.ones((len(cols), 1), dtype=np.float32)])
 
         self.visual_surface_mesh.set_data(vertices=verts, faces=faces, vertex_colors=cols)
         self.visual_surface_mesh.visible = True
         self.visual_textured_mesh.visible = False
-        self.visual_vehicle.visible = False  # Independent photogrammetry environment
+        self.visual_vehicle.visible = False
 
-        # Attempt to load high-resolution projective texture atlas (M7.3.2)
-        session_dir = p.parent.parent
+        # Preserve the native CLEAR360 Python backend's textured OBJ/PNG output.
+        session_dir = path.parent.parent
         atlas_png = session_dir / "mesh" / "scene_mesh.png"
         obj_file = session_dir / "mesh" / "scene_mesh.obj"
         if atlas_png.exists() and obj_file.exists():
@@ -663,9 +783,8 @@ class Clear360Viewport(QtWidgets.QWidget):
                 tex_bgr = cv2.imread(str(atlas_png))
                 if tex_bgr is not None:
                     tex_rgb = cv2.cvtColor(tex_bgr, cv2.COLOR_BGR2RGB)
-                    # Load vertex, UV coordinates and smooth normals from OBJ
                     obj_v, obj_vt, obj_vn, obj_f = [], [], [], []
-                    with open(obj_file, "r") as f_obj:
+                    with obj_file.open("r", encoding="utf-8", errors="replace") as f_obj:
                         for line in f_obj:
                             if line.startswith("v "):
                                 obj_v.append([float(x) for x in line.split()[1:4]])
@@ -682,10 +801,7 @@ class Clear360Viewport(QtWidgets.QWidget):
                         t_uvs = np.asarray(obj_vt, dtype=np.float32)
                         t_norms = np.asarray(obj_vn, dtype=np.float32) if len(obj_vn) == len(obj_v) else None
                         self.visual_textured_mesh.set_data(
-                            vertices=t_verts,
-                            faces=t_faces,
-                            vertex_normals=t_norms,
-                            color="white"
+                            vertices=t_verts, faces=t_faces, vertex_normals=t_norms, color="white"
                         )
                         if self.texture_filter is None:
                             self.texture_filter = TextureFilter(texture=tex_rgb, texcoords=t_uvs)
@@ -695,8 +811,9 @@ class Clear360Viewport(QtWidgets.QWidget):
                             self.texture_filter.texcoords = t_uvs
                         self.visual_textured_mesh.visible = True
                         self.visual_surface_mesh.visible = False
-            except Exception as e:
-                print(f"Notice: Texture loading fallback to vertex-colored surface mesh: {e}")
+            except Exception as exc:
+                print(f"Notice: Native texture loading fallback to vertex colors: {exc}")
+
         dense_p = session_dir / "dense_cloud" / "dense_cloud.ply"
         if dense_p.exists():
             pcd = o3d.io.read_point_cloud(str(dense_p))
@@ -708,13 +825,21 @@ class Clear360Viewport(QtWidgets.QWidget):
                 else:
                     p_rgba = np.ones((len(p_pts), 4), dtype=np.float32) * 0.8
                 self.visual_cloud.set_data(p_pts, edge_color=p_rgba, face_color=p_rgba, size=1.5)
-                # Keep point cloud hidden by default so continuous surface mesh is cleanly visible
-                self.visual_cloud.visible = False
-            else:
-                self.visual_cloud.visible = False
-        else:
-            self.visual_cloud.visible = False
+        self.visual_cloud.visible = False
 
+        center = np.mean(verts, axis=0)
+        extent = float(np.max(np.linalg.norm(verts - center, axis=1)))
+        self.view.camera.center = tuple(center)
+        self.view.camera.distance = max(4.0, extent * 2.2)
+        self.view.camera.elevation = 25.0
+        self.view.camera.azimuth = -45.0
+        self._hide_non_scene_overlays()
+        self.request_update()
+
+    def _hide_non_scene_overlays(self):
+        """Hide automotive overlays while inspecting an independent photogrammetry scene."""
+        self.visual_vehicle.visible = False
+        self.visual_cloud.visible = False
         self.visual_occ_occupied.visible = False
         self.visual_occ_free.visible = False
         self.visual_occ_unknown.visible = False
@@ -725,12 +850,4 @@ class Clear360Viewport(QtWidgets.QWidget):
         self.visual_envelope.visible = False
         self.visual_grid.visible = True
         self.visual_axes.visible = True
-
-        center = np.mean(verts, axis=0)
-        extent = float(np.max(np.linalg.norm(verts - center, axis=1)))
-        self.view.camera.center = tuple(center)
-        self.view.camera.distance = max(4.0, extent * 2.2)
-        self.view.camera.elevation = 25.0
-        self.view.camera.azimuth = -45.0
-        self.request_update()
 

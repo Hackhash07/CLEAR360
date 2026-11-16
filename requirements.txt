@@ -10,3 +10,4 @@ PyYAML>=6.0
 Pillow>=10.3
 OpenEXR>=3.2
 Imath>=2.5
+trimesh>=4.4
