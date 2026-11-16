@@ -66,27 +66,49 @@ class ReconstructionWorker(QtCore.QThread):
 
                 session_dir = self.pipeline.session_manager.create_session()
                 copied = []
-                source_dir = session_dir / "original_images"
-                import shutil
-                from PIL import Image
+                source_dir = session_dir / "source_uploads"
+                working_dir = session_dir / "original_images"
+                from photo_reconstruction.image_preparation import stage_reconstruction_image
 
+                input_manifest = []
+                staging_errors = []
                 for index, source in enumerate(self.image_paths):
-                    if not source.is_file():
-                        continue
-                    suffix = source.suffix.lower()
-                    out_suffix = suffix if suffix in {".jpg", ".jpeg", ".png"} else ".jpg"
-                    destination = source_dir / f"{source.stem}{out_suffix}"
-                    if destination.exists():
-                        destination = source_dir / f"{source.stem}_{index:03d}{out_suffix}"
-
-                    if out_suffix == suffix:
-                        shutil.copy2(source, destination)
-                    else:
+                    try:
                         rgb, _ = ImageLoader.load_image(source)
-                        Image.fromarray(rgb).save(
-                            destination, format="JPEG", quality=95, optimize=True
+                        staged = stage_reconstruction_image(
+                            source,
+                            rgb,
+                            source_dir,
+                            working_dir,
+                            index=index,
                         )
-                    copied.append(destination)
+                        copied.append(Path(staged["sfm_image_path"]))
+                        input_manifest.append({
+                            "original_filename": source.name,
+                            "source_archive": str(
+                                Path(staged["source_archive_path"]).relative_to(session_dir)
+                            ),
+                            "sfm_filename": staged["sfm_filename"],
+                            "working_format": staged["working_format"],
+                            "converted_for_sfm": staged["converted_for_sfm"],
+                        })
+                    except Exception as exc:
+                        staging_errors.append({
+                            "image": source.name,
+                            "reason": str(exc),
+                        })
+
+                (session_dir / "input_manifest.json").write_text(
+                    json.dumps({
+                        "uploaded_count": len(self.image_paths),
+                        "sfm_ready_count": len(copied),
+                        "source_archive_directory": source_dir.name,
+                        "sfm_working_directory": working_dir.name,
+                        "images": input_manifest,
+                        "staging_errors": staging_errors,
+                    }, indent=2),
+                    encoding="utf-8",
+                )
 
                 openmvs_dir = os.environ.get("CLEAR360_OPENMVS_DIR")
                 colmap_bin = os.environ.get("CLEAR360_COLMAP_BIN")
@@ -107,7 +129,15 @@ class ReconstructionWorker(QtCore.QThread):
 
                 registration = result.get("registration", {})
                 mesh_quality = result.get("mesh_quality", {})
-                actual_photo_set_report = result.get("photo_set", self.photo_set_report)
+                actual_photo_set_report = dict(
+                    result.get("photo_set", self.photo_set_report)
+                )
+                if staging_errors:
+                    actual_photo_set_report["staging_errors"] = staging_errors
+                    actual_photo_set_report.setdefault("warnings", []).append(
+                        f"{len(staging_errors)} uploaded image(s) could not be staged for OpenMVS."
+                    )
+                    actual_photo_set_report["status"] = "review"
                 geometry_quality = mesh_quality.get("geometry") or {}
                 mesh_warnings = mesh_quality.get("warnings", [])
                 registration_warnings = registration.get("warnings", [])
