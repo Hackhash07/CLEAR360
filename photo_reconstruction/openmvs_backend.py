@@ -104,7 +104,7 @@ def _colmap_registration_summary(
         for image_id in registered_ids
     }
     camera_overlap = summarize_camera_overlap(
-        sorted(registered_ids and image_id_to_name.values() or []),
+        sorted(image_id_to_name.values()),
         pairwise_named,
         per_camera_named,
         minimum_shared_tracks=15,
