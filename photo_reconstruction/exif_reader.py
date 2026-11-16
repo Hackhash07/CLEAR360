@@ -109,6 +109,12 @@ class ExifReader:
             "focal_length_35mm": f_35mm,
             "estimated_fx": float(fx),
             "estimated_fy": float(fy),
+            # Normalize focal length by the longest image dimension so captures
+            # from the same lens at different resolutions are comparable.
+            "normalized_fx": float(fx / max_dim),
+            "normalized_fy": float(fy / max_dim),
+            "image_width": int(width),
+            "image_height": int(height),
             "cx": float(cx),
             "cy": float(cy),
             "has_exif": bool(raw_exif),
@@ -132,7 +138,23 @@ class ExifReader:
         if len(camera_infos) < 2:
             return False, warnings
 
-        fx_values = [info["estimated_fx"] for info in camera_infos]
+        fx_values = [
+            float(
+                info.get(
+                    "normalized_fx",
+                    info["estimated_fx"]
+                    / max(
+                        1,
+                        int(info.get("image_width", 1)),
+                        int(info.get("image_height", 1)),
+                    ),
+                )
+            )
+            for info in camera_infos
+            if float(info.get("normalized_fx", info.get("estimated_fx", 0.0))) > 0
+        ]
+        if len(fx_values) < 2:
+            return False, warnings
         fx_min, fx_max = min(fx_values), max(fx_values)
 
         # If focal length varies by more than 20%, flag mixed lenses
