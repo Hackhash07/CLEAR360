@@ -16,8 +16,13 @@ def densify_common_options(
     On the user's CPU-only 2.4.0 build, defaults are five source views and
     three PatchMatch iterations; geometric consistency defaults to two.
     Keep at least two agreeing views during fusion to avoid noisy one-view
-    geometry. postprocess-dmaps=2 only interpolates short gaps whose boundary
-    depths are sufficiently similar; it does not fill large unknown regions.
+    geometry. OpenMVS 2.4.0 defines postprocess-dmaps as a bit mask:
+    1=remove small speckles, 2=interpolate short gaps, 4=adjust confidence.
+    The CPU build normally skips confidence recalibration because it requires
+    an extra full-resolution pass; bit 8 forces that confidence pass on CPU.
+    This profile defaults to bit 2 only: conservative short-gap interpolation.
+    Bit 8 is intentionally left off until the Mac session's memory/runtime
+    behaviour is measured.
     """
     if resolution_level < 0 or max_resolution <= 0 or max_threads < 1:
         raise ValueError("Invalid dense reconstruction resource settings.")
