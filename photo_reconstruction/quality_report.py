@@ -26,7 +26,7 @@ class QualityReportGenerator:
         sparse_point_count: int,
         dense_point_count: int,
         mesh_triangle_count: int,
-        reprojection_error_px: float,
+        reprojection_error_px: Optional[float],
         processing_time_s: float,
         scale_info: Dict[str, Any],
         image_quality_summary: Optional[Dict[str, Any]] = None,
@@ -39,7 +39,11 @@ class QualityReportGenerator:
         """
         completeness_pct = round((registered_count / max(1, uploaded_count)) * 100.0, 1)
 
-        if registered_count >= uploaded_count and reprojection_error_px < 1.5:
+        if (
+            registered_count >= uploaded_count
+            and reprojection_error_px is not None
+            and reprojection_error_px < 1.5
+        ):
             recon_grade = "OPTIMAL"
         elif registered_count >= 2 and completeness_pct >= 60.0:
             recon_grade = "ACCEPTABLE"
@@ -64,7 +68,10 @@ class QualityReportGenerator:
                 "sparse_points": sparse_point_count,
                 "dense_points": dense_point_count,
                 "mesh_triangles": mesh_triangle_count,
-                "mean_reprojection_error_px": round(reprojection_error_px, 3),
+                "mean_reprojection_error_px": (
+                    round(reprojection_error_px, 3)
+                    if reprojection_error_px is not None else None
+                ),
             },
             "scale_calibration": scale_info,
             "performance": {
