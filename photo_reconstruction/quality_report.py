@@ -33,6 +33,7 @@ class QualityReportGenerator:
         notes: Optional[str] = None,
         quality_preset: Optional[str] = None,
         mesh_quality: Optional[Dict[str, Any]] = None,
+        camera_overlap: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Assemble standardized JSON photogrammetry report.
@@ -79,7 +80,11 @@ class QualityReportGenerator:
             },
             "image_quality_summary": image_quality_summary or {},
             "mesh_quality": mesh_quality or {},
+            "camera_overlap": camera_overlap or {},
             "diagnostics": {
+                "camera_overlap_warnings": (
+                    camera_overlap.get("warnings", []) if camera_overlap else []
+                ),
                 "has_failures": len(failed_images) > 0,
                 "failure_reasons": (
                     [f"Image '{name}' had insufficient overlapping feature matches with registered views." for name in failed_images]
