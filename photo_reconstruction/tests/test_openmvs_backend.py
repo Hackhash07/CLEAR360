@@ -71,3 +71,38 @@ def test_openmvs_registration_summary_reports_registered_and_failed_uploads(tmp_
     assert summary["sparse_point_count"] == 2
     assert summary["mean_reprojection_error_px"] == 0.3
     assert summary["registration_completeness_percentage"] == 66.7
+    assert summary["camera_overlap"]["component_count"] == 2
+    assert summary["camera_overlap"]["supported_pair_count"] == 0
+    assert summary["camera_overlap"]["warnings"]
+
+def test_openmvs_camera_graph_connects_views_with_fifteen_shared_tracks(tmp_path: Path):
+    from photo_reconstruction.openmvs_backend import _colmap_registration_summary
+
+    images_txt = tmp_path / "images.txt"
+    images_txt.write_text(
+        "1 1 0 0 0 0 0 0 1 photo_01.jpg\\n"
+        "1 2 3 4 5 6 7 8 9 10\\n"
+        "2 1 0 0 0 0 0 0 1 photo_02.jpg\\n"
+        "1 2 3 4 5 6 7 8 9 10\\n",
+        encoding="utf-8",
+    )
+    points3d_txt = tmp_path / "points3D.txt"
+    points3d_txt.write_text(
+        "".join(
+            f"{index} 0 0 1 255 0 0 0.2 1 {index} 2 {index}\\n"
+            for index in range(1, 16)
+        ),
+        encoding="utf-8",
+    )
+
+    summary = _colmap_registration_summary(
+        images_txt,
+        [tmp_path / "photo_01.jpg", tmp_path / "photo_02.jpg"],
+        points3d_txt,
+    )
+
+    overlap = summary["camera_overlap"]
+    assert overlap["component_count"] == 1
+    assert overlap["supported_pair_count"] == 1
+    assert overlap["supported_pairs"][0]["shared_3d_tracks"] == 15
+    assert overlap["warnings"] == []
