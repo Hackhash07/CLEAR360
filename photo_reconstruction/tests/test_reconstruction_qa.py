@@ -7,6 +7,7 @@ import trimesh
 
 from photo_reconstruction.quality_report import QualityReportGenerator
 from photo_reconstruction.reconstruction_qa import (
+    audit_camera_overlap_from_track_ids,
     audit_obj_materials,
     audit_reconstruction_outputs,
 )
@@ -65,6 +66,34 @@ def test_disconnected_parts_are_reported_without_automatic_deletion(tmp_path: Pa
     assert report["policy"]["automatic_component_deletion"] is False
 
 
+def test_camera_overlap_graph_reports_connected_and_disconnected_views():
+    tracks = {
+        "camera_a.jpg": set(range(1, 21)),
+        "camera_b.jpg": set(range(1, 41)),
+        "camera_c.jpg": set(range(21, 61)),
+        "camera_isolated.jpg": {100, 101},
+    }
+
+    report = audit_camera_overlap_from_track_ids(tracks)
+
+    assert report["available"] is True
+    assert report["component_count"] == 2
+    assert report["status"] == "disconnected"
+    assert report["supported_pair_count"] == 3
+    assert report["isolated_cameras"] == ["camera_isolated.jpg"]
+    assert report["warnings"]
+
+
+def test_camera_overlap_is_unavailable_without_sparse_track_evidence():
+    report = audit_camera_overlap_from_track_ids(
+        {"camera_a.jpg": set(), "camera_b.jpg": set()}
+    )
+
+    assert report["available"] is False
+    assert report["status"] == "unavailable"
+    assert report["component_count"] is None
+
+
 def test_obj_material_and_diffuse_map_references_are_checked(tmp_path: Path):
     obj = tmp_path / "scene.obj"
     mtl = tmp_path / "scene.mtl"
@@ -110,6 +139,7 @@ def test_reconstruction_report_preserves_backend_independent_mesh_quality():
         "score": 84.5,
         "warnings": ["Inspect disconnected components."],
     }
+    camera_overlap = {"available": True, "status": "connected", "warnings": []}
     report = QualityReportGenerator.generate_report(
         session_id="session_test",
         uploaded_count=6,
@@ -122,9 +152,11 @@ def test_reconstruction_report_preserves_backend_independent_mesh_quality():
         processing_time_s=12.4,
         scale_info={"is_calibrated": False},
         mesh_quality=mesh_quality,
+        camera_overlap=camera_overlap,
     )
 
     assert report["mesh_quality"] == mesh_quality
+    assert report["camera_overlap"] == camera_overlap
     assert report["image_counts"]["registered"] == 5
 
 def test_missing_reprojection_residuals_cannot_receive_optimal_grade():
