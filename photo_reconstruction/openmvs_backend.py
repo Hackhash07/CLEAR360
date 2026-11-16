@@ -182,15 +182,6 @@ class OpenMVSBackend:
                 "Use a walk-around photo sequence with substantial shared scene content."
             )
 
-        from photo_reconstruction.photo_set_auditor import PhotoSetQualityAuditor
-
-        photo_set_report = photo_set_report or PhotoSetQualityAuditor.audit_paths(image_paths)
-        if not photo_set_report.get("can_reconstruct", False):
-            raise ValueError(
-                "Photo-set preflight blocked OpenMVS reconstruction: "
-                + "; ".join(photo_set_report.get("warnings", []))
-            )
-
         session_dir = Path(session_dir)
         images_dir = session_dir / "original_images"
         images_dir.mkdir(parents=True, exist_ok=True)
@@ -213,6 +204,18 @@ class OpenMVSBackend:
         refine = self._binary("RefineMesh")
         texture = self._binary("TextureMesh")
         interface_colmap = self._binary("InterfaceCOLMAP")
+
+        # Audit only after executable checks so dependency errors remain actionable;
+        # no reconstruction stages or output folders are created before this gate.
+        from photo_reconstruction.photo_set_auditor import PhotoSetQualityAuditor
+
+        photo_set_report = photo_set_report or PhotoSetQualityAuditor.audit_paths(image_paths)
+        if not photo_set_report.get("can_reconstruct", False):
+            raise ValueError(
+                "Photo-set preflight blocked OpenMVS reconstruction: "
+                + "; ".join(photo_set_report.get("warnings", []))
+            )
+
         work = session_dir / "openmvs"
         sparse = work / "sparse"
         dense = work / "dense"
