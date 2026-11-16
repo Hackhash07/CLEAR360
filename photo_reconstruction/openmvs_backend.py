@@ -204,7 +204,13 @@ class OpenMVSBackend:
         # no OpenMVS work/stage folders are created before this gate.
         from photo_reconstruction.photo_set_auditor import PhotoSetQualityAuditor
 
-        photo_set_report = photo_set_report or PhotoSetQualityAuditor.audit_paths(image_paths)
+        upload_preflight_snapshot = photo_set_report
+        photo_set_report = PhotoSetQualityAuditor.audit_paths(image_paths)
+        if upload_preflight_snapshot is not None:
+            photo_set_report["upload_preflight_snapshot"] = {
+                "status": upload_preflight_snapshot.get("status"),
+                "warnings": upload_preflight_snapshot.get("warnings", []),
+            }
         if not photo_set_report.get("can_reconstruct", False):
             raise ValueError(
                 "Photo-set preflight blocked OpenMVS reconstruction: "
