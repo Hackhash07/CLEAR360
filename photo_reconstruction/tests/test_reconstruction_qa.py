@@ -1,4 +1,6 @@
 from pathlib import Path
+import subprocess
+import sys
 
 import numpy as np
 import trimesh
@@ -141,3 +143,22 @@ def test_missing_reprojection_residuals_cannot_receive_optimal_grade():
 
     assert report["reconstruction_grade"] == "ACCEPTABLE"
     assert report["geometric_metrics"]["mean_reprojection_error_px"] is None
+
+def test_lightweight_qa_import_does_not_load_the_desktop_or_ml_runtime():
+    project_root = Path(__file__).resolve().parents[2]
+    code = (
+        "import sys; "
+        "import photo_reconstruction.reconstruction_qa; "
+        "assert 'open3d' not in sys.modules; "
+        "assert 'torch' not in sys.modules; "
+        "assert 'PySide6' not in sys.modules"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
