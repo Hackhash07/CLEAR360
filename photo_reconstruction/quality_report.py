@@ -13,6 +13,50 @@ import json
 import time
 
 
+def classify_reconstruction_grade(
+    uploaded_count: int,
+    registered_count: int,
+    reprojection_error_px: Optional[float],
+    *,
+    mesh_quality: Optional[Dict[str, Any]] = None,
+    camera_overlap: Optional[Dict[str, Any]] = None,
+    photo_set: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Classify overall reconstruction evidence without confusing export with quality."""
+    completeness_pct = 100.0 * registered_count / max(1, uploaded_count)
+    mesh_status = (mesh_quality or {}).get("status")
+    overlap_available = bool((camera_overlap or {}).get("available", False))
+    overlap_status = (camera_overlap or {}).get("status")
+    photo_set_status = (photo_set or {}).get("status")
+
+    mesh_allows_optimal = mesh_quality is None or mesh_status == "healthy"
+    overlap_allows_optimal = camera_overlap is None or (
+        overlap_available and overlap_status == "connected"
+    )
+    photo_set_allows_optimal = photo_set is None or photo_set_status == "ready"
+
+    has_optimal_registration = (
+        uploaded_count > 0
+        and registered_count >= uploaded_count
+        and reprojection_error_px is not None
+        and reprojection_error_px < 1.5
+    )
+    if registered_count < 2 or mesh_status == "poor":
+        return "FAILED"
+    if (
+        has_optimal_registration
+        and mesh_allows_optimal
+        and overlap_allows_optimal
+        and photo_set_allows_optimal
+    ):
+        return "OPTIMAL"
+    if registered_count >= 2 and completeness_pct >= 60.0:
+        return "ACCEPTABLE"
+    if registered_count >= 2:
+        return "PARTIAL"
+    return "FAILED"
+
+
 class QualityReportGenerator:
     """Compiles and exports standard photogrammetry quality reports."""
 
@@ -40,38 +84,14 @@ class QualityReportGenerator:
         Assemble standardized JSON photogrammetry report.
         """
         completeness_pct = round((registered_count / max(1, uploaded_count)) * 100.0, 1)
-
-        mesh_status = (mesh_quality or {}).get("status")
-        overlap_available = bool((camera_overlap or {}).get("available", False))
-        overlap_status = (camera_overlap or {}).get("status")
-        photo_set_status = (photo_set or {}).get("status")
-
-        mesh_allows_optimal = mesh_quality is None or mesh_status == "healthy"
-        overlap_allows_optimal = camera_overlap is None or (
-            overlap_available and overlap_status == "connected"
+        recon_grade = classify_reconstruction_grade(
+            uploaded_count,
+            registered_count,
+            reprojection_error_px,
+            mesh_quality=mesh_quality,
+            camera_overlap=camera_overlap,
+            photo_set=photo_set,
         )
-        photo_set_allows_optimal = photo_set is None or photo_set_status == "ready"
-
-        has_optimal_registration = (
-            registered_count >= uploaded_count
-            and reprojection_error_px is not None
-            and reprojection_error_px < 1.5
-        )
-        if registered_count < 2 or mesh_status == "poor":
-            recon_grade = "FAILED"
-        elif (
-            has_optimal_registration
-            and mesh_allows_optimal
-            and overlap_allows_optimal
-            and photo_set_allows_optimal
-        ):
-            recon_grade = "OPTIMAL"
-        elif registered_count >= 2 and completeness_pct >= 60.0:
-            recon_grade = "ACCEPTABLE"
-        elif registered_count >= 2:
-            recon_grade = "PARTIAL"
-        else:
-            recon_grade = "FAILED"
 
         report = {
             "session_id": session_id,
