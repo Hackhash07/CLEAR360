@@ -7,27 +7,14 @@ import shutil
 from pathlib import Path
 from typing import Mapping
 
-
-OPENMVS_EXECUTABLES = (
-    "InterfaceCOLMAP",
-    "DensifyPointCloud",
-    "ReconstructMesh",
-    "RefineMesh",
-    "TextureMesh",
+from photo_reconstruction.openmvs_tools import (
+    EXECUTABLE_NAMES,
+    configured_openmvs_root,
+    find_all_openmvs_executables,
 )
 
 
-def _find_executable(
-    name: str,
-    openmvs_dir: Path | None,
-    environ: Mapping[str, str],
-) -> str | None:
-    """Find an executable in the configured OpenMVS folder or PATH."""
-    if openmvs_dir is not None:
-        candidate = openmvs_dir / name
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return str(candidate)
-    return shutil.which(name, path=environ.get("PATH"))
+OPENMVS_EXECUTABLES = EXECUTABLE_NAMES
 
 
 def resolve_reconstruction_backend(
@@ -35,34 +22,26 @@ def resolve_reconstruction_backend(
 ) -> tuple[str, str]:
     """Return ('openmvs'|'native', human-readable reason) without user choices.
 
-    COLMAP + OpenMVS is selected only when COLMAP and every required OpenMVS
-    executable are present. Otherwise the existing CLEAR360 pipeline is used.
+    Backend detection and the reconstruction worker share the same executable
+    resolver, including configured roots, common bin/build layouts, and PATH.
+    This prevents selecting OpenMVS in the UI when the worker cannot launch it.
     """
     env = os.environ if environ is None else environ
-    configured_dir = env.get("CLEAR360_OPENMVS_DIR", "").strip()
-    if configured_dir:
-        openmvs_dir = Path(configured_dir).expanduser()
-    else:
-        # Use the common per-user installation path automatically so the
-        # desktop application does not require shell environment setup.
-        default_dir = Path.home() / "Applications" / "OpenMVS-2.4.0"
-        openmvs_dir = default_dir if default_dir.is_dir() else None
+    openmvs_dir = configured_openmvs_root(env)
 
     configured_colmap = env.get("CLEAR360_COLMAP_BIN", "").strip()
     colmap_path = None
     if configured_colmap:
         candidate = Path(configured_colmap).expanduser()
         if candidate.is_file() and os.access(candidate, os.X_OK):
-            colmap_path = str(candidate)
+            colmap_path = str(candidate.resolve())
     if colmap_path is None:
         colmap_path = shutil.which("colmap", path=env.get("PATH"))
 
-    missing = [
-        name for name in OPENMVS_EXECUTABLES
-        if _find_executable(name, openmvs_dir, env) is None
-    ]
+    tools = find_all_openmvs_executables(openmvs_dir, path=env.get("PATH"))
+    missing = [name for name, executable in tools.items() if executable is None]
     if colmap_path and not missing:
-        return "openmvs", "COLMAP + OpenMVS detected"
+        return "openmvs", "COLMAP + OpenMVS detected automatically"
 
     details = []
     if not colmap_path:
