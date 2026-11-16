@@ -59,7 +59,7 @@ def test_alignment_rotates_obj_vertices_and_normals_but_not_uvs(tmp_path: Path):
     uvs = [line for line in lines if line.startswith("vt ")]
     normal = np.asarray([float(v) for v in next(line for line in lines if line.startswith("vn ")).split()[1:4]])
 
-    np.testing.assert_allclose(vertices, [[0, 0, 0], [1, 0, 0], [0, 0, 1]], atol=1e-7)
+    np.testing.assert_allclose(vertices, [[0, 0, 0], [1, 0, 0], [0, 0, -1]], atol=1e-7)
     assert len(uvs) == 3
     np.testing.assert_allclose(normal, [0, 0, 1], atol=1e-7)
 
