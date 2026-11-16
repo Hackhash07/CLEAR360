@@ -24,6 +24,7 @@ from photo_reconstruction.image_quality import ImageQualityAssessor
 from photo_reconstruction.session_manager import SessionManager
 from photo_reconstruction.pipeline import PhoneReconstructionPipeline
 from photo_reconstruction.backend_selector import resolve_reconstruction_backend
+from photo_reconstruction.photo_set_auditor import PhotoSetQualityAuditor
 
 
 class ReconstructionWorker(QtCore.QThread):
@@ -44,6 +45,7 @@ class ReconstructionWorker(QtCore.QThread):
         reference_distance_m: Optional[float],
         backend: str = "native",
         parent: Optional[QtCore.QObject] = None,
+        photo_set_report: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(parent)
         self.pipeline = pipeline
@@ -51,6 +53,7 @@ class ReconstructionWorker(QtCore.QThread):
         self.quality_preset = quality_preset
         self.reference_distance_m = reference_distance_m
         self.backend = backend
+        self.photo_set_report = photo_set_report or {}
 
     def run(self):
         try:
@@ -174,6 +177,28 @@ class ReconstructionWorker(QtCore.QThread):
                 )
 
             if res.get("success", False):
+                if self.photo_set_report:
+                    import json
+
+                    report = dict(res.get("report") or {})
+                    report["photo_set"] = self.photo_set_report
+                    diagnostics = dict(report.get("diagnostics") or {})
+                    diagnostics["photo_set_warnings"] = self.photo_set_report.get("warnings", [])
+                    report["diagnostics"] = diagnostics
+                    res["report"] = report
+                    res["photo_set_report"] = self.photo_set_report
+
+                    session_dir = res.get("session_dir")
+                    if session_dir:
+                        session_dir = Path(session_dir)
+                        (session_dir / "photo_set_report.json").write_text(
+                            json.dumps(self.photo_set_report, indent=2),
+                            encoding="utf-8",
+                        )
+                        (session_dir / "report.json").write_text(
+                            json.dumps(report, indent=2),
+                            encoding="utf-8",
+                        )
                 self.finished_success.emit(res)
             else:
                 report = res.get("report", {})
@@ -435,9 +460,17 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
                     rgb, meta = ImageLoader.load_image(p)
                     c_info = ExifReader.get_camera_info(p, meta["width"], meta["height"])
                     q_res = ImageQualityAssessor.evaluate(rgb)
-                    self.image_metadata[p.name] = {"meta": meta, "exif": c_info, "quality": q_res}
+                    self.image_metadata[str(p.resolve())] = {
+                        "path": str(p.resolve()),
+                        "meta": meta,
+                        "exif": c_info,
+                        "quality": q_res,
+                    }
                 except Exception as e:
-                    self.image_metadata[p.name] = {"error": str(e)}
+                    self.image_metadata[str(p.resolve())] = {
+                        "path": str(p.resolve()),
+                        "error": str(e),
+                    }
 
         count = len(self.selected_image_paths)
         self.lbl_photo_count.setText(f"{count} photographs selected (min 2, rec 4–40+)")
@@ -498,7 +531,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             return
 
         p = self.selected_image_paths[row]
-        data = self.image_metadata.get(p.name, {})
+        data = self.image_metadata.get(str(p.resolve()), {})
 
         if "error" in data:
             self.lbl_meta_dims.setText(f"Error: {data['error']}")
@@ -544,6 +577,38 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             )
             return
 
+        photo_records = []
+        for image_path in self.selected_image_paths:
+            key = str(image_path.resolve())
+            record = dict(self.image_metadata.get(key) or {})
+            record.setdefault("path", key)
+            photo_records.append(record)
+
+        photo_set_report = PhotoSetQualityAuditor.audit(photo_records)
+        if not photo_set_report["can_reconstruct"]:
+            details = "\\n".join(photo_set_report.get("warnings", []))
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Photo set cannot be reconstructed",
+                details or "At least two distinct, readable photographs are required.",
+            )
+            return
+
+        if photo_set_report["status"] == "review":
+            details = "\\n".join(
+                f"• {warning}" for warning in photo_set_report.get("warnings", [])
+            )
+            answer = QtWidgets.QMessageBox.question(
+                self,
+                "Review uploaded photographs",
+                "CLEAR360 found issues that may reduce reconstruction quality:\\n\\n"
+                f"{details}\\n\\nProceed with reconstruction anyway?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No,
+            )
+            if answer != QtWidgets.QMessageBox.Yes:
+                return
+
         backend, backend_reason = resolve_reconstruction_backend()
         if backend == "openmvs" and len(self.selected_image_paths) < 6:
             backend = "native"
@@ -579,6 +644,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             reference_distance_m=reference_distance,
             backend=backend,
             parent=self,
+            photo_set_report=photo_set_report,
         )
         self.worker.progress.connect(self._update_progress_ui)
         self.worker.finished_success.connect(self._on_reconstruction_success)
@@ -622,6 +688,9 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             if isinstance(quality_score, (int, float))
             else f"Mesh QA: {quality_status.upper()}"
         )
+        photo_set = result_report.get("photo_set") or {}
+        if photo_set:
+            quality_label += f" · Photo set: {str(photo_set.get('status', 'unknown')).upper()}"
         registration = result_report.get("registration") or {}
         overlap = (
             registration.get("camera_overlap")
