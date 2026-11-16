@@ -5,7 +5,11 @@ on:
     branches:
       - feature/universal-reconstruction-qa
     paths:
+      - "pyproject.toml"
+      - "requirements.txt"
       - "photo_reconstruction/__init__.py"
+      - "photo_reconstruction/image_loader.py"
+      - "photo_reconstruction/tests/test_phone_reconstruction.py"
       - "photo_reconstruction/image_preparation.py"
       - "photo_reconstruction/tests/test_image_preparation.py"
       - "photo_reconstruction/reconstruction_qa.py"
@@ -69,6 +73,7 @@ jobs:
         run: |
           python -m py_compile \
             photo_reconstruction/__init__.py \
+            photo_reconstruction/image_loader.py \
             photo_reconstruction/image_preparation.py \
             photo_reconstruction/exif_reader.py \
             photo_reconstruction/photo_set_auditor.py \
