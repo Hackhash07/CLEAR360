@@ -123,7 +123,7 @@ def main() -> int:
             "image": image.name,
             "registered_image_id": image.image_id,
             "sparse_track_observations": observations.get(image.image_id, 0),
-            "projected_dense_points": int(np.count_nonzero(visible)),
+            "visible_dense_pixels": int(np.count_nonzero(visible)),
             "projected_coverage_percent_3x3": round(coverage_pct, 3),
             "overlay": str(output_dir / f"{Path(image.name).stem}_dense_coverage.jpg"),
         })
