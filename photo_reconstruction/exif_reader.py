@@ -138,21 +138,21 @@ class ExifReader:
         if len(camera_infos) < 2:
             return False, warnings
 
-        fx_values = [
-            float(
-                info.get(
-                    "normalized_fx",
-                    info["estimated_fx"]
-                    / max(
-                        1,
-                        int(info.get("image_width", 1)),
-                        int(info.get("image_height", 1)),
-                    ),
+        fx_values = []
+        for info in camera_infos:
+            normalized_fx = info.get("normalized_fx")
+            if normalized_fx is None and info.get("estimated_fx") is not None:
+                normalized_fx = float(info["estimated_fx"]) / max(
+                    1,
+                    int(info.get("image_width", 1)),
+                    int(info.get("image_height", 1)),
                 )
-            )
-            for info in camera_infos
-            if float(info.get("normalized_fx", info.get("estimated_fx", 0.0))) > 0
-        ]
+            try:
+                value = float(normalized_fx)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(value) and value > 0:
+                fx_values.append(value)
         if len(fx_values) < 2:
             return False, warnings
         fx_min, fx_max = min(fx_values), max(fx_values)
