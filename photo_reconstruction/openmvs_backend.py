@@ -144,6 +144,7 @@ class OpenMVSBackend:
         # COLMAP's world axes are arbitrary. Export registered camera poses so
         # a consistent camera-up direction can align the final 3D exports.
         pose_text_dir = work / "sparse_text"
+        pose_text_dir.mkdir(parents=True, exist_ok=True)
         self._run(
             [colmap, "model_converter", "--input_path", str(sparse_out),
              "--output_path", str(pose_text_dir), "--output_type", "TXT"],
