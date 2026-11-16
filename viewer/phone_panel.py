@@ -106,6 +106,7 @@ class ReconstructionWorker(QtCore.QThread):
 
                 registration = result.get("registration", {})
                 mesh_quality = result.get("mesh_quality", {})
+                actual_photo_set_report = result.get("photo_set", self.photo_set_report)
                 geometry_quality = mesh_quality.get("geometry") or {}
                 mesh_warnings = mesh_quality.get("warnings", [])
                 registration_warnings = registration.get("warnings", [])
@@ -122,6 +123,7 @@ class ReconstructionWorker(QtCore.QThread):
                     },
                     "registration": registration,
                     "camera_overlap": registration.get("camera_overlap", {}),
+                    "photo_set": actual_photo_set_report,
                     "geometric_metrics": {
                         "sparse_points": result.get("sparse_point_count", 0),
                         "mesh_vertices": geometry_quality.get("vertex_count", 0),
@@ -168,6 +170,7 @@ class ReconstructionWorker(QtCore.QThread):
                     "mesh_glb": result["mesh_glb"],
                     "dense_ply": result["dense_ply"],
                     "report": report,
+                    "photo_set_report": actual_photo_set_report,
                 }
             else:
                 res = self.pipeline.run_pipeline(
@@ -183,18 +186,23 @@ class ReconstructionWorker(QtCore.QThread):
                     import json
 
                     report = dict(res.get("report") or {})
-                    report["photo_set"] = self.photo_set_report
+                    actual_photo_set_report = (
+                        res.get("photo_set_report")
+                        or report.get("photo_set")
+                        or self.photo_set_report
+                    )
+                    report["photo_set"] = actual_photo_set_report
                     diagnostics = dict(report.get("diagnostics") or {})
-                    diagnostics["photo_set_warnings"] = self.photo_set_report.get("warnings", [])
+                    diagnostics["photo_set_warnings"] = actual_photo_set_report.get("warnings", [])
                     report["diagnostics"] = diagnostics
                     res["report"] = report
-                    res["photo_set_report"] = self.photo_set_report
+                    res["photo_set_report"] = actual_photo_set_report
 
                     session_dir = res.get("session_dir")
                     if session_dir:
                         session_dir = Path(session_dir)
                         (session_dir / "photo_set_report.json").write_text(
-                            json.dumps(self.photo_set_report, indent=2),
+                            json.dumps(actual_photo_set_report, indent=2),
                             encoding="utf-8",
                         )
                         (session_dir / "report.json").write_text(
