@@ -72,7 +72,8 @@ def test_reconstruction_qa_records_unresolved_obj_texture(tmp_path: Path):
 
     report = audit_reconstruction_outputs(mesh_path, obj_path=obj_path)
 
-    assert report["status"] == "healthy"
+    assert report["status"] == "review"
+    assert report["geometry_status"] == "healthy"
     assert report["checks"]["obj_material_references_resolve"] is False
     assert any("diffuse-texture references" in warning for warning in report["warnings"])
 
