@@ -111,6 +111,7 @@ class ReconstructionWorker(QtCore.QThread):
                     "mesh_glb": str(result["mesh_glb"]),
                     "dense_ply": str(result["dense_ply"]),
                     "log_file": str(result["log_file"]),
+                    "orientation": result.get("orientation"),
                     "created_at": datetime.now().astimezone().isoformat(),
                 }
                 (session_dir / "report.json").write_text(
