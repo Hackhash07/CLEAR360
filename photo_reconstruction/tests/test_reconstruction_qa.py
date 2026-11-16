@@ -124,3 +124,20 @@ def test_reconstruction_report_preserves_backend_independent_mesh_quality():
 
     assert report["mesh_quality"] == mesh_quality
     assert report["image_counts"]["registered"] == 5
+
+def test_missing_reprojection_residuals_cannot_receive_optimal_grade():
+    report = QualityReportGenerator.generate_report(
+        session_id="session_without_residuals",
+        uploaded_count=6,
+        registered_count=6,
+        failed_images=[],
+        sparse_point_count=0,
+        dense_point_count=1000,
+        mesh_triangle_count=2000,
+        reprojection_error_px=None,
+        processing_time_s=12.4,
+        scale_info={"is_calibrated": False},
+    )
+
+    assert report["reconstruction_grade"] == "ACCEPTABLE"
+    assert report["geometric_metrics"]["mean_reprojection_error_px"] is None
