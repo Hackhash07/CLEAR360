@@ -7,6 +7,8 @@ import json
 import os
 import shutil
 import subprocess
+
+import numpy as np
 from pathlib import Path
 
 from photo_reconstruction.scene_orientation import (
@@ -71,6 +73,7 @@ def main() -> int:
             raise FileNotFoundError(
                 "COLMAP is not on PATH. Set CLEAR360_COLMAP_BIN to its executable."
             )
+        text_dir.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(
             [
                 colmap,
@@ -97,7 +100,7 @@ def main() -> int:
             "No output files were changed."
         )
     up_vector, consistency, pose_count = estimate
-    rotation = rotation_from_to(up_vector, __import__("numpy").array([0.0, 0.0, 1.0]))
+    rotation = rotation_from_to(up_vector, np.array([0.0, 0.0, 1.0]))
 
     mesh_dir = session_dir / "mesh"
     obj_file = mesh_dir / "scene_mesh.obj"
