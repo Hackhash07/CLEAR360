@@ -50,7 +50,8 @@ def _colmap_registration_summary(
     registered = parse_images_txt(images_txt)
     registered_names = {Path(image.name).name for image in registered}
     uploaded_names = {Path(path).name for path in image_paths}
-    failed_names = sorted(uploaded_names - registered_names)
+    registered_upload_names = registered_names.intersection(uploaded_names)
+    failed_names = sorted(uploaded_names - registered_upload_names)
 
     reprojection_errors: list[float] = []
     sparse_point_count = 0
@@ -80,12 +81,12 @@ def _colmap_registration_summary(
     )
     return {
         "uploaded_count": len(uploaded_names),
-        "registered_count": len(registered_names),
+        "registered_count": len(registered_upload_names),
         "failed_images": failed_names,
         "sparse_point_count": sparse_point_count,
         "mean_reprojection_error_px": round(mean_error, 4),
         "registration_completeness_percentage": round(
-            100.0 * len(registered_names) / max(1, len(uploaded_names)), 1
+            100.0 * len(registered_upload_names) / max(1, len(uploaded_names)), 1
         ),
     }
 
