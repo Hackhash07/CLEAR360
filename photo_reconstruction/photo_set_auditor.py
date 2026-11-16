@@ -100,6 +100,11 @@ class PhotoSetQualityAuditor:
             for record in valid_records
             if str((record.get("quality") or {}).get("status", "")).upper() == "REJECT"
         ]
+        warning_images = [
+            str((record.get("meta") or {}).get("file_name", "image"))
+            for record in valid_records
+            if str((record.get("quality") or {}).get("status", "")).upper() == "WARNING"
+        ]
         low_feature_images = [
             str((record.get("meta") or {}).get("file_name", "image"))
             for record in valid_records
@@ -114,6 +119,11 @@ class PhotoSetQualityAuditor:
         if blurry_images and not rejected_images:
             warnings.append(
                 f"{len(blurry_images)} image(s) appear blurry. Inspect them before reconstruction."
+            )
+        if warning_images:
+            warnings.append(
+                f"{len(warning_images)} image(s) received a WARNING quality rating. "
+                "Inspect exposure, sharpness and feature density."
             )
         if low_feature_images:
             warnings.append(
@@ -175,8 +185,10 @@ class PhotoSetQualityAuditor:
                 "mean_score": quality_mean,
                 "blurry_count": len(blurry_images),
                 "rejected_count": len(rejected_images),
+                "warning_count": len(warning_images),
                 "low_feature_count": len(low_feature_images),
                 "rejected_images": rejected_images,
+                "warning_images": warning_images,
                 "blurry_images": blurry_images,
                 "low_feature_images": low_feature_images,
             },
