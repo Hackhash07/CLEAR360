@@ -43,6 +43,13 @@ class PhotoSetQualityAuditor:
                 invalid_images.append({"image": display_name, "reason": str(error)})
                 continue
 
+            if not meta or not record.get("quality"):
+                invalid_images.append({
+                    "image": display_name,
+                    "reason": "Image metadata or quality assessment is missing.",
+                })
+                continue
+
             if raw_path:
                 path = Path(str(raw_path)).expanduser()
                 if not path.is_file():
@@ -58,12 +65,6 @@ class PhotoSetQualityAuditor:
                     invalid_images.append({"image": display_name, "reason": str(exc)})
                     continue
 
-            if not meta or not record.get("quality"):
-                invalid_images.append({
-                    "image": display_name,
-                    "reason": "Image metadata or quality assessment is missing.",
-                })
-                continue
             valid_records.append(record)
 
         duplicate_groups = [
