@@ -586,7 +586,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
 
         photo_set_report = PhotoSetQualityAuditor.audit(photo_records)
         if not photo_set_report["can_reconstruct"]:
-            details = "\\n".join(photo_set_report.get("warnings", []))
+            details = "\n".join(photo_set_report.get("warnings", []))
             QtWidgets.QMessageBox.warning(
                 self,
                 "Photo set cannot be reconstructed",
@@ -595,7 +595,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             return
 
         if photo_set_report["status"] == "review":
-            details = "\\n".join(
+            details = "\n".join(
                 f"• {warning}" for warning in photo_set_report.get("warnings", [])
             )
             answer = QtWidgets.QMessageBox.question(
