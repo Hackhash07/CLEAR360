@@ -173,8 +173,18 @@ class OpenMVSBackend:
 
     def run(self, image_paths: list[Path], session_dir: Path,
             quality_preset: str = "standard",
-            progress_cb: ProgressCallback = None) -> dict:
+            progress_cb: ProgressCallback = None,
+            photo_set_report: Optional[dict] = None) -> dict:
         """Reconstruct uploaded images and return session output paths."""
+        from photo_reconstruction.photo_set_auditor import PhotoSetQualityAuditor
+
+        photo_set_report = photo_set_report or PhotoSetQualityAuditor.audit_paths(image_paths)
+        if not photo_set_report.get("can_reconstruct", False):
+            raise ValueError(
+                "Photo-set preflight blocked OpenMVS reconstruction: "
+                + "; ".join(photo_set_report.get("warnings", []))
+            )
+
         session_dir = Path(session_dir)
         images_dir = session_dir / "original_images"
         images_dir.mkdir(parents=True, exist_ok=True)
@@ -449,4 +459,5 @@ class OpenMVSBackend:
             "reprojection_error_px": registration_summary["mean_reprojection_error_px"],
             "mesh_quality": mesh_quality,
             "mesh_quality_report": qa_path,
+            "photo_set": photo_set_report,
         }
