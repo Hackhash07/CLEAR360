@@ -76,5 +76,5 @@ jobs:
             photo_reconstruction/tests/test_openmvs_backend.py \
             photo_reconstruction/tests/test_openmvs_quality.py \
             photo_reconstruction/tests/test_coverage_diagnostics.py \
-            photo_reconstruction/tests/test_photo_set_auditor.py
+            photo_reconstruction/tests/test_photo_set_auditor.py \
             photo_reconstruction/tests/test_image_quality_normalization.py
