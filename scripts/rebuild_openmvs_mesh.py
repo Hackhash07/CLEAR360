@@ -112,6 +112,10 @@ def rebuild_session(
         raise FileExistsError(
             f"Backup already exists: {backup_dir}. Refusing to overwrite it."
         )
+    if not (session_dir / "original_images").is_dir():
+        raise FileNotFoundError(
+            f"Original source images missing: {session_dir / 'original_images'}"
+        )
     if stage.exists():
         raise FileExistsError(
             f"Rebuild workspace already exists: {stage}. "
