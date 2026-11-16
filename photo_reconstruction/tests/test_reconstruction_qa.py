@@ -163,6 +163,60 @@ def test_reconstruction_report_preserves_backend_independent_mesh_quality():
     assert report["diagnostics"]["photo_set_warnings"] == photo_set["warnings"]
     assert report["image_counts"]["registered"] == 5
 
+def _report_with_quality(mesh_quality=None, camera_overlap=None, photo_set=None):
+    return QualityReportGenerator.generate_report(
+        session_id="session_grade",
+        uploaded_count=4,
+        registered_count=4,
+        failed_images=[],
+        sparse_point_count=1000,
+        dense_point_count=10000,
+        mesh_triangle_count=20000,
+        reprojection_error_px=0.5,
+        processing_time_s=30.0,
+        scale_info={"is_calibrated": False},
+        mesh_quality=mesh_quality,
+        camera_overlap=camera_overlap,
+        photo_set=photo_set,
+    )
+
+
+def test_optimal_grade_requires_healthy_mesh_and_connected_camera_graph():
+    report = _report_with_quality(
+        mesh_quality={"status": "healthy"},
+        camera_overlap={"available": True, "status": "connected"},
+        photo_set={"status": "ready"},
+    )
+    assert report["reconstruction_grade"] == "OPTIMAL"
+
+
+def test_export_or_geometry_review_prevents_optimal_grade():
+    report = _report_with_quality(
+        mesh_quality={"status": "review", "geometry_status": "healthy"},
+        camera_overlap={"available": True, "status": "connected"},
+        photo_set={"status": "ready"},
+    )
+    assert report["reconstruction_grade"] == "ACCEPTABLE"
+
+
+def test_poor_mesh_quality_marks_reconstruction_failed():
+    report = _report_with_quality(
+        mesh_quality={"status": "poor"},
+        camera_overlap={"available": True, "status": "connected"},
+        photo_set={"status": "ready"},
+    )
+    assert report["reconstruction_grade"] == "FAILED"
+
+
+def test_review_photo_set_prevents_optimal_grade():
+    report = _report_with_quality(
+        mesh_quality={"status": "healthy"},
+        camera_overlap={"available": True, "status": "connected"},
+        photo_set={"status": "review", "warnings": ["Exact duplicates detected."]},
+    )
+    assert report["reconstruction_grade"] == "ACCEPTABLE"
+
+
 def test_missing_reprojection_residuals_cannot_receive_optimal_grade():
     report = QualityReportGenerator.generate_report(
         session_id="session_without_residuals",
