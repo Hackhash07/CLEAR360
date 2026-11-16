@@ -79,6 +79,7 @@ class QualityReportGenerator:
         mesh_quality: Optional[Dict[str, Any]] = None,
         camera_overlap: Optional[Dict[str, Any]] = None,
         photo_set: Optional[Dict[str, Any]] = None,
+        camera_calibration: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Assemble standardized JSON photogrammetry report.
@@ -122,6 +123,7 @@ class QualityReportGenerator:
             "mesh_quality": mesh_quality or {},
             "camera_overlap": camera_overlap or {},
             "photo_set": photo_set or {},
+            "camera_calibration": camera_calibration or {},
             "diagnostics": {
                 "photo_set_warnings": (
                     photo_set.get("warnings", []) if photo_set else []
