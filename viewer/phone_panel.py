@@ -324,7 +324,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.btn_start.clicked.connect(self._on_start_clicked)
         grp_exec_layout.addWidget(self.btn_start)
 
-        self.btn_guided_model = QtWidgets.QPushButton("🧱 Guided Photo Projection (Blender-style)")
+        self.btn_guided_model = QtWidgets.QPushButton("🧱 Guided Photo Projection")
         self.btn_guided_model.setToolTip(
             "Use one sharp reference photo as the texture, then draw regions and assign "
             "depth offsets to build a clean guided 2.5D relief model."
