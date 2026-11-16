@@ -87,7 +87,7 @@ class SfMEngine:
                 "camera_poses": {},
                 "sparse_points": np.zeros((0, 3), dtype=np.float32),
                 "sparse_colors": np.zeros((0, 3), dtype=np.float32),
-                "mean_reprojection_error": 0.0,
+                "mean_reprojection_error": None,
                 "message": "At least 2 photographs are required for Structure-from-Motion.",
             }
 
@@ -152,7 +152,7 @@ class SfMEngine:
                 "camera_poses": {},
                 "sparse_points": np.zeros((0, 3), dtype=np.float32),
                 "sparse_colors": np.zeros((0, 3), dtype=np.float32),
-                "mean_reprojection_error": 0.0,
+                "mean_reprojection_error": None,
                 "message": f"Feature extraction failed: {e}",
             }
 
@@ -175,7 +175,7 @@ class SfMEngine:
                 "camera_poses": {},
                 "sparse_points": np.zeros((0, 3), dtype=np.float32),
                 "sparse_colors": np.zeros((0, 3), dtype=np.float32),
-                "mean_reprojection_error": 0.0,
+                "mean_reprojection_error": None,
                 "message": f"Feature matching failed: {e}",
             }
 
@@ -211,7 +211,7 @@ class SfMEngine:
                 "camera_poses": {},
                 "sparse_points": np.zeros((0, 3), dtype=np.float32),
                 "sparse_colors": np.zeros((0, 3), dtype=np.float32),
-                "mean_reprojection_error": 0.0,
+                "mean_reprojection_error": None,
                 "message": f"Incremental mapping failed: {e}",
             }
 
@@ -224,7 +224,7 @@ class SfMEngine:
                 "camera_poses": {},
                 "sparse_points": np.zeros((0, 3), dtype=np.float32),
                 "sparse_colors": np.zeros((0, 3), dtype=np.float32),
-                "mean_reprojection_error": 0.0,
+                "mean_reprojection_error": None,
                 "message": (
                     "Could not register camera poses. Photographs lack sufficient visual overlap (recommend 60-80% overlap) "
                     "or contain significant motion blur. Capture additional intermediate views around the scene."
@@ -335,11 +335,17 @@ class SfMEngine:
         if len(pts_list) > 0:
             sparse_pts = np.array(pts_list, dtype=np.float32)
             sparse_cols = np.array(cols_list, dtype=np.float32)
-            mean_error = float(np.mean(errors))
+            mean_error: Optional[float] = float(np.mean(errors))
         else:
             sparse_pts = np.zeros((0, 3), dtype=np.float32)
             sparse_cols = np.zeros((0, 3), dtype=np.float32)
-            mean_error = 0.0
+            mean_error = None
+
+        reprojection_message = (
+            f"mean reprojection error {mean_error:.2f} px"
+            if mean_error is not None
+            else "reprojection residuals unavailable (no sparse 3D points)"
+        )
 
         if progress_cb:
             progress_cb(80, f"Sparse reconstruction complete: {len(camera_poses)}/{num_images} registered.")
@@ -358,7 +364,7 @@ class SfMEngine:
             "mean_reprojection_error": round(mean_error, 3),
             "message": (
                 f"Successfully registered {len(camera_poses)} of {num_images} photographs. "
-                f"Reconstructed {len(sparse_pts):,} 3D points with mean reprojection error {mean_error:.2f} px."
+                f"Reconstructed {len(sparse_pts):,} 3D points; {reprojection_message}."
             ),
         }
 
@@ -455,7 +461,7 @@ class SfMEngine:
                 "camera_poses": {},
                 "sparse_points": np.zeros((0, 3), dtype=np.float32),
                 "sparse_colors": np.zeros((0, 3), dtype=np.float32),
-                "mean_reprojection_error": 0.0,
+                "mean_reprojection_error": None,
                 "message": "Insufficient feature matches between image pairs (< 15 matches).",
             }
 
@@ -632,6 +638,6 @@ class SfMEngine:
             "sparse_tracks": sparse_tracks,
             "sparse_points": sparse_pts,
             "sparse_colors": sparse_cols,
-            "mean_reprojection_error": 1.25,
+            "mean_reprojection_error": None,
             "message": f"Successfully registered {len(camera_poses)}/{len(images)} photographs with OpenCV SfM.",
         }
