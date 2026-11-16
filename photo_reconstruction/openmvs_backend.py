@@ -5,6 +5,7 @@ remains the default; OpenMVS can be selected when its binaries are installed.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -36,6 +37,57 @@ from photo_reconstruction.scene_orientation import (
 
 
 ProgressCallback = Optional[Callable[[int, str], None]]
+
+
+def _colmap_registration_summary(
+    images_txt: Path,
+    image_paths: list[Path],
+    points3d_txt: Path,
+) -> dict:
+    """Summarize registered uploads and sparse reconstruction residuals."""
+    from photo_reconstruction.coverage_diagnostics import parse_images_txt
+
+    registered = parse_images_txt(images_txt)
+    registered_names = {Path(image.name).name for image in registered}
+    uploaded_names = {Path(path).name for path in image_paths}
+    failed_names = sorted(uploaded_names - registered_names)
+
+    reprojection_errors: list[float] = []
+    sparse_point_count = 0
+    if points3d_txt.is_file():
+        for raw_line in points3d_txt.read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) < 8:
+                continue
+            try:
+                float(parts[1])
+                float(parts[2])
+                float(parts[3])
+                error = float(parts[7])
+            except ValueError:
+                continue
+            sparse_point_count += 1
+            if np.isfinite(error):
+                reprojection_errors.append(error)
+
+    mean_error = (
+        float(np.mean(reprojection_errors)) if reprojection_errors else 0.0
+    )
+    return {
+        "uploaded_count": len(uploaded_names),
+        "registered_count": len(registered_names),
+        "failed_images": failed_names,
+        "sparse_point_count": sparse_point_count,
+        "mean_reprojection_error_px": round(mean_error, 4),
+        "registration_completeness_percentage": round(
+            100.0 * len(registered_names) / max(1, len(uploaded_names)), 1
+        ),
+    }
 
 
 class OpenMVSBackend:
@@ -161,6 +213,18 @@ class OpenMVSBackend:
             work, log_file, progress_cb, 38, "Estimating the scene's upright direction...",
         )
         images_txt = pose_text_dir / "images.txt"
+        if not images_txt.is_file():
+            raise RuntimeError("COLMAP model conversion did not create sparse_text/images.txt.")
+        registration_summary = _colmap_registration_summary(
+            images_txt,
+            image_paths,
+            pose_text_dir / "points3D.txt",
+        )
+        if registration_summary["registered_count"] < 2:
+            raise RuntimeError(
+                "COLMAP registered fewer than two uploaded photographs; "
+                "the camera solution is insufficient for 3D reconstruction."
+            )
 
         self._run(
             [colmap, "image_undistorter", "--image_path", str(images_dir),
@@ -322,11 +386,29 @@ class OpenMVSBackend:
             with log_file.open("a", encoding="utf-8") as log:
                 log.write("\nScene orientation alignment skipped: " + orientation["reason"] + "\n")
 
+        # Run the same geometry/material QA used by the native backend.
+        from photo_reconstruction.reconstruction_qa import audit_reconstruction_outputs
+
+        mesh_quality = audit_reconstruction_outputs(
+            final_ply,
+            obj_path=final_obj,
+            glb_path=final_glb,
+        )
+        qa_path = session_dir / "reconstruction_quality.json"
+        qa_path.write_text(json.dumps(mesh_quality, indent=2), encoding="utf-8")
+
         if progress_cb:
-            progress_cb(100, "OpenMVS reconstruction complete. Textured GLB and mesh are ready.")
+            progress_cb(100, "OpenMVS reconstruction and quality audit complete.")
         return {
             "success": True, "mesh_ply": final_ply, "mesh_obj": final_obj,
             "mesh_glb": final_glb, "dense_ply": dense_ply, "backend": "openmvs",
             "log_file": log_file, "quality_preset": preset,
             "orientation": orientation,
+            "registration": registration_summary,
+            "registered_count": registration_summary["registered_count"],
+            "failed_images": registration_summary["failed_images"],
+            "sparse_point_count": registration_summary["sparse_point_count"],
+            "reprojection_error_px": registration_summary["mean_reprojection_error_px"],
+            "mesh_quality": mesh_quality,
+            "mesh_quality_report": qa_path,
         }
