@@ -15,6 +15,7 @@ def test_colmap_camera_mode_shares_calibration_for_consistent_lens_sets():
     })
 
     assert mode["single_camera"] == "1"
+    assert mode["single_camera_per_image"] == "0"
     assert mode["strategy"] == "shared_camera"
 
 
@@ -29,8 +30,28 @@ def test_colmap_camera_mode_separates_mixed_lens_calibrations():
     })
 
     assert mode["single_camera"] == "0"
+    assert mode["single_camera_per_image"] == "1"
     assert mode["strategy"] == "per_image_camera"
     assert "Mixed camera lenses" in mode["reason"]
+
+
+def test_colmap_camera_mode_separates_different_image_resolutions():
+    from photo_reconstruction.openmvs_backend import resolve_colmap_camera_mode
+
+    mode = resolve_colmap_camera_mode({
+        "camera": {"mixed_lenses_detected": False, "warnings": []},
+        "image_dimensions": {
+            "dimensions": [
+                {"width": 4032, "height": 3024},
+                {"width": 1920, "height": 1080},
+            ]
+        },
+    })
+
+    assert mode["single_camera"] == "0"
+    assert mode["single_camera_per_image"] == "1"
+    assert mode["strategy"] == "per_image_camera"
+    assert "Different image dimensions" in mode["reason"]
 
 
 def test_openmvs_requires_six_photos_before_tool_lookup(tmp_path: Path) -> None:
