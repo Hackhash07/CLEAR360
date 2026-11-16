@@ -40,6 +40,29 @@ def test_open_scene_surface_is_not_mistaken_for_a_failed_solid(tmp_path: Path):
     assert report["checks"]["open_surface_allowed"] is True
 
 
+def test_disconnected_parts_are_reported_without_automatic_deletion(tmp_path: Path):
+    mesh_path = tmp_path / "two_parts.ply"
+    mesh = trimesh.Trimesh(
+        vertices=np.array(
+            [
+                [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0],
+                [3.0, 0.0, 0.0], [4.0, 0.0, 0.0], [3.0, 1.0, 0.0],
+            ],
+            dtype=np.float64,
+        ),
+        faces=np.array([[0, 1, 2], [3, 4, 5]], dtype=np.int64),
+        process=False,
+    )
+    mesh.export(mesh_path)
+
+    report = audit_reconstruction_outputs(mesh_path)
+
+    assert report["geometry"]["connected_components"] == 2
+    assert len(mesh.faces) == 2
+    assert any("disconnected components" in warning for warning in report["warnings"])
+    assert report["policy"]["automatic_component_deletion"] is False
+
+
 def test_obj_material_and_diffuse_map_references_are_checked(tmp_path: Path):
     obj = tmp_path / "scene.obj"
     mtl = tmp_path / "scene.mtl"
