@@ -98,3 +98,24 @@ def test_resume_runs_every_openmvs_stage_from_session_working_directory(tmp_path
     assert (session / "mesh").is_dir()
     assert (session / "mesh_before_dense_resume_v2").is_dir()
     assert report["method"].startswith("resume from existing dense scene")
+
+
+
+def test_resume_can_install_when_failed_session_has_no_mesh_folder(tmp_path, monkeypatch):
+    import scripts.resume_openmvs_from_dense as resume_module
+
+    session = _valid_session(tmp_path)
+    (session / "mesh").rmdir()
+
+    class ReachedOpenMVS(Exception):
+        pass
+
+    monkeypatch.setattr(resume_module, "_binary", lambda name: f"/fake/{name}")
+    monkeypatch.setattr(
+        resume_module,
+        "_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ReachedOpenMVS()),
+    )
+    with pytest.raises(ReachedOpenMVS):
+        resume_module.resume_from_dense(session)
+    assert not (session / "mesh_before_dense_resume_v2").exists()

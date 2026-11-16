@@ -124,8 +124,8 @@ def resume_from_dense(
         )
     if not (session / "original_images").is_dir():
         raise FileNotFoundError(f"Original photographs missing: {session / 'original_images'}")
-    if not mesh_dir.is_dir():
-        raise FileNotFoundError(f"Existing session mesh folder missing: {mesh_dir}")
+    if mesh_dir.exists() and not mesh_dir.is_dir():
+        raise NotADirectoryError(f"Session mesh path is not a directory: {mesh_dir}")
     if backup_dir.exists():
         raise FileExistsError(
             f"Backup already exists: {backup_dir}. Refusing to overwrite it."
@@ -280,23 +280,30 @@ def resume_from_dense(
             "global_seam_leveling": True,
         },
         "texture_maps": map_paths,
-        "backup_directory": str(backup_dir),
+        "backup_directory": str(backup_dir) if mesh_dir.exists() else None,
+        "installed_without_prior_mesh": not mesh_dir.exists(),
         "staging_directory": str(stage),
         "log_file": str(log_file),
     }
 
-    os.replace(mesh_dir, backup_dir)
+    had_existing_mesh = mesh_dir.exists()
+    if had_existing_mesh:
+        os.replace(mesh_dir, backup_dir)
     try:
         os.replace(export_dir, mesh_dir)
     except Exception:
-        os.replace(backup_dir, mesh_dir)
+        if had_existing_mesh and backup_dir.exists():
+            os.replace(backup_dir, mesh_dir)
         raise
 
     (session / "dense_resume_report.json").write_text(
         json.dumps(report, indent=2), encoding="utf-8"
     )
     print(f"Mesh installed: {mesh_dir}")
-    print(f"Previous mesh preserved: {backup_dir}")
+    if had_existing_mesh:
+        print(f"Previous mesh preserved: {backup_dir}")
+    else:
+        print("No previous mesh folder existed; the validated mesh was installed as new.")
     print(f"Saved dense cloud reused: {dense_ply}")
     print(f"Registered camera poses: {pose_count}")
     print(f"Camera-up consistency: {consistency:.3f}")
