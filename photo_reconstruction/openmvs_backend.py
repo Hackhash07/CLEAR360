@@ -39,6 +39,31 @@ from photo_reconstruction.scene_orientation import (
 ProgressCallback = Optional[Callable[[int, str], None]]
 
 
+def resolve_colmap_camera_mode(photo_set_report: Optional[dict]) -> dict:
+    """Choose COLMAP camera sharing from audited upload camera metadata.
+
+    Same-lens captures share one calibration to stabilize bundle adjustment.
+    Mixed lens/device uploads get independent per-image camera models.
+    """
+    camera_report = (photo_set_report or {}).get("camera") or {}
+    mixed_lenses = bool(camera_report.get("mixed_lenses_detected", False))
+    warnings = list(camera_report.get("warnings") or [])
+    if mixed_lenses:
+        return {
+            "single_camera": "0",
+            "strategy": "per_image_camera",
+            "reason": (
+                "; ".join(str(item) for item in warnings)
+                or "Mixed camera/lens metadata was detected."
+            ),
+        }
+    return {
+        "single_camera": "1",
+        "strategy": "shared_camera",
+        "reason": "No mixed camera/lens metadata was detected in the uploaded photo set.",
+    }
+
+
 def _colmap_registration_summary(
     images_txt: Path,
     image_paths: list[Path],
@@ -225,6 +250,8 @@ class OpenMVSBackend:
         log_file = session_dir / "openmvs_pipeline.log"
         log_file.write_text("CLEAR360 OpenMVS pipeline\n", encoding="utf-8")
 
+        camera_mode = resolve_colmap_camera_mode(photo_set_report)
+
         preset = quality_preset.lower()
         if preset in {"draft", "quick"}:
             feature_size, max_image_size, max_resolution, resolution_level = 1000, 1000, 800, 1
@@ -242,12 +269,13 @@ class OpenMVSBackend:
         sparse_out = sparse / "0"
         self._run(
             [colmap, "feature_extractor", "--database_path", str(db),
-             "--image_path", str(images_dir), "--ImageReader.single_camera", "1",
+             "--image_path", str(images_dir), "--ImageReader.single_camera", camera_mode["single_camera"],
              "--ImageReader.camera_model", "SIMPLE_RADIAL",
              "--SiftExtraction.max_image_size", str(max_image_size),
              "--SiftExtraction.max_num_features", str(feature_size),
              "--SiftExtraction.use_gpu", "0"],
-            work, log_file, progress_cb, 8, "Extracting image features (COLMAP)...",
+            work, log_file, progress_cb, 8,
+             f"Extracting image features (COLMAP; {camera_mode['strategy']})...",
         )
         self._run(
             [colmap, "exhaustive_matcher", "--database_path", str(db),
@@ -278,6 +306,7 @@ class OpenMVSBackend:
             image_paths,
             pose_text_dir / "points3D.txt",
         )
+        registration_summary["camera_calibration"] = camera_mode
         if registration_summary["registered_count"] < 2:
             raise RuntimeError(
                 "COLMAP registered fewer than two uploaded photographs; "
