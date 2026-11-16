@@ -2,11 +2,11 @@
 viewer/phone_panel.py — Smartphone Photograph to 3D World GUI Panel (M7.3)
 ========================================================================
 
-Provides the desktop interface for:
+Provides an upload-first desktop workflow for:
   1. Multi-photo upload and file management (JPG, PNG, HEIC).
   2. Thumbnail preview and EXIF metadata inspector.
   3. Image quality diagnostics (blur, exposure, texture score).
-  4. Reconstruction configuration (quality preset, metric reference distance).
+  4. Automatic reconstruction-engine detection and balanced quality selection.
   5. Asynchronous photogrammetry execution with real-time progress tracking.
   6. Session management and instant 3D viewport scene loading.
 """
@@ -402,10 +402,12 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
 
         count = len(self.selected_image_paths)
         self.lbl_photo_count.setText(f"{count} photographs selected (min 2, rec 4–40+)")
-        if self.combo_backend.currentData() == "openmvs" and count < 6:
-            self.lbl_status.setText("COLMAP + OpenMVS needs at least 6 overlapping photos. Add more viewpoints.")
-        elif count > 0 and self.list_photos.currentRow() == -1:
+        if count > 0 and self.list_photos.currentRow() == -1:
             self.list_photos.setCurrentRow(0)
+        if count >= 2:
+            self.lbl_status.setText(
+                f"{count} photographs ready. CLEAR360 will select the reconstruction engine automatically."
+            )
 
     def _on_clear_photos_clicked(self):
         """Clear selected images."""
