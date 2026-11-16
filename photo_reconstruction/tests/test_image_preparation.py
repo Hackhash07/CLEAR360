@@ -84,13 +84,13 @@ def test_tiff_exif_is_copied_to_normalized_jpeg_when_available(tmp_path: Path):
 
 
 def test_same_basenames_receive_distinct_sfm_and_archive_names(tmp_path: Path):
-    first = tmp_path / "a" / "object.heic"
-    second = tmp_path / "b" / "object.heic"
+    first = tmp_path / "a" / "object.bmp"
+    second = tmp_path / "b" / "object.bmp"
     first.parent.mkdir()
     second.parent.mkdir()
     rgb = np.full((48, 64, 3), 90, dtype=np.uint8)
-    Image.fromarray(rgb).save(first, format="JPEG")
-    Image.fromarray(255 - rgb).save(second, format="JPEG")
+    Image.fromarray(rgb).save(first, format="BMP")
+    Image.fromarray(255 - rgb).save(second, format="BMP")
 
     first_result = stage_reconstruction_image(
         first, rgb, tmp_path / "session" / "source_uploads",
