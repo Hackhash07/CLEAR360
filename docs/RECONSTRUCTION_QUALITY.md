@@ -88,3 +88,20 @@ Photo-set preflight does **not** claim to measure visual overlap. The report say
 `overlap.status = not_measured` until COLMAP/SfM has produced camera poses and
 shared 3D tracks. Post-SfM camera co-visibility diagnostics then report connected
 camera groups, isolated views and shared-track support.
+
+## Camera calibration selection
+
+The OpenMVS backend selects COLMAP camera sharing from the upload audit:
+
+- Consistent camera/lens metadata and matching image dimensions use one shared
+  camera model.
+- Mixed lens/device metadata or different image dimensions use an independent
+  camera model per image.
+- Original-upload EXIF camera metadata is retained when an upload is converted
+  to JPEG and the conversion does not preserve EXIF.
+
+COLMAP recommends sharing intrinsics when images come from the same physical
+camera with identical settings. Different resolutions cannot safely be forced
+into a single shared camera calibration; per-image calibration is used instead.
+The selected strategy and reason are recorded under
+`registration.camera_calibration` in the OpenMVS session report.
