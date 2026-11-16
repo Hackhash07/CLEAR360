@@ -23,6 +23,8 @@ dependencies = [
     "Pillow>=10.3",
     "OpenEXR>=3.2",
     "trimesh>=4.4",
+    "matplotlib>=3.8",
+    "pycolmap>=3.10",
 ]
 
 [project.optional-dependencies]
