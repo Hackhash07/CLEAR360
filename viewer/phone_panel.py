@@ -717,6 +717,10 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         if photo_set:
             quality_label += f" · Photo set: {str(photo_set.get('status', 'unknown')).upper()}"
         registration = result_report.get("registration") or {}
+        calibration = registration.get("camera_calibration") or {}
+        calibration_strategy = calibration.get("strategy")
+        if calibration_strategy:
+            quality_label += f" · Calibration: {calibration_strategy.replace('_', ' ').upper()}"
         overlap = (
             registration.get("camera_overlap")
             or result_report.get("camera_overlap")
