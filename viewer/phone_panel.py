@@ -117,11 +117,12 @@ class ReconstructionWorker(QtCore.QThread):
                         "failed": len(result.get("failed_images", [])),
                     },
                     "registration": registration,
+                    "camera_overlap": registration.get("camera_overlap", {}),
                     "geometric_metrics": {
                         "sparse_points": result.get("sparse_point_count", 0),
                         "mesh_vertices": geometry_quality.get("vertex_count", 0),
                         "mesh_triangles": geometry_quality.get("face_count", 0),
-                        "mean_reprojection_error_px": result.get("reprojection_error_px", 0.0),
+                        "mean_reprojection_error_px": result.get("reprojection_error_px"),
                     },
                     "mesh_quality": mesh_quality,
                     "diagnostics": {
@@ -622,7 +623,11 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             else f"Mesh QA: {quality_status.upper()}"
         )
         registration = result_report.get("registration") or {}
-        overlap = registration.get("camera_overlap") or {}
+        overlap = (
+            registration.get("camera_overlap")
+            or result_report.get("camera_overlap")
+            or {}
+        )
         if overlap:
             if not overlap.get("available", False):
                 overlap_status = "NOT AVAILABLE"
