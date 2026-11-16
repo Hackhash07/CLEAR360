@@ -185,11 +185,6 @@ class OpenMVSBackend:
         session_dir = Path(session_dir)
         images_dir = session_dir / "original_images"
         images_dir.mkdir(parents=True, exist_ok=True)
-        if len(image_paths) < 6:
-            raise ValueError(
-                "OpenMVS reconstruction requires at least 6 overlapping photographs. "
-                "Use a walk-around photo sequence with substantial shared scene content."
-            )
 
         colmap_candidate = Path(self.colmap_bin).expanduser()
         if colmap_candidate.is_file() and os.access(colmap_candidate, os.X_OK):
@@ -206,7 +201,7 @@ class OpenMVSBackend:
         interface_colmap = self._binary("InterfaceCOLMAP")
 
         # Audit only after executable checks so dependency errors remain actionable;
-        # no reconstruction stages or output folders are created before this gate.
+        # no OpenMVS work/stage folders are created before this gate.
         from photo_reconstruction.photo_set_auditor import PhotoSetQualityAuditor
 
         photo_set_report = photo_set_report or PhotoSetQualityAuditor.audit_paths(image_paths)
