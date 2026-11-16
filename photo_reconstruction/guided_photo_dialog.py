@@ -84,6 +84,16 @@ class PhotoPolygonView(QtWidgets.QGraphicsView):
         self.clear_current_points()
         return points
 
+    def undo_last_point(self) -> bool:
+        if not self._current_points:
+            return False
+        self._current_points.pop()
+        if self._point_items:
+            self._scene.removeItem(self._point_items.pop())
+        if self._line_items:
+            self._scene.removeItem(self._line_items.pop())
+        return True
+
     def clear_current_points(self) -> None:
         for item in self._point_items + self._line_items:
             self._scene.removeItem(item)
@@ -254,11 +264,10 @@ class GuidedPhotoEditorDialog(QtWidgets.QDialog):
         self.btn_undo.setEnabled(False)
 
     def _undo_point(self) -> None:
-        if not self._drawing or not self.view._current_points:
+        if not self._drawing:
             return
-        self.view.clear_current_points()
-        # The UI's current in-progress polygon is cleared so the user can redraw it cleanly.
-        self.btn_undo.setEnabled(False)
+        has_points = self.view.undo_last_point()
+        self.btn_undo.setEnabled(has_points and bool(self.view._current_points))
 
     def _clear_regions(self) -> None:
         self.view.clear_regions()
