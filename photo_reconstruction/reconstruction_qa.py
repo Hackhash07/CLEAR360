@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import shlex
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -161,6 +162,109 @@ def _audit_geometry(mesh: trimesh.Trimesh) -> dict[str, Any]:
         ).round(4).tolist(),
         "coordinate_scale": "un-calibrated SfM units unless scale calibration is supplied",
     }
+
+
+def summarize_camera_overlap(
+    camera_names: list[str],
+    pairwise_shared_tracks: dict[tuple[str, str], int],
+    per_camera_track_counts: dict[str, int],
+    *,
+    minimum_shared_tracks: int = 15,
+) -> dict[str, Any]:
+    """Summarize camera connectivity from shared COLMAP 3D tracks."""
+    if minimum_shared_tracks < 1:
+        raise ValueError("minimum_shared_tracks must be at least one.")
+
+    names = sorted(set(camera_names))
+    normalized_pairs = {
+        tuple(sorted((name_a, name_b))): int(count)
+        for (name_a, name_b), count in pairwise_shared_tracks.items()
+    }
+    adjacency = {name: set() for name in names}
+    observed_pairs = []
+    supported_pairs = []
+
+    for name_a, name_b in combinations(names, 2):
+        shared_count = normalized_pairs.get((name_a, name_b), 0)
+        if shared_count <= 0:
+            continue
+        pair = {
+            "image_a": name_a,
+            "image_b": name_b,
+            "shared_3d_tracks": shared_count,
+        }
+        observed_pairs.append(pair)
+        if shared_count >= minimum_shared_tracks:
+            adjacency[name_a].add(name_b)
+            adjacency[name_b].add(name_a)
+            supported_pairs.append(pair)
+
+    components: list[list[str]] = []
+    unseen = set(names)
+    while unseen:
+        seed = unseen.pop()
+        component = {seed}
+        stack = [seed]
+        while stack:
+            current = stack.pop()
+            neighbours = adjacency[current].intersection(unseen)
+            unseen.difference_update(neighbours)
+            component.update(neighbours)
+            stack.extend(neighbours)
+        components.append(sorted(component))
+
+    possible_pairs = len(names) * (len(names) - 1) // 2
+    isolated_cameras = sorted(
+        name for name, neighbours in adjacency.items() if not neighbours
+    )
+    warnings = []
+    if len(names) >= 2 and len(components) > 1:
+        warnings.append(
+            f"Registered cameras form {len(components)} separate co-visibility "
+            f"components at the {minimum_shared_tracks}-shared-track threshold."
+        )
+
+    return {
+        "minimum_shared_3d_tracks": minimum_shared_tracks,
+        "registered_camera_count": len(names),
+        "supported_pair_count": len(supported_pairs),
+        "observed_pair_count": len(observed_pairs),
+        "possible_pair_count": possible_pairs,
+        "supported_pair_ratio": round(
+            len(supported_pairs) / max(1, possible_pairs), 4
+        ),
+        "component_count": len(components),
+        "components": components,
+        "isolated_cameras": isolated_cameras,
+        "per_camera_3d_track_counts": {
+            name: int(per_camera_track_counts.get(name, 0)) for name in names
+        },
+        "supported_pairs": supported_pairs,
+        "observed_pairs": observed_pairs,
+        "warnings": warnings,
+    }
+
+
+def audit_camera_overlap_from_track_ids(
+    tracks_by_image: dict[str, set[int] | list[int]],
+    *,
+    minimum_shared_tracks: int = 15,
+) -> dict[str, Any]:
+    """Build a camera-overlap report from per-image COLMAP point3D IDs."""
+    track_sets = {
+        name: set(track_ids) for name, track_ids in tracks_by_image.items()
+    }
+    pairwise_shared = {
+        (name_a, name_b): len(track_sets[name_a].intersection(track_sets[name_b]))
+        for name_a, name_b in combinations(sorted(track_sets), 2)
+    }
+    per_camera = {name: len(track_ids) for name, track_ids in track_sets.items()}
+    return summarize_camera_overlap(
+        list(track_sets),
+        pairwise_shared,
+        per_camera,
+        minimum_shared_tracks=minimum_shared_tracks,
+    )
 
 
 def audit_obj_materials(obj_path: str | Path) -> dict[str, Any]:
