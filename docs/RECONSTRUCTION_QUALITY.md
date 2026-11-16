@@ -54,3 +54,13 @@ for example when an OBJ references a missing texture or a GLB cannot be loaded.
 The quality audit is fail-soft: if a mesh cannot be audited, the report records
 `unavailable` and the reconstruction output is preserved for investigation.
 It does not silently modify or discard the generated geometry.
+
+## Camera-overlap diagnostics
+
+The OpenMVS registration summary also builds a camera co-visibility graph from
+COLMAP `points3D.txt` tracks. A pair of registered cameras is connected when
+they share at least 15 reconstructed 3D tracks, matching the threshold used by
+the repository's M7.3.7 pose-graph audit. The report includes connected
+components, isolated cameras, supported/possible pair counts and per-camera
+track support. Disconnected camera groups are warnings for review; they do not
+automatically invalidate or delete a reconstruction.
