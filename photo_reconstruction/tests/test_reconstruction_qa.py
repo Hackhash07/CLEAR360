@@ -9,6 +9,7 @@ from photo_reconstruction.quality_report import QualityReportGenerator
 from photo_reconstruction.reconstruction_qa import (
     audit_camera_overlap_from_track_ids,
     audit_obj_materials,
+    remap_camera_overlap_names,
     audit_reconstruction_outputs,
 )
 
@@ -103,6 +104,49 @@ def test_camera_overlap_is_unavailable_without_sparse_track_evidence():
     assert report["available"] is False
     assert report["status"] == "unavailable"
     assert report["component_count"] is None
+
+
+def test_camera_overlap_names_are_mapped_back_to_original_uploads():
+    report = {
+        "components": [["photo_a.jpg", "photo_b.jpg"], ["photo_c.jpg"]],
+        "isolated_cameras": ["photo_c.jpg"],
+        "supported_pairs": [
+            {
+                "image_a": "photo_a.jpg",
+                "image_b": "photo_b.jpg",
+                "shared_3d_tracks": 42,
+            }
+        ],
+        "observed_pairs": [
+            {
+                "image_a": "photo_a.jpg",
+                "image_b": "photo_b.jpg",
+                "shared_3d_tracks": 42,
+            }
+        ],
+        "per_camera_3d_track_counts": {
+            "photo_a.jpg": 100,
+            "photo_b.jpg": 80,
+            "photo_c.jpg": 2,
+        },
+        "status": "disconnected",
+    }
+
+    mapped = remap_camera_overlap_names(
+        report,
+        {
+            "photo_a.jpg": "front.heic",
+            "photo_b.jpg": "side.tiff",
+            "photo_c.jpg": "rear.bmp",
+        },
+    )
+
+    assert mapped["components"] == [["front.heic", "side.tiff"], ["rear.bmp"]]
+    assert mapped["isolated_cameras"] == ["rear.bmp"]
+    assert mapped["supported_pairs"][0]["image_a"] == "front.heic"
+    assert mapped["supported_pairs"][0]["image_b"] == "side.tiff"
+    assert mapped["per_camera_3d_track_counts"]["rear.bmp"] == 2
+    assert report["components"][0][0] == "photo_a.jpg"
 
 
 def test_obj_material_and_diffuse_map_references_are_checked(tmp_path: Path):
