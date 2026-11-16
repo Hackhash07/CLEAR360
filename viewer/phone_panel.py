@@ -127,10 +127,38 @@ class ReconstructionWorker(QtCore.QThread):
                 from datetime import datetime
                 from photo_reconstruction.quality_report import classify_reconstruction_grade
 
-                registration = result.get("registration", {})
+                registration = dict(result.get("registration", {}))
                 mesh_quality = result.get("mesh_quality", {})
                 actual_photo_set_report = dict(
                     result.get("photo_set", self.photo_set_report)
+                )
+                from photo_reconstruction.reconstruction_qa import (
+                    remap_camera_overlap_names,
+                )
+
+                working_to_original = {
+                    item["sfm_filename"]: item["original_filename"]
+                    for item in input_manifest
+                }
+                failed_source_names = list(dict.fromkeys(
+                    [
+                        working_to_original.get(name, name)
+                        for name in result.get("failed_images", [])
+                    ]
+                    + [item["image"] for item in staging_errors]
+                ))
+                camera_overlap = registration.get("camera_overlap", {})
+                if camera_overlap:
+                    camera_overlap = remap_camera_overlap_names(
+                        camera_overlap, working_to_original
+                    )
+                    registration["camera_overlap"] = camera_overlap
+                registration["uploaded_count"] = len(self.image_paths)
+                registration["failed_images"] = failed_source_names
+                registration["registration_completeness_percentage"] = round(
+                    100.0 * result.get("registered_count", 0)
+                    / max(1, len(self.image_paths)),
+                    1,
                 )
                 if staging_errors:
                     actual_photo_set_report["staging_errors"] = staging_errors
@@ -140,11 +168,12 @@ class ReconstructionWorker(QtCore.QThread):
                     actual_photo_set_report["status"] = "review"
                 geometry_quality = mesh_quality.get("geometry") or {}
                 mesh_warnings = mesh_quality.get("warnings", [])
-                registration_warnings = registration.get("warnings", [])
+                registration_warnings = list(registration.get("warnings", []))
+                registration_warnings.extend(camera_overlap.get("warnings", []))
                 registered_count = result.get("registered_count", 0)
                 reprojection_error = result.get("reprojection_error_px")
                 reconstruction_grade = classify_reconstruction_grade(
-                    uploaded_count=len(copied),
+                    uploaded_count=len(self.image_paths),
                     registered_count=registered_count,
                     reprojection_error_px=reprojection_error,
                     mesh_quality=mesh_quality,
@@ -155,19 +184,22 @@ class ReconstructionWorker(QtCore.QThread):
                     "session_id": session_dir.name,
                     "reconstruction_grade": reconstruction_grade,
                     "completeness_percentage": round(
-                        100.0 * registered_count / max(1, len(copied)), 1
+                        100.0 * registered_count / max(1, len(self.image_paths)), 1
                     ),
                     "backend": "COLMAP + OpenMVS",
-                    "uploaded_count": len(copied),
+                    "uploaded_count": len(self.image_paths),
                     "registered_count": result.get("registered_count", 0),
-                    "failed_images": result.get("failed_images", []),
+                    "failed_images": failed_source_names,
                     "image_counts": {
-                        "uploaded": len(copied),
-                        "registered": result.get("registered_count", 0),
-                        "failed": len(result.get("failed_images", [])),
+                        "uploaded": len(self.image_paths),
+                        "registered": registered_count,
+                        "failed": len(failed_source_names),
                     },
                     "registration": registration,
-                    "camera_overlap": registration.get("camera_overlap", {}),
+                    "camera_overlap": camera_overlap,
+                    "camera_calibration": registration.get("camera_calibration", {}),
+                    "input_manifest": input_manifest,
+                    "staging_errors": staging_errors,
                     "photo_set": actual_photo_set_report,
                     "geometric_metrics": {
                         "sparse_points": result.get("sparse_point_count", 0),
@@ -177,17 +209,17 @@ class ReconstructionWorker(QtCore.QThread):
                     },
                     "mesh_quality": mesh_quality,
                     "diagnostics": {
-                        "has_failures": bool(result.get("failed_images")),
+                        "has_failures": bool(failed_source_names),
                         "failure_reasons": [
-                            f"Image '{name}' was not registered by COLMAP."
-                            for name in result.get("failed_images", [])
+                            f"Image '{name}' was not registered by COLMAP or could not be staged."
+                            for name in failed_source_names
                         ],
                         "registration_warnings": registration_warnings,
                         "mesh_warnings": mesh_warnings,
                         "guidance": (
                             "Some uploaded photographs were not registered. "
                             "Review failed_images and the reconstruction diagnostics."
-                            if result.get("failed_images") else
+                            if failed_source_names else
                             "Review camera overlap and mesh quality warnings before using this model."
                             if registration_warnings or mesh_warnings else
                             "No camera-overlap or mesh QA warnings were reported."
