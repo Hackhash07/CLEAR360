@@ -59,10 +59,13 @@ Executes:
 
 ## Photo Reconstruction Backend Selection
 
-In **MODE 2: Phone Photo 3D World**, select one of two reconstruction backends:
+In **MODE 2: Phone Photo 3D World**, choose the reconstruction approach that matches the capture:
 
-- **CLEAR360 (Python / Open3D)** — the existing default reconstruction pipeline.
+- **CLEAR360 (Python / Open3D)** — the existing default multi-view reconstruction pipeline.
 - **COLMAP + OpenMVS** — optional external SfM/MVS backend that exports a textured GLB and a PLY mesh into the session folder.
+- **Guided Photo Projection (Blender-style)** — click the separate guided-projection button, choose one sharp reference photo, outline important regions (for example, wall, fountain frame, basin and sculpture), and assign each region a forward depth offset. CLEAR360 builds a textured OBJ/MTL/PNG model with those photo regions as depth layers.
+
+Guided Photo Projection is a **2.5D, user-assisted modelling tool**, not automatic full-volume photogrammetry: it preserves the selected front photograph and adds the depth layers you define. It cannot recover hidden backsides or side geometry that is absent from the reference view. Use COLMAP + OpenMVS with a well-overlapped walk-around sequence when a complete 360-degree model is required.
 
 For the OpenMVS backend, install COLMAP and OpenMVS locally, then set the environment variable to the directory containing the OpenMVS executables (including `InterfaceCOLMAP`):
 
