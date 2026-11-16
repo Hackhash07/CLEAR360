@@ -16,7 +16,16 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+
+# Support direct execution with:
+#   python scripts/resume_openmvs_from_dense.py session_027
+# When Python executes a file by path, sys.path[0] is the scripts directory,
+# not the repository root containing the photo_reconstruction package.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import numpy as np
 
