@@ -32,7 +32,9 @@ def ensure_image_format_support(file_path: str | Path) -> None:
 class ImageLoader:
     """Validates and loads smartphone photographs for 3D reconstruction."""
 
-    SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic", ".tiff", ".bmp"}
+    SUPPORTED_EXTENSIONS = {
+        ".jpg", ".jpeg", ".png", ".heic", ".heif", ".tif", ".tiff", ".bmp"
+    }
 
     MIN_WIDTH = 320
     MIN_HEIGHT = 240
