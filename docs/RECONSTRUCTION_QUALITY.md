@@ -23,7 +23,17 @@ Each completed session may contain:
 - `warnings`: specific conditions that should be inspected.
 
 The geometry score considers degenerate faces, sliver triangles, non-manifold
-edges, inconsistent face winding, and disconnected component count.
+edges, inconsistent face winding, disconnected component count, and the face
+share held by components smaller than 0.1% of the complete mesh.
+
+The geometry-only thresholds are:
+
+- `healthy`: score at least 90.
+- `review`: score from 70 up to (but not including) 90.
+- `poor`: score below 70.
+
+The overall `status` can be `review` even when `geometry_status` is healthy,
+for example when an OBJ references a missing texture or a GLB cannot be loaded.
 
 ## Important interpretation rules
 
