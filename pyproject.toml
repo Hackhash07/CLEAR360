@@ -21,6 +21,7 @@ dependencies = [
     "vispy>=0.17.0",
     "PyYAML>=6.0",
     "Pillow>=10.3",
+    "pillow-heif>=1.0",
     "OpenEXR>=3.2",
     "trimesh>=4.4",
     "matplotlib>=3.8",
