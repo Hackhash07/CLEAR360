@@ -638,108 +638,56 @@ class Clear360Viewport(QtWidgets.QWidget):
             return
 
         if path.suffix.lower() == ".obj":
-            # Use VisPy's own OBJ reader so independent OBJ vertex/UV indices
-            # are resolved together. Mixing Open3D geometry with UV indices
-            # parsed separately can associate texture coordinates with the
-            # wrong triangles and produce the patchwork/faceted preview.
+            # Parse face-corner (v/vt/vn) indices together. OBJ permits
+            # independent position and UV indices, especially at texture seams.
             try:
-                from vispy.io import read_mesh
                 from vispy.visuals.filters import TextureFilter
+                from viewer.obj_texture_loader import load_textured_obj
 
-                verts, faces, normals, uvs = read_mesh(str(path))
-                verts = np.asarray(verts, dtype=np.float32)
-                faces = np.asarray(faces, dtype=np.uint32)
-                uvs = np.asarray(uvs, dtype=np.float32) if uvs is not None else None
-                normals = np.asarray(normals, dtype=np.float32) if normals is not None else None
+                verts, faces, normals, uvs, texture_rgb, atlas_path = load_textured_obj(path)
+                # OBJ texture coordinates use a bottom-left origin. VisPy's
+                # image texture array is row-major from the top, so flip once.
+                texture_rgb = np.ascontiguousarray(np.flipud(texture_rgb))
+                mesh_kwargs = {
+                    "vertices": verts,
+                    "faces": faces,
+                    "color": "white",
+                }
+                if normals is not None and normals.shape == verts.shape:
+                    mesh_kwargs["vertex_normals"] = normals
+                self.visual_textured_mesh.set_data(**mesh_kwargs)
+                if self.texture_filter is None:
+                    self.texture_filter = TextureFilter(
+                        texture=texture_rgb, texcoords=uvs
+                    )
+                    self.visual_textured_mesh.attach(self.texture_filter)
+                else:
+                    self.texture_filter.texture = texture_rgb
+                    self.texture_filter.texcoords = uvs
 
-                # OpenMVS writes the OBJ/MTL beside this atlas. Prefer the
-                # atlas named by the material file, with the known session
-                # filename as a fallback for older outputs.
-                atlas_candidates = []
-                with path.open("r", encoding="utf-8", errors="replace") as handle:
-                    for line in handle:
-                        if line.lower().startswith("mtllib "):
-                            mtl_name = line.split(maxsplit=1)[1].strip()
-                            mtl_path = path.parent / Path(mtl_name).name
-                            if mtl_path.exists():
-                                for mtl_line in mtl_path.read_text(
-                                    encoding="utf-8", errors="replace"
-                                ).splitlines():
-                                    if mtl_line.lstrip().lower().startswith("map_kd "):
-                                        atlas_name = mtl_line.split()[-1]
-                                        candidate = mtl_path.parent / Path(atlas_name).name
-                                        if candidate.exists():
-                                            atlas_candidates.append(candidate)
-                atlas = atlas_candidates[0] if atlas_candidates else path.with_name("scene_mesh.png")
-
-                if (
-                    len(verts) >= 3
-                    and faces.ndim == 2
-                    and faces.shape[1] == 3
-                    and len(faces) > 0
-                    and uvs is not None
-                    and len(uvs) == len(verts)
-                    and atlas.exists()
-                ):
-                    tex_bgr = cv2.imread(str(atlas), cv2.IMREAD_COLOR)
-                    if tex_bgr is not None:
-                        # OBJ UVs use the conventional bottom-left origin;
-                        # VisPy's documented texture workflow flips image rows.
-                        tex_rgb = np.ascontiguousarray(
-                            np.flipud(cv2.cvtColor(tex_bgr, cv2.COLOR_BGR2RGB))
-                        )
-                        mesh_kwargs = {
-                            "vertices": verts,
-                            "faces": faces,
-                            "color": "white",
-                        }
-                        if normals is not None and normals.shape == verts.shape:
-                            mesh_kwargs["vertex_normals"] = normals
-                        self.visual_textured_mesh.set_data(**mesh_kwargs)
-                        if self.texture_filter is None:
-                            self.texture_filter = TextureFilter(
-                                texture=tex_rgb, texcoords=uvs
-                            )
-                            self.visual_textured_mesh.attach(self.texture_filter)
-                        else:
-                            self.texture_filter.texture = tex_rgb
-                            self.texture_filter.texcoords = uvs
-
-                        self.visual_textured_mesh.visible = True
-                        self.visual_surface_mesh.visible = False
-                        # Ignore a small number of stray reconstruction vertices
-                        # when framing the scene; they can otherwise push the camera
-                        # far away and make the real model appear tiny.
-                        bounds_min, bounds_max = np.percentile(
-                            verts, [1.0, 99.0], axis=0
-                        )
-                        center = (bounds_min + bounds_max) * 0.5
-                        extent = float(np.linalg.norm(bounds_max - bounds_min))
-                        self.view.camera.center = tuple(center)
-                        self.view.camera.distance = max(3.0, extent * 1.8)
-                        self.view.camera.elevation = 25.0
-                        self.view.camera.azimuth = -45.0
-                        self._hide_non_scene_overlays()
-                        self.request_update()
-                        print(
-                            "Loaded textured OBJ with aligned UVs: "
-                            f"{len(verts):,} vertices, {len(faces):,} triangles, "
-                            f"atlas={atlas.name}"
-                        )
-                        if len(set(atlas_candidates)) > 1:
-                            print(
-                                "Warning: OBJ references multiple texture atlases; "
-                                "the VisPy preview currently displays the first atlas."
-                            )
-                        return
-                    raise RuntimeError(f"Could not read texture atlas: {atlas}")
-                raise ValueError(
-                    "OBJ is missing aligned UV coordinates, triangle faces, or its texture atlas."
+                self.visual_textured_mesh.visible = True
+                self.visual_surface_mesh.visible = False
+                bounds_min, bounds_max = np.percentile(verts, [1.0, 99.0], axis=0)
+                center = (bounds_min + bounds_max) * 0.5
+                extent = float(np.linalg.norm(bounds_max - bounds_min))
+                self.view.camera.center = tuple(center)
+                self.view.camera.distance = max(3.0, extent * 1.8)
+                self.view.camera.elevation = 20.0
+                self.view.camera.azimuth = -45.0
+                self._hide_non_scene_overlays()
+                self.request_update()
+                print(
+                    "Loaded textured OBJ with independent UV indices: "
+                    f"{len(verts):,} expanded vertices, {len(faces):,} triangles, "
+                    f"atlas={atlas_path.name}"
                 )
+                return
             except Exception as exc:
-                print(f"Notice: OBJ atlas preview fallback: {exc}")
-            # If no UV atlas is available, let the generic mesh loader try the OBJ.
-
+                print(f"Notice: OBJ texture loading failed; using geometry fallback: {exc}")
+                self.canvas.native.setToolTip(
+                    f"Texture atlas could not be loaded: {exc}"
+                )
+            # If the material/UV package is invalid, still show the geometry.
         if path.suffix.lower() in {".glb", ".gltf"}:
             try:
                 import trimesh
