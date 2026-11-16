@@ -117,10 +117,15 @@ def rebuild_session(
             f"Original source images missing: {session_dir / 'original_images'}"
         )
     if stage.exists():
-        raise FileExistsError(
-            f"Rebuild workspace already exists: {stage}. "
-            "Keep it for inspection or choose a different --output-tag."
-        )
+        # A previous failed launch can leave an empty directory before the
+        # first OpenMVS executable starts. Reuse only that harmless empty dir;
+        # never delete partial reconstruction outputs.
+        if any(stage.iterdir()):
+            raise FileExistsError(
+                f"Rebuild workspace already contains files: {stage}. "
+                "Keep it for inspection or choose a different --output-tag."
+            )
+        stage.rmdir()
 
     pose_estimate = estimate_world_up(images_txt)
     if pose_estimate is None:
@@ -250,7 +255,7 @@ def rebuild_session(
         },
         "texture_mesh": {
             "resolution_level": 0, "max_texture_size": 2048,
-            "seam_leveling": False,
+            "seam_leveling": True,
         },
         "unseen_surface_note": (
             "Faces not visible in any source photograph can still be marked with "

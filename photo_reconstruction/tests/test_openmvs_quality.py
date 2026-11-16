@@ -46,4 +46,4 @@ def test_reconstruct_mesh_free_space_support_is_explicit_opt_in():
     default_options = reconstruct_mesh_options()
     experimental_options = reconstruct_mesh_options(free_space_support=True)
     assert "--free-space-support" not in default_options
-    assert "--free-space-support" in experimental_options
+    assert experimental_options[experimental_options.index("--free-space-support") + 1] == "1"

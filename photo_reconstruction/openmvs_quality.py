@@ -66,7 +66,8 @@ def reconstruct_mesh_options(
         "--smooth", "2",
     ]
     if free_space_support:
-        options.append("--free-space-support")
+        # OpenMVS 2.4.0 declares this as a typed bool option, not a zero-arg flag.
+        options.extend(["--free-space-support", "1"])
     return options
 
 
