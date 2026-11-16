@@ -99,6 +99,7 @@ class ReconstructionWorker(QtCore.QThread):
                     session_dir=session_dir,
                     quality_preset=self.quality_preset,
                     progress_cb=progress_callback,
+                    photo_set_report=self.photo_set_report,
                 )
                 import json
                 from datetime import datetime
@@ -174,6 +175,7 @@ class ReconstructionWorker(QtCore.QThread):
                     quality_preset=self.quality_preset,
                     reference_distance_m=self.reference_distance_m,
                     progress_cb=progress_callback,
+                    photo_set_report=self.photo_set_report,
                 )
 
             if res.get("success", False):
