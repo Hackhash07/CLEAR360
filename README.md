@@ -1,16 +1,18 @@
-# CLEAR360 — Real-Time 3D Automotive Surroundings & Smartphone Photogrammetry
+# CLEAR360 — Photo-to-3D Reconstruction & 360° Perception
 
 > **Status — M7.2 & M7.3 COMPLETE**:
 > - **M7.2**: Photorealistic 3D Automotive Surround Reconstruction Viewer with true UV composite texture atlas, visibility-aware overlap triangle culling, detailed 2022 Hyundai Creta SUV model, and distinct Driver vs. Engineering views.
-> - **M7.3**: Smartphone Photograph to 3D World Reconstruction via pycolmap / OpenCV Structure-from-Motion, supplementary Depth Anything V2 multi-view stereo, Screened Poisson Surface Meshing, and metric scale calibration.
+> - **M7.3**: Smartphone Photograph to 3D World Reconstruction via PyCOLMAP / OpenCV Structure-from-Motion, dense multi-view stereo, surface meshing, texture generation, and optional metric scale calibration.
 
 ---
 
 ## 1. Project Overview
 
-**CLEAR360** is an automotive computer vision and 3D perception system combining:
-1. **Four-Camera Automotive Surround**: Reconstructs a full 360° photorealistic 3D perspective environment around a Hyundai Creta SUV in real time using four wide-angle surround cameras (front, rear, left, right).
-2. **Smartphone Photogrammetry 3D World**: An independent photogrammetry pipeline that accepts arbitrary collections of sequential smartphone photos (4 to 40+), extracts EXIF hardware metadata, performs incremental bundle adjustment, backprojects dense metric depth, and recovers watertight, scaled 3D environments.
+**CLEAR360** is a photo-to-3D reconstruction and 360° perception platform with two complementary capabilities:
+1. **General Photo-to-3D Reconstruction**: Accepts a collection of photographs of the same static object or environment, estimates camera poses, reconstructs dense geometry, generates a textured surface, and exports reusable 3D assets.
+2. **Automotive Surround Perception**: Provides the automotive 360° viewer and vehicle-centred perception tools as a specialized application mode.
+
+Metric scale is available only when a trustworthy reference measurement or calibrated camera setup is supplied. Photogrammetry does not guarantee a watertight solid: open surfaces, missing regions and disconnected components are reported for inspection rather than silently filled or deleted.
 
 ---
 
@@ -27,12 +29,13 @@ The application provides three operating modes via the top mode selector bar:
   - **Driver View (`D`)**: Clean, photorealistic cockpit perspective displaying the textured 3D ground, walls, and surroundings without engineering clutter.
   - **Surface View**: Continuous surface mesh with photographic UV texture mapping.
 - **MODE 2: Phone Photo 3D World**
-  - Ingests handheld smartphone photographs (`.jpg`, `.jpeg`, `.png`, `.heic`).
-  - Automated EXIF extraction (35mm equivalent focal length, camera make/model).
-  - Sharpness and exposure quality scoring (Laplacian variance, pixel clipping).
-  - Incremental Structure-from-Motion camera registration.
-  - Known metric reference distance calibration (e.g. wheelbase or known object dimension).
-  - Versioned session management (`data/phone_reconstruction/session_XXX/`).
+  - Ingests photographs (`.jpg`, `.jpeg`, `.png`, `.heic`, and supported image formats) of one static scene.
+  - Audits blur, exposure, feature density, exact duplicates, camera/lens metadata and image dimensions before reconstruction.
+  - Estimates camera poses and sparse 3D structure with incremental Structure-from-Motion.
+  - Reconstructs dense geometry, meshes and photographic textures using the selected backend.
+  - Supports optional metric reference-distance calibration (for example, a known object dimension).
+  - Exports textured OBJ/MTL, GLB and PLY assets with machine-readable quality reports.
+  - Uses versioned sessions under `data/phone_reconstruction/session_XXX/`.
 - **MODE 3: Engineering / Debug (`E`)**
   - Full diagnostic telemetry: 3D occupancy grid voxels (free/occupied/unknown), obstacle bounding boxes, clearance distance vectors, camera frustums, and real-time FPS counter (>100 FPS on Apple Silicon).
 
@@ -88,6 +91,16 @@ python scripts/align_openmvs_session.py
 
 
 **Capture requirements still matter:** photographs must show the same static scene from physically different viewpoints, with strong visual overlap. Each important surface should be visible in multiple images. Six unrelated views or photographs taken from one position by only rotating the camera do not provide enough parallax for a complete 3D model. COLMAP's guidance recommends high overlap, different viewpoints, consistent illumination, and good surface texture. See the [COLMAP reconstruction tutorial](https://colmap.github.io/tutorial.html).
+
+## Reconstruction quality and limitations
+
+A successful export means the files were written; it does not by itself prove that the scene is complete or geometrically accurate. Each completed session now includes:
+
+- `photo_set_report.json`: readable-image, duplicate, image-quality, camera/lens and dimension diagnostics.
+- `reconstruction_quality.json`: mesh topology, disconnected components, small fragments, OBJ material/texture references and GLB loadability.
+- `report.json`: registration, camera-overlap, geometry, texturing and reconstruction-grade summaries.
+
+See [docs/RECONSTRUCTION_QUALITY.md](docs/RECONSTRUCTION_QUALITY.md) for metric definitions and interpretation. Open surfaces are valid outputs for many real scenes. Scale remains in arbitrary SfM coordinate units unless metric calibration is provided.
 
 ## 4. Documentation Reports
 
