@@ -44,6 +44,7 @@ class SfMEngine:
         self,
         image_dir: Path,
         progress_cb: Optional[callable] = None,
+        camera_mode: str = "shared_camera",
     ) -> Dict[str, Any]:
         """
         Execute full SfM pipeline:
@@ -57,6 +58,9 @@ class SfMEngine:
         image_dir : Path
             Directory containing source photographs.
         progress_cb : Optional[callable(pct: int, msg: str)]
+        camera_mode : str
+            "shared_camera" for a consistent same-lens set, or "per_image_camera"
+            when the photo-set audit finds mixed cameras/lenses or dimensions.
 
         Returns
         -------
@@ -78,6 +82,11 @@ class SfMEngine:
             images = [f for f in img_dir.iterdir() if f.is_file() and f.suffix.lower() in {".jpg", ".jpeg", ".png"}]
         num_images = len(images)
 
+        if camera_mode not in {"shared_camera", "per_image_camera"}:
+            raise ValueError(
+                "camera_mode must be 'shared_camera' or 'per_image_camera'."
+            )
+
         if num_images < 2:
             return {
                 "success": False,
@@ -95,24 +104,57 @@ class SfMEngine:
             progress_cb(10, f"Extracting visual features from {num_images} photographs...")
 
         if HAS_PYCOLMAP:
-            res = self._run_pycolmap_sfm(img_dir, images, progress_cb)
+            res = self._run_pycolmap_sfm(
+                img_dir, images, progress_cb, camera_mode=camera_mode
+            )
+            res["camera_calibration_mode"] = camera_mode
             if res.get("success") and res.get("registered_count", 0) >= 2:
                 return res
-            # Graceful fallback to OpenCV Multi-View SfM if pycolmap lacks enough texture/matches
+
+            # The OpenCV fallback estimates one shared K matrix. It cannot honour
+            # per-image calibrations, so never use it for a mixed-camera upload.
+            if camera_mode == "per_image_camera":
+                res["message"] = (
+                    str(res.get("message", "PyCOLMAP reconstruction failed."))
+                    + " OpenCV fallback was not used because it cannot honour "
+                    "per-image camera calibration. Install or repair PyCOLMAP."
+                )
+                return res
+
             if progress_cb:
                 progress_cb(50, "Running OpenCV feature matching and camera pose estimation...")
             res_cv = self._run_opencv_sfm(img_dir, images, progress_cb)
+            res_cv["camera_calibration_mode"] = camera_mode
             if res_cv.get("success") and res_cv.get("registered_count", 0) >= 2:
                 return res_cv
             return res
-        else:
-            return self._run_opencv_sfm(img_dir, images, progress_cb)
+        if camera_mode == "per_image_camera":
+            return {
+                "success": False,
+                "registered_count": 0,
+                "total_images": num_images,
+                "failed_images": [img.name for img in images],
+                "camera_poses": {},
+                "sparse_points": np.zeros((0, 3), dtype=np.float32),
+                "sparse_colors": np.zeros((0, 3), dtype=np.float32),
+                "mean_reprojection_error": None,
+                "camera_calibration_mode": camera_mode,
+                "message": (
+                    "This photo set requires per-image camera calibration, but PyCOLMAP "
+                    "is unavailable. Install PyCOLMAP or recapture using one lens and "
+                    "consistent image dimensions."
+                ),
+            }
+        res = self._run_opencv_sfm(img_dir, images, progress_cb)
+        res["camera_calibration_mode"] = camera_mode
+        return res
 
     def _run_pycolmap_sfm(
         self,
         image_dir: Path,
         images: List[Path],
         progress_cb: Optional[callable],
+        camera_mode: str = "shared_camera",
     ) -> Dict[str, Any]:
         """Execute SfM using pycolmap."""
         num_images = len(images)
@@ -138,9 +180,16 @@ class SfMEngine:
             extract_opts.sift.max_num_features = 2500
 
         try:
+            from photo_reconstruction.camera_calibration import pycolmap_camera_mode
+
+            reader_options = pycolmap.ImageReaderOptions()
+            reader_options.camera_model = "SIMPLE_RADIAL"
+            explicit_camera_mode = pycolmap_camera_mode(pycolmap, camera_mode)
             pycolmap.extract_features(
                 database_path=str(self.db_path),
                 image_path=str(image_dir),
+                camera_mode=explicit_camera_mode,
+                reader_options=reader_options,
                 extraction_options=extract_opts,
             )
         except Exception as e:
