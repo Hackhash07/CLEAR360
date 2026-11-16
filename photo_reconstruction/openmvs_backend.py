@@ -11,6 +11,11 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Optional
 
+from photo_reconstruction.openmvs_tools import (
+    configured_openmvs_root,
+    find_openmvs_executable,
+)
+
 
 ProgressCallback = Optional[Callable[[int, str], None]]
 
@@ -19,21 +24,21 @@ class OpenMVSBackend:
     """Run COLMAP + OpenMVS on a set of photographs and export a textured GLB."""
 
     def __init__(self, openmvs_dir: Optional[Path] = None, colmap_bin: Optional[str] = None):
-        self.openmvs_dir = Path(openmvs_dir).expanduser() if openmvs_dir else None
+        self.openmvs_dir = (
+            Path(openmvs_dir).expanduser() if openmvs_dir else configured_openmvs_root()
+        )
         self.colmap_bin = colmap_bin or shutil.which("colmap") or "colmap"
 
     def _binary(self, name: str) -> str:
-        candidates = []
-        if self.openmvs_dir:
-            candidates.append(self.openmvs_dir / name)
-        found = shutil.which(name)
+        found = find_openmvs_executable(name, openmvs_dir=self.openmvs_dir)
         if found:
-            candidates.append(Path(found))
-        for candidate in candidates:
-            if candidate.is_file() and os.access(candidate, os.X_OK):
-                return str(candidate)
+            return found
+        root_hint = str(self.openmvs_dir) if self.openmvs_dir else (
+            "~/Applications/OpenMVS-2.4.0"
+        )
         raise FileNotFoundError(
-            f"Cannot find executable {name}. Set CLEAR360_OPENMVS_DIR or add OpenMVS to PATH."
+            f"Cannot find executable {name}. Checked {root_hint}, its bin/build subfolders, "
+            "and PATH. Set CLEAR360_OPENMVS_DIR to the OpenMVS install folder."
         )
 
     @staticmethod
