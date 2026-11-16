@@ -128,7 +128,7 @@ def resume_from_dense(
     if stage.exists():
         if any(stage.iterdir()):
             raise FileExistsError(
-                f"Resume workspace contains previous outputs: {stage}. "
+                f"Resume staging directory contains previous outputs: {stage}. "
                 "Keep it for inspection and use a new --output-tag."
             )
         stage.rmdir()
