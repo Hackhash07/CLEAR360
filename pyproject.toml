@@ -5,7 +5,7 @@ build-backend = "setuptools.backends.legacy:build"
 [project]
 name = "clear360"
 version = "0.1.0"
-description = "Real-Time 3D Automotive Surroundings Reconstruction"
+description = "Photo-to-3D Photogrammetry and 360-Degree Perception Platform"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
