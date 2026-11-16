@@ -77,7 +77,7 @@ def _colmap_registration_summary(
                 reprojection_errors.append(error)
 
     mean_error = (
-        float(np.mean(reprojection_errors)) if reprojection_errors else 0.0
+        float(np.mean(reprojection_errors)) if reprojection_errors else None
     )
     return {
         "uploaded_count": len(uploaded_names),
