@@ -142,12 +142,10 @@ def load_textured_obj(
         raise ValueError("OBJ must contain vertices, UV coordinates and polygon faces.")
 
     material_textures = _read_material_textures(path)
-    if "__default__" not in material_textures and not any(
-        material in material_textures for material, _ in face_records
-    ):
-        raise FileNotFoundError(f"No texture atlas was found for the materials in {path.name}.")
-    # An OBJ without explicit usemtl records can still use the fallback atlas.
-    default_texture = material_textures.get("__default__")
+    if not material_textures:
+        raise FileNotFoundError(f"No texture atlas was found for {path.name}.")
+    # When a single diffuse map exists, it can serve faces without an explicit
+    # usemtl directive. Multiple maps require a matching material assignment.
     texture, uv_remap = _make_combined_texture(material_textures)
 
     expanded_vertices: list[list[float]] = []
