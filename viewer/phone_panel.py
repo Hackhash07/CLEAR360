@@ -23,6 +23,8 @@ from photo_reconstruction.exif_reader import ExifReader
 from photo_reconstruction.image_quality import ImageQualityAssessor
 from photo_reconstruction.session_manager import SessionManager
 from photo_reconstruction.pipeline import PhoneReconstructionPipeline
+from photo_reconstruction.guided_photo_dialog import GuidedPhotoEditorDialog
+from photo_reconstruction.guided_surface import build_guided_photo_model
 
 
 class ReconstructionWorker(QtCore.QThread):
@@ -322,6 +324,17 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.btn_start.clicked.connect(self._on_start_clicked)
         grp_exec_layout.addWidget(self.btn_start)
 
+        self.btn_guided_model = QtWidgets.QPushButton("🧱 Guided Photo Projection (Blender-style)")
+        self.btn_guided_model.setToolTip(
+            "Use one sharp reference photo as the texture, then draw regions and assign "
+            "depth offsets to build a clean guided 2.5D relief model."
+        )
+        self.btn_guided_model.setStyleSheet(
+            "background-color: #4338ca; color: #ffffff; font-weight: bold; padding: 7px;"
+        )
+        self.btn_guided_model.clicked.connect(self._on_guided_model_clicked)
+        grp_exec_layout.addWidget(self.btn_guided_model)
+
         self.prog_bar = QtWidgets.QProgressBar()
         self.prog_bar.setRange(0, 100)
         self.prog_bar.setValue(0)
@@ -545,6 +558,91 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
                 "Only enable if you have two identifiable scene points separated by this exact distance. "
                 "Leave unchecked to preserve natural unscaled photogrammetry coordinates."
             )
+
+    def _on_guided_model_clicked(self):
+        """Build a photo-faithful, user-guided 2.5D relief model."""
+        if not self.selected_image_paths:
+            QtWidgets.QMessageBox.information(
+                self, "Add photographs", "Add at least one clear reference photograph first."
+            )
+            return
+
+        current_row = self.list_photos.currentRow()
+        preferred = (
+            self.selected_image_paths[current_row]
+            if 0 <= current_row < len(self.selected_image_paths)
+            else self.selected_image_paths[0]
+        )
+        try:
+            dialog = GuidedPhotoEditorDialog(
+                self.selected_image_paths, preferred_path=preferred, parent=self
+            )
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Could not open photo editor", str(exc))
+            return
+
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+
+        self.btn_guided_model.setEnabled(False)
+        self.btn_start.setEnabled(False)
+        self.btn_add_photos.setEnabled(False)
+        self.prog_bar.setValue(10)
+        self.lbl_status.setText("Building guided photo-projection surfaces...")
+        self.lbl_status.setStyleSheet("font-size: 10px; color: #38bdf8;")
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+        try:
+            session_dir = self.session_manager.create_session()
+            self.prog_bar.setValue(30)
+            result = build_guided_photo_model(
+                dialog.selected_image_path(),
+                dialog.get_regions(),
+                session_dir,
+            )
+            report = dict(result["report"])
+            report["session_id"] = session_dir.name
+            report["uploaded_count"] = len(self.selected_image_paths)
+            report["created_at"] = QtCore.QDateTime.currentDateTime().toString(
+                QtCore.Qt.DateFormat.ISODateWithMs
+            )
+            report["notes"] = (
+                "Guided 2.5D photo projection. The selected photograph is preserved as "
+                "the front texture; user-drawn regions define depth offsets."
+            )
+            (session_dir / "report.json").write_text(
+                __import__("json").dumps(report, indent=2), encoding="utf-8"
+            )
+            self.prog_bar.setValue(100)
+            self.current_session_id = session_dir.name
+            self._refresh_session_list()
+            self.lbl_status.setText(
+                f"Guided photo model ready: {session_dir.name} "
+                f"({report['triangle_count']:,} triangles)."
+            )
+            self.lbl_status.setStyleSheet("font-size: 10px; color: #22c55e;")
+            self.reconstruction_completed.emit(
+                session_dir.name, str(result["mesh_obj"])
+            )
+            QtWidgets.QMessageBox.information(
+                self,
+                "Guided model created",
+                "The guided photo-projection model has been created and loaded. "
+                "It preserves the reference photograph and uses your drawn regions "
+                "as adjustable depth layers. Exported OBJ, MTL and PNG files are in "
+                f"{session_dir / 'mesh'}.",
+            )
+        except Exception as exc:
+            self.prog_bar.setValue(0)
+            self.lbl_status.setText(f"Guided model failed: {exc}")
+            self.lbl_status.setStyleSheet("font-size: 10px; color: #ef4444;")
+            QtWidgets.QMessageBox.critical(
+                self, "Guided model failed", str(exc)
+            )
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+            self.btn_guided_model.setEnabled(True)
+            self.btn_start.setEnabled(True)
+            self.btn_add_photos.setEnabled(True)
 
     def _on_start_clicked(self):
         """Trigger photogrammetry pipeline in dedicated background worker thread."""
