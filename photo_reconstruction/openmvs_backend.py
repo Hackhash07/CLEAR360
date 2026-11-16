@@ -253,9 +253,14 @@ class OpenMVSBackend:
         upload_preflight_snapshot = photo_set_report
         photo_set_report = PhotoSetQualityAuditor.audit_paths(image_paths)
         if upload_preflight_snapshot is not None:
+            photo_set_report = PhotoSetQualityAuditor.merge_source_camera_metadata(
+                photo_set_report,
+                upload_preflight_snapshot,
+            )
             photo_set_report["upload_preflight_snapshot"] = {
                 "status": upload_preflight_snapshot.get("status"),
                 "warnings": upload_preflight_snapshot.get("warnings", []),
+                "camera": upload_preflight_snapshot.get("camera", {}),
             }
         if not photo_set_report.get("can_reconstruct", False):
             raise ValueError(
