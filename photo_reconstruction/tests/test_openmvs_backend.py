@@ -42,16 +42,16 @@ def test_openmvs_registration_summary_reports_registered_and_failed_uploads(tmp_
 
     images_txt = tmp_path / "images.txt"
     images_txt.write_text(
-        "1 1 0 0 0 0 0 0 1 photo_01.jpg\\n"
-        "1 2 3 4 5 6 7 8 9 10\\n"
-        "2 1 0 0 0 0 0 0 1 photo_02.jpg\\n"
-        "1 2 3 4 5 6 7 8 9 10\\n",
+        "1 1 0 0 0 0 0 0 1 photo_01.jpg\n"
+        "1 2 3 4 5 6 7 8 9 10\n"
+        "2 1 0 0 0 0 0 0 1 photo_02.jpg\n"
+        "1 2 3 4 5 6 7 8 9 10\n",
         encoding="utf-8",
     )
     points3d_txt = tmp_path / "points3D.txt"
     points3d_txt.write_text(
-        "1 0 0 1 255 0 0 0.2 1 0 2 1\\n"
-        "2 0 1 1 0 255 0 0.4 1 1 2 2\\n",
+        "1 0 0 1 255 0 0 0.2 1 0 2 1\n"
+        "2 0 1 1 0 255 0 0.4 1 1 2 2\n",
         encoding="utf-8",
     )
 
@@ -80,16 +80,16 @@ def test_openmvs_camera_graph_connects_views_with_fifteen_shared_tracks(tmp_path
 
     images_txt = tmp_path / "images.txt"
     images_txt.write_text(
-        "1 1 0 0 0 0 0 0 1 photo_01.jpg\\n"
-        "1 2 3 4 5 6 7 8 9 10\\n"
-        "2 1 0 0 0 0 0 0 1 photo_02.jpg\\n"
-        "1 2 3 4 5 6 7 8 9 10\\n",
+        "1 1 0 0 0 0 0 0 1 photo_01.jpg\n"
+        "1 2 3 4 5 6 7 8 9 10\n"
+        "2 1 0 0 0 0 0 0 1 photo_02.jpg\n"
+        "1 2 3 4 5 6 7 8 9 10\n",
         encoding="utf-8",
     )
     points3d_txt = tmp_path / "points3D.txt"
     points3d_txt.write_text(
         "".join(
-            f"{index} 0 0 1 255 0 0 0.2 1 {index} 2 {index}\\n"
+            f"{index} 0 0 1 255 0 0 0.2 1 {index} 2 {index}\n"
             for index in range(1, 16)
         ),
         encoding="utf-8",
