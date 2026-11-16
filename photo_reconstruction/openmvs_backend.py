@@ -22,6 +22,7 @@ from photo_reconstruction.openmvs_quality import (
     refine_mesh_options,
     texture_mesh_options,
 )
+from photo_reconstruction.camera_calibration import resolve_colmap_camera_mode
 from photo_reconstruction.openmvs_tools import (
     configured_openmvs_root,
     find_openmvs_executable,
@@ -37,52 +38,6 @@ from photo_reconstruction.scene_orientation import (
 
 
 ProgressCallback = Optional[Callable[[int, str], None]]
-
-
-def resolve_colmap_camera_mode(photo_set_report: Optional[dict]) -> dict:
-    """Choose COLMAP camera sharing from audited upload camera metadata.
-
-    Same-lens captures share one calibration to stabilize bundle adjustment.
-    Mixed lens/device uploads get independent per-image camera models.
-    """
-    report = photo_set_report or {}
-    camera_report = report.get("camera") or {}
-    mixed_lenses = bool(camera_report.get("mixed_lenses_detected", False))
-    warnings = list(camera_report.get("warnings") or [])
-
-    dimensions = report.get("image_dimensions", {}).get("dimensions", [])
-    dimension_pairs = {
-        (int(item["width"]), int(item["height"]))
-        for item in dimensions
-        if item.get("width") and item.get("height")
-    }
-    mixed_resolutions = len(dimension_pairs) > 1
-
-    per_image_calibration = mixed_lenses or mixed_resolutions
-    reasons = []
-    if mixed_lenses:
-        reasons.extend(str(item) for item in warnings)
-    if mixed_resolutions:
-        reasons.append(
-            "Different image dimensions were detected; COLMAP requires shared-camera "
-            "images to have matching dimensions."
-        )
-
-    if per_image_calibration:
-        return {
-            "single_camera": "0",
-            "single_camera_per_image": "1",
-            "strategy": "per_image_camera",
-            "reason": "; ".join(reasons) or "Independent camera calibration is required.",
-        }
-    return {
-        "single_camera": "1",
-        "single_camera_per_image": "0",
-        "strategy": "shared_camera",
-        "reason": (
-            "No mixed camera/lens metadata or image dimensions were detected."
-        ),
-    }
 
 
 def _colmap_registration_summary(
