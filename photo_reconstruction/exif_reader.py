@@ -153,21 +153,25 @@ class ExifReader:
                 continue
             if np.isfinite(value) and value > 0:
                 fx_values.append(value)
-        if len(fx_values) < 2:
-            return False, warnings
-        fx_min, fx_max = min(fx_values), max(fx_values)
+        if len(fx_values) >= 2:
+            fx_min, fx_max = min(fx_values), max(fx_values)
 
-        # If focal length varies by more than 20%, flag mixed lenses
-        ratio = fx_max / (fx_min + 1e-6)
-        if ratio > 1.25:
-            warnings.append(
-                f"Mixed camera lenses detected across session (Focal length variation: {ratio:.1f}x). "
-                f"For optimal 3D photogrammetry, capture all images using the primary 1x lens."
-            )
-            return True, warnings
+            # A 25% normalized focal-length spread is a strong mixed-lens signal.
+            ratio = fx_max / (fx_min + 1e-6)
+            if ratio > 1.25:
+                warnings.append(
+                    f"Mixed camera lenses detected across session "
+                    f"(normalized focal-length variation: {ratio:.1f}x). "
+                    "For optimal 3D photogrammetry, capture all images using the same lens."
+                )
+                return True, warnings
 
-        # Check for multiple models
-        models = set(info["model"] for info in camera_infos if info["model"] != "Smartphone")
+        # Check for multiple camera models even when focal metadata is unavailable.
+        models = {
+            str(info.get("model", "Smartphone"))
+            for info in camera_infos
+            if str(info.get("model", "Smartphone")) not in {"", "Smartphone", "Unknown"}
+        }
         if len(models) > 1:
             warnings.append(f"Multiple camera models detected: {list(models)}. Per-camera bundle adjustment recommended.")
             return True, warnings
