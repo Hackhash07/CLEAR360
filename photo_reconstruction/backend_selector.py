@@ -40,7 +40,13 @@ def resolve_reconstruction_backend(
     """
     env = os.environ if environ is None else environ
     configured_dir = env.get("CLEAR360_OPENMVS_DIR", "").strip()
-    openmvs_dir = Path(configured_dir).expanduser() if configured_dir else None
+    if configured_dir:
+        openmvs_dir = Path(configured_dir).expanduser()
+    else:
+        # Use the common per-user installation path automatically so the
+        # desktop application does not require shell environment setup.
+        default_dir = Path.home() / "Applications" / "OpenMVS-2.4.0"
+        openmvs_dir = default_dir if default_dir.is_dir() else None
 
     configured_colmap = env.get("CLEAR360_COLMAP_BIN", "").strip()
     colmap_path = None
