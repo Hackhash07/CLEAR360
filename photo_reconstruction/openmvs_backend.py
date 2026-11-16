@@ -45,17 +45,34 @@ def _colmap_registration_summary(
     points3d_txt: Path,
 ) -> dict:
     """Summarize registered uploads and sparse reconstruction residuals."""
-    from photo_reconstruction.coverage_diagnostics import parse_images_txt
+    from photo_reconstruction.coverage_diagnostics import (
+        parse_images_txt,
+        parse_points3d_tracks,
+    )
 
     registered = parse_images_txt(images_txt)
     registered_names = {Path(image.name).name for image in registered}
     uploaded_names = {Path(path).name for path in image_paths}
     registered_upload_names = registered_names.intersection(uploaded_names)
     failed_names = sorted(uploaded_names - registered_upload_names)
+    image_id_to_name = {
+        image.image_id: Path(image.name).name for image in registered
+        if Path(image.name).name in uploaded_names
+    }
+    registered_ids = set(image_id_to_name)
 
     reprojection_errors: list[float] = []
     sparse_point_count = 0
+    per_image_tracks: dict[int, int] = {}
+    pairwise_tracks: dict[tuple[int, int], int] = {}
     if points3d_txt.is_file():
+        try:
+            sparse_point_count, per_image_tracks, pairwise_tracks = parse_points3d_tracks(
+                points3d_txt
+            )
+        except (OSError, ValueError):
+            sparse_point_count = 0
+
         for raw_line in points3d_txt.read_text(
             encoding="utf-8", errors="replace"
         ).splitlines():
@@ -72,22 +89,87 @@ def _colmap_registration_summary(
                 error = float(parts[7])
             except ValueError:
                 continue
-            sparse_point_count += 1
             if np.isfinite(error):
                 reprojection_errors.append(error)
+
+    # Build a camera co-visibility graph from shared COLMAP 3D tracks. The
+    # 15-track edge threshold matches the repository's M7.3.7 pose-graph audit.
+    minimum_shared_tracks = 15
+    adjacency = {image_id: set() for image_id in registered_ids}
+    supported_pairs = []
+    for (image_id_a, image_id_b), shared_count in pairwise_tracks.items():
+        if (
+            image_id_a in registered_ids
+            and image_id_b in registered_ids
+            and shared_count >= minimum_shared_tracks
+        ):
+            adjacency[image_id_a].add(image_id_b)
+            adjacency[image_id_b].add(image_id_a)
+            supported_pairs.append({
+                "image_a": image_id_to_name[image_id_a],
+                "image_b": image_id_to_name[image_id_b],
+                "shared_3d_tracks": int(shared_count),
+            })
+
+    camera_components = []
+    unseen = set(registered_ids)
+    while unseen:
+        seed = unseen.pop()
+        component = {seed}
+        stack = [seed]
+        while stack:
+            current = stack.pop()
+            neighbours = adjacency[current].intersection(unseen)
+            unseen.difference_update(neighbours)
+            component.update(neighbours)
+            stack.extend(neighbours)
+        camera_components.append(sorted(image_id_to_name[item] for item in component))
+
+    possible_pairs = len(registered_ids) * (len(registered_ids) - 1) // 2
+    isolated_cameras = sorted(
+        image_id_to_name[image_id]
+        for image_id, neighbours in adjacency.items()
+        if not neighbours
+    )
+    camera_overlap_warnings = []
+    if len(registered_ids) >= 2 and len(camera_components) > 1:
+        camera_overlap_warnings.append(
+            f"Registered cameras form {len(camera_components)} separate co-visibility "
+            f"components at the {minimum_shared_tracks}-shared-track threshold."
+        )
 
     mean_error = (
         float(np.mean(reprojection_errors)) if reprojection_errors else None
     )
+    camera_overlap = {
+        "minimum_shared_3d_tracks": minimum_shared_tracks,
+        "registered_camera_count": len(registered_ids),
+        "supported_pair_count": len(supported_pairs),
+        "possible_pair_count": possible_pairs,
+        "supported_pair_ratio": round(
+            len(supported_pairs) / max(1, possible_pairs), 4
+        ),
+        "component_count": len(camera_components),
+        "components": camera_components,
+        "isolated_cameras": isolated_cameras,
+        "per_camera_3d_track_counts": {
+            image_id_to_name[image_id]: int(per_image_tracks.get(image_id, 0))
+            for image_id in sorted(registered_ids)
+        },
+        "supported_pairs": supported_pairs,
+        "warnings": camera_overlap_warnings,
+    }
     return {
         "uploaded_count": len(uploaded_names),
         "registered_count": len(registered_upload_names),
         "failed_images": failed_names,
         "sparse_point_count": sparse_point_count,
-        "mean_reprojection_error_px": round(mean_error, 4),
+        "mean_reprojection_error_px": round(mean_error, 4) if mean_error is not None else None,
         "registration_completeness_percentage": round(
             100.0 * len(registered_upload_names) / max(1, len(uploaded_names)), 1
         ),
+        "camera_overlap": camera_overlap,
+        "warnings": camera_overlap_warnings,
     }
 
 
