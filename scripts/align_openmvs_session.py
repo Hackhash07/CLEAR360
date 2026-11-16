@@ -7,9 +7,9 @@ import json
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 import numpy as np
-from pathlib import Path
 
 from photo_reconstruction.scene_orientation import (
     align_glb_file,
