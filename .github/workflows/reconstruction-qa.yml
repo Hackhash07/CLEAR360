@@ -13,6 +13,8 @@ on:
       - "viewer/phone_panel.py"
       - "photo_reconstruction/coverage_diagnostics.py"
       - "photo_reconstruction/exif_reader.py"
+      - "photo_reconstruction/image_quality.py"
+      - "photo_reconstruction/tests/test_image_quality_normalization.py"
       - "photo_reconstruction/photo_set_auditor.py"
       - "photo_reconstruction/tests/test_photo_set_auditor.py"
       - "photo_reconstruction/tests/test_reconstruction_qa.py"
@@ -53,7 +55,7 @@ jobs:
       - name: Install focused QA dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install numpy scipy trimesh pytest pillow
+          python -m pip install numpy scipy trimesh pytest pillow opencv-python-headless
 
       - name: Compile integrated reconstruction modules
         run: |
@@ -75,3 +77,4 @@ jobs:
             photo_reconstruction/tests/test_openmvs_quality.py \
             photo_reconstruction/tests/test_coverage_diagnostics.py \
             photo_reconstruction/tests/test_photo_set_auditor.py
+            photo_reconstruction/tests/test_image_quality_normalization.py
