@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from photo_reconstruction.image_loader import ImageLoader
 from photo_reconstruction.image_preparation import stage_reconstruction_image
 
 
@@ -103,3 +104,7 @@ def test_same_basenames_receive_distinct_sfm_and_archive_names(tmp_path: Path):
 
     assert first_result["sfm_filename"] != second_result["sfm_filename"]
     assert Path(first_result["source_archive_path"]).name != Path(second_result["source_archive_path"]).name
+
+def test_image_loader_accepts_every_advertised_phone_photo_extension():
+    for suffix in (".jpg", ".jpeg", ".png", ".heic", ".heif", ".tif", ".tiff", ".bmp"):
+        assert ImageLoader.is_supported(Path(f"sample{suffix}"))
