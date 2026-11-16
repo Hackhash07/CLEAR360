@@ -84,12 +84,20 @@ def _audit_geometry(mesh: trimesh.Trimesh) -> dict[str, Any]:
     sliver_faces = int(np.sum(aspect_ratios > 20.0))
 
     unique_edge_lengths = mesh.edges_unique_length
-    try:
-        connected_components = int(
-            trimesh.graph.connected_component_count(mesh.face_adjacency)
-        )
-    except Exception:
-        connected_components = 1
+    face_adjacency = mesh.face_adjacency
+    if face_count == 0:
+        connected_components = 0
+    elif len(face_adjacency) == 0:
+        # A single isolated triangle is one component; multiple isolated faces
+        # are separate components even though the adjacency edge list is empty.
+        connected_components = face_count
+    else:
+        try:
+            connected_components = int(
+                trimesh.graph.connected_component_count(face_adjacency)
+            )
+        except Exception:
+            connected_components = 1
 
     is_watertight = bool(mesh.is_watertight)
     boundary_edge_count = boundary_edges
