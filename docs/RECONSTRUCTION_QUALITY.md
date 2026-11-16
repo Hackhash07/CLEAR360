@@ -64,3 +64,27 @@ the repository's M7.3.7 pose-graph audit. The report includes connected
 components, isolated cameras, supported/possible pair counts and per-camera
 track support. Disconnected camera groups are warnings for review; they do not
 automatically invalidate or delete a reconstruction.
+
+## Photo-set preflight
+
+Before reconstruction, CLEAR360 audits the entire uploaded set:
+
+- Verifies files can be decoded and have image metadata and quality assessments.
+- Detects byte-identical uploads with SHA-256 hashes; duplicates are reported,
+  never silently deleted.
+- Aggregates blur, exposure/quality status and feature-density warnings.
+- Compares normalized focal estimates so a resolution change alone does not
+  look like a lens change; it also warns when camera models differ.
+- Reports image dimensions and unusual aspect-ratio spreads.
+
+Preflight states:
+
+- `ready`: at least two distinct readable photographs and no preflight warnings.
+- `review`: usable input exists, but warnings should be reviewed. The desktop
+  workflow lets the user continue deliberately.
+- `blocked`: fewer than two distinct, readable photographs remain.
+
+Photo-set preflight does **not** claim to measure visual overlap. The report says
+`overlap.status = not_measured` until COLMAP/SfM has produced camera poses and
+shared 3D tracks. Post-SfM camera co-visibility diagnostics then report connected
+camera groups, isolated views and shared-track support.
