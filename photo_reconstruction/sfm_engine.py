@@ -113,7 +113,8 @@ class SfMEngine:
 
             # The OpenCV fallback estimates one shared K matrix. It cannot honour
             # per-image calibrations, so never use it for a mixed-camera upload.
-            if camera_mode == "per_image_camera":
+            from photo_reconstruction.camera_calibration import can_use_opencv_fallback
+            if not can_use_opencv_fallback(camera_mode):
                 res["message"] = (
                     str(res.get("message", "PyCOLMAP reconstruction failed."))
                     + " OpenCV fallback was not used because it cannot honour "
@@ -128,7 +129,8 @@ class SfMEngine:
             if res_cv.get("success") and res_cv.get("registered_count", 0) >= 2:
                 return res_cv
             return res
-        if camera_mode == "per_image_camera":
+        from photo_reconstruction.camera_calibration import can_use_opencv_fallback
+        if not can_use_opencv_fallback(camera_mode):
             return {
                 "success": False,
                 "registered_count": 0,
