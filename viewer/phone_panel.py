@@ -23,8 +23,7 @@ from photo_reconstruction.exif_reader import ExifReader
 from photo_reconstruction.image_quality import ImageQualityAssessor
 from photo_reconstruction.session_manager import SessionManager
 from photo_reconstruction.pipeline import PhoneReconstructionPipeline
-from photo_reconstruction.guided_photo_dialog import GuidedPhotoEditorDialog
-from photo_reconstruction.guided_surface import build_guided_photo_model
+from photo_reconstruction.backend_selector import resolve_reconstruction_backend
 
 
 class ReconstructionWorker(QtCore.QThread):
@@ -255,58 +254,25 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         layout.addWidget(grp_meta)
 
         # ---------------------------------------------------------------------
-        # 3. Reconstruction Settings & Metric Scale
+        # 3. Automatic Reconstruction
         # ---------------------------------------------------------------------
-        grp_settings = QtWidgets.QGroupBox("3. Reconstruction Options")
+        grp_settings = QtWidgets.QGroupBox("3. Automatic 3D Reconstruction")
         grp_set_layout = QtWidgets.QVBoxLayout(grp_settings)
         grp_set_layout.setSpacing(6)
 
-        lbl_qual = QtWidgets.QLabel("Quality Preset:")
-        lbl_qual.setStyleSheet("font-size: 11px; font-weight: bold;")
-        self.combo_quality = QtWidgets.QComboBox()
-        self.combo_quality.addItem("⚡ Draft (Fast Preview)", "draft")
-        self.combo_quality.addItem("✨ Standard (Recommended)", "standard")
-        self.combo_quality.addItem("💎 High (Detailed Geometry)", "high")
-        self.combo_quality.addItem("👑 Maximum (Ultra Resolution)", "maximum")
-        self.combo_quality.setCurrentIndex(1)
-        grp_set_layout.addWidget(lbl_qual)
-        grp_set_layout.addWidget(self.combo_quality)
-
-        lbl_backend = QtWidgets.QLabel("Reconstruction Backend:")
-        lbl_backend.setStyleSheet("font-size: 11px; font-weight: bold;")
-        self.combo_backend = QtWidgets.QComboBox()
-        self.combo_backend.addItem("CLEAR360 (Python / Open3D)", "native")
-        self.combo_backend.addItem("COLMAP + OpenMVS (Textured GLB)", "openmvs")
-        self.combo_backend.setToolTip(
-            "OpenMVS requires COLMAP and the OpenMVS command-line tools installed locally. "
-            "The Python backend remains the default."
+        self.lbl_auto_engine = QtWidgets.QLabel(
+            "No settings required. CLEAR360 detects the available 3D engine "
+            "and selects a laptop-safe reconstruction quality automatically."
         )
-        grp_set_layout.addWidget(lbl_backend)
-        grp_set_layout.addWidget(self.combo_backend)
+        self.lbl_auto_engine.setWordWrap(True)
+        self.lbl_auto_engine.setStyleSheet("font-size: 11px; color: #cbd5e1;")
+        grp_set_layout.addWidget(self.lbl_auto_engine)
 
-        # Metric scale calibration
-        self.chk_scale = QtWidgets.QCheckBox("Apply Known Metric Distance")
-        self.chk_scale.setChecked(False)  # Unchecked by default
-        self.chk_scale.setToolTip(
-            "Only enable if you have two identifiable scene points separated by this exact distance.\n"
-            "Leave unchecked to preserve natural unscaled photogrammetry coordinates."
+        self.lbl_auto_quality = QtWidgets.QLabel(
+            "Quality: Automatic (balanced detail and memory use)"
         )
-        self.chk_scale.toggled.connect(self._on_scale_toggled)
-        grp_set_layout.addWidget(self.chk_scale)
-
-        scale_row = QtWidgets.QHBoxLayout()
-        lbl_dist = QtWidgets.QLabel("Reference Dist (m):")
-        lbl_dist.setStyleSheet("font-size: 11px;")
-        self.spin_scale = QtWidgets.QDoubleSpinBox()
-        self.spin_scale.setRange(0.1, 500.0)
-        self.spin_scale.setValue(2.61)  # Default Creta wheelbase or ~2.6m car scale
-        self.spin_scale.setSingleStep(0.1)
-        self.spin_scale.setSuffix(" m")
-        self.spin_scale.setEnabled(False)  # Disabled until user checks the box
-        scale_row.addWidget(lbl_dist)
-        scale_row.addWidget(self.spin_scale)
-        grp_set_layout.addLayout(scale_row)
-        self.combo_backend.currentIndexChanged.connect(self._on_backend_changed)
+        self.lbl_auto_quality.setStyleSheet("font-size: 10px; color: #38bdf8;")
+        grp_set_layout.addWidget(self.lbl_auto_quality)
 
         layout.addWidget(grp_settings)
 
@@ -323,17 +289,6 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         )
         self.btn_start.clicked.connect(self._on_start_clicked)
         grp_exec_layout.addWidget(self.btn_start)
-
-        self.btn_guided_model = QtWidgets.QPushButton("🧱 Guided Photo Projection")
-        self.btn_guided_model.setToolTip(
-            "Use one sharp reference photo as the texture, then draw regions and assign "
-            "depth offsets to build a clean guided 2.5D relief model."
-        )
-        self.btn_guided_model.setStyleSheet(
-            "background-color: #4338ca; color: #ffffff; font-weight: bold; padding: 7px;"
-        )
-        self.btn_guided_model.clicked.connect(self._on_guided_model_clicked)
-        grp_exec_layout.addWidget(self.btn_guided_model)
 
         self.prog_bar = QtWidgets.QProgressBar()
         self.prog_bar.setRange(0, 100)
@@ -538,140 +493,39 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.lbl_meta_quality.setText("Quality Rating: --")
         self.lbl_meta_quality.setStyleSheet("font-weight: bold; color: #94a3b8;")
 
-    def _on_scale_toggled(self, checked: bool):
-        """Enable the scale field only when the selected backend supports calibration."""
-        self.spin_scale.setEnabled(
-            checked and self.combo_backend.currentData() != "openmvs"
-        )
-
-    def _on_backend_changed(self, _index: int = -1):
-        """Keep backend-specific options explicit in the upload panel."""
-        is_openmvs = self.combo_backend.currentData() == "openmvs"
-        self.chk_scale.setEnabled(not is_openmvs)
-        self.spin_scale.setEnabled(not is_openmvs and self.chk_scale.isChecked())
-        if is_openmvs:
-            self.chk_scale.setToolTip(
-                "Metric scale calibration is currently available in the CLEAR360 Python backend only."
-            )
-        else:
-            self.chk_scale.setToolTip(
-                "Only enable if you have two identifiable scene points separated by this exact distance. "
-                "Leave unchecked to preserve natural unscaled photogrammetry coordinates."
-            )
-
-    def _on_guided_model_clicked(self):
-        """Build a photo-faithful, user-guided 2.5D relief model."""
-        if not self.selected_image_paths:
-            QtWidgets.QMessageBox.information(
-                self, "Add photographs", "Add at least one clear reference photograph first."
-            )
-            return
-
-        current_row = self.list_photos.currentRow()
-        preferred = (
-            self.selected_image_paths[current_row]
-            if 0 <= current_row < len(self.selected_image_paths)
-            else self.selected_image_paths[0]
-        )
-        try:
-            dialog = GuidedPhotoEditorDialog(
-                self.selected_image_paths, preferred_path=preferred, parent=self
-            )
-        except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "Could not open photo editor", str(exc))
-            return
-
-        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
-            return
-
-        self.btn_guided_model.setEnabled(False)
-        self.btn_start.setEnabled(False)
-        self.btn_add_photos.setEnabled(False)
-        self.prog_bar.setValue(10)
-        self.lbl_status.setText("Building guided photo-projection surfaces...")
-        self.lbl_status.setStyleSheet("font-size: 10px; color: #38bdf8;")
-        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
-        try:
-            session_dir = self.session_manager.create_session()
-            self.prog_bar.setValue(30)
-            result = build_guided_photo_model(
-                dialog.selected_image_path(),
-                dialog.get_regions(),
-                session_dir,
-            )
-            report = dict(result["report"])
-            report["session_id"] = session_dir.name
-            report["uploaded_count"] = len(self.selected_image_paths)
-            report["created_at"] = QtCore.QDateTime.currentDateTime().toString(
-                QtCore.Qt.DateFormat.ISODateWithMs
-            )
-            report["notes"] = (
-                "Guided 2.5D photo projection. The selected photograph is preserved as "
-                "the front texture; user-drawn regions define depth offsets."
-            )
-            (session_dir / "report.json").write_text(
-                __import__("json").dumps(report, indent=2), encoding="utf-8"
-            )
-            self.prog_bar.setValue(100)
-            self.current_session_id = session_dir.name
-            self._refresh_session_list()
-            self.lbl_status.setText(
-                f"Guided photo model ready: {session_dir.name} "
-                f"({report['triangle_count']:,} triangles)."
-            )
-            self.lbl_status.setStyleSheet("font-size: 10px; color: #22c55e;")
-            self.reconstruction_completed.emit(
-                session_dir.name, str(result["mesh_obj"])
-            )
-            QtWidgets.QMessageBox.information(
-                self,
-                "Guided model created",
-                "The guided photo-projection model has been created and loaded. "
-                "It preserves the reference photograph and uses your drawn regions "
-                "as adjustable depth layers. Exported OBJ, MTL and PNG files are in "
-                f"{session_dir / 'mesh'}.",
-            )
-        except Exception as exc:
-            self.prog_bar.setValue(0)
-            self.lbl_status.setText(f"Guided model failed: {exc}")
-            self.lbl_status.setStyleSheet("font-size: 10px; color: #ef4444;")
-            QtWidgets.QMessageBox.critical(
-                self, "Guided model failed", str(exc)
-            )
-        finally:
-            QtWidgets.QApplication.restoreOverrideCursor()
-            self.btn_guided_model.setEnabled(True)
-            self.btn_start.setEnabled(True)
-            self.btn_add_photos.setEnabled(True)
-
     def _on_start_clicked(self):
-        """Trigger photogrammetry pipeline in dedicated background worker thread."""
-        backend = self.combo_backend.currentData() or "native"
+        """Run the best installed reconstruction engine with automatic settings."""
+        if len(self.selected_image_paths) < 2:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Add more photographs",
+                "Please upload at least two photographs with overlapping views of the same scene.",
+            )
+            return
+
+        backend, backend_reason = resolve_reconstruction_backend()
         minimum_photos = 6 if backend == "openmvs" else 2
         if len(self.selected_image_paths) < minimum_photos:
-            if backend == "openmvs":
-                message = (
-                    "COLMAP + OpenMVS requires at least 6 overlapping photographs. "
-                    "Capture a walk-around sequence with substantial shared scene content."
-                )
-            else:
-                message = (
-                    "Please add at least 2 overlapping smartphone photographs to begin 3D reconstruction.\n\n"
-                    "Tip: 4 photographs covering the surround view or 8–40+ overlapping views yield optimal results."
-                )
-            QtWidgets.QMessageBox.warning(self, "Insufficient Photographs", message)
+            QtWidgets.QMessageBox.warning(
+                self,
+                "More overlapping photographs needed",
+                "The automatic COLMAP + OpenMVS engine needs at least six overlapping "
+                "photographs. Add more views of the same scene.",
+            )
             return
 
         self.btn_start.setEnabled(False)
         self.btn_add_photos.setEnabled(False)
         self.prog_bar.setValue(0)
-        self.lbl_status.setText("Initializing photogrammetry engine...")
+        self.lbl_auto_engine.setText(f"Automatic engine: {backend_reason}")
+        self.lbl_status.setText("Preparing automatic 3D reconstruction...")
         self.lbl_status.setStyleSheet("font-size: 10px; color: #38bdf8;")
 
-        preset = self.combo_quality.currentData() or "standard"
-        ref_dist = self.spin_scale.value() if self.chk_scale.isChecked() else None
+        # A balanced preset is selected automatically to avoid the excessive
+        # runtime and memory use of Maximum on an 8 GB laptop.
+        preset = "standard"
+        reference_distance = None
 
-        # Start live elapsed timer
         import time
         self._recon_start_time = time.time()
         if not hasattr(self, "elapsed_timer"):
@@ -680,12 +534,11 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             self.elapsed_timer.timeout.connect(self._update_elapsed_ui)
         self.elapsed_timer.start()
 
-        # Start managed QThread worker
         self.worker = ReconstructionWorker(
             pipeline=self.pipeline,
             image_paths=self.selected_image_paths,
             quality_preset=preset,
-            reference_distance_m=ref_dist,
+            reference_distance_m=reference_distance,
             backend=backend,
             parent=self,
         )
