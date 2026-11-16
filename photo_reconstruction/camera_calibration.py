@@ -51,6 +51,15 @@ def resolve_colmap_camera_mode(photo_set_report: Mapping[str, Any] | None) -> di
     }
 
 
+def can_use_opencv_fallback(strategy: str) -> bool:
+    """The native OpenCV fallback supports only one shared camera matrix."""
+    if strategy not in {"shared_camera", "per_image_camera"}:
+        raise ValueError(
+            "strategy must be 'shared_camera' or 'per_image_camera'."
+        )
+    return strategy == "shared_camera"
+
+
 def pycolmap_camera_mode(pycolmap_module: Any, strategy: str) -> Any:
     """Return the PyCOLMAP enum matching CLEAR360's camera-calibration strategy."""
     enum_name = "SINGLE" if strategy == "shared_camera" else "PER_IMAGE"
