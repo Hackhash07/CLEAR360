@@ -279,17 +279,30 @@ def audit_reconstruction_outputs(
         checks["geometry_quality_available"] = False
 
     if geometry is None:
+        geometry_status = "unavailable"
         status = "unavailable"
-    elif score >= 90.0:
-        status = "healthy"
-    elif score >= 70.0:
-        status = "review"
     else:
-        status = "poor"
+        geometry_status = (
+            "healthy" if score >= 90.0 else "review" if score >= 70.0 else "poor"
+        )
+        export_review_required = (
+            checks.get("obj_material_references_resolve") is False
+            or checks.get("glb_loadable") is False
+            or (
+                checks.get("texture_coverage_percentage") is not None
+                and checks["texture_coverage_percentage"] < 70.0
+            )
+        )
+        status = (
+            "poor" if geometry_status == "poor"
+            else "review" if geometry_status == "review" or export_review_required
+            else "healthy"
+        )
 
     return {
         "schema_version": 1,
         "status": status,
+        "geometry_status": geometry_status,
         "score": round(float(score), 1),
         "mesh_path": str(mesh_file),
         "geometry": geometry,
