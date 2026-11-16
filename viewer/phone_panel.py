@@ -602,6 +602,8 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         quality = report.get("image_quality", {})
         camera = report.get("camera", {})
         overlap = report.get("overlap", {})
+        mean_score = quality.get("mean_score")
+        mean_score_text = f"{mean_score:.1f}/100" if mean_score is not None else "not available"
         lines = [
             f"Photo set: {str(report.get('status', 'unknown')).upper()}",
             (
@@ -610,8 +612,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
                 f" · {report.get('duplicate_image_count', 0)} exact duplicates"
             ),
             (
-                f"Image quality: avg "
-                f"{f\"{quality['mean_score']:.1f}/100\" if quality.get('mean_score') is not None else 'not available'}"
+                f"Image quality: avg {mean_score_text}"
                 f" · blurry {quality.get('blurry_count', 0)}"
                 f" · low-feature {quality.get('low_feature_count', 0)}"
                 f" · rejected {quality.get('rejected_count', 0)}"
