@@ -26,6 +26,32 @@ class PhotoSetQualityAuditor:
     """
 
     @classmethod
+    def audit_paths(cls, image_paths: Sequence[str | Path]) -> dict[str, Any]:
+        """Load, assess and audit raw image paths for non-GUI/CLI callers."""
+        from photo_reconstruction.image_loader import ImageLoader
+        from photo_reconstruction.image_quality import ImageQualityAssessor
+
+        records: list[dict[str, Any]] = []
+        for raw_path in image_paths:
+            path = Path(raw_path).expanduser()
+            try:
+                rgb, meta = ImageLoader.load_image(path)
+                exif = ExifReader.get_camera_info(path, meta["width"], meta["height"])
+                quality = ImageQualityAssessor.evaluate(rgb)
+                records.append({
+                    "path": str(path.resolve()),
+                    "meta": meta,
+                    "exif": exif,
+                    "quality": quality,
+                })
+            except Exception as exc:
+                records.append({
+                    "path": str(path.resolve()),
+                    "error": str(exc),
+                })
+        return cls.audit(records)
+
+    @classmethod
     def audit(cls, records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         warnings: list[str] = []
         invalid_images: list[dict[str, str]] = []
