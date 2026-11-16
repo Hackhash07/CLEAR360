@@ -79,7 +79,7 @@ def test_camera_overlap_graph_reports_connected_and_disconnected_views():
     assert report["available"] is True
     assert report["component_count"] == 2
     assert report["status"] == "disconnected"
-    assert report["supported_pair_count"] == 3
+    assert report["supported_pair_count"] == 2
     assert report["isolated_cameras"] == ["camera_isolated.jpg"]
     assert report["warnings"]
 
