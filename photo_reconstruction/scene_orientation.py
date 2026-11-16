@@ -49,6 +49,11 @@ def estimate_world_up(images_txt: str | Path) -> tuple[np.ndarray, float, int] |
             # observations and can also contain many numbers; it is not a pose.
             continue
         try:
+            float(parts[-1])
+            continue
+        except ValueError:
+            pass  # The final token is the image filename on a pose record.
+        try:
             # IMAGE_ID QW QX QY QZ TX TY TZ CAMERA_ID NAME
             qw, qx, qy, qz = map(float, parts[1:5])
             _tx, _ty, _tz = map(float, parts[5:8])
