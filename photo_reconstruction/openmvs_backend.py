@@ -15,6 +15,14 @@ from photo_reconstruction.openmvs_tools import (
     configured_openmvs_root,
     find_openmvs_executable,
 )
+from photo_reconstruction.scene_orientation import (
+    align_glb_file,
+    align_obj_file,
+    align_open3d_geometry_file,
+    estimate_world_up,
+    obj_median_center,
+    rotation_from_to,
+)
 
 
 ProgressCallback = Optional[Callable[[int, str], None]]
@@ -131,6 +139,15 @@ class OpenMVSBackend:
         )
         if not sparse_out.exists() or not any(sparse_out.iterdir()):
             raise RuntimeError("COLMAP produced no registered model. Add more overlapping photos.")
+        # COLMAP's world axes are arbitrary. Export registered camera poses so
+        # a consistent camera-up direction can align the final 3D exports.
+        pose_text_dir = work / "sparse_text"
+        self._run(
+            [colmap, "model_converter", "--input_path", str(sparse_out),
+             "--output_path", str(pose_text_dir), "--output_type", "TXT"],
+            work, log_file, progress_cb, 38, "Estimating the scene's upright direction...",
+        )
+        images_txt = pose_text_dir / "images.txt"
 
         self._run(
             [colmap, "image_undistorter", "--image_path", str(images_dir),
@@ -272,10 +289,51 @@ class OpenMVSBackend:
                 obj_lines.append(line)
             final_obj.write_text("\n".join(obj_lines) + "\n", encoding="utf-8")
 
+        orientation = None
+        estimated_up = estimate_world_up(images_txt)
+        if estimated_up is not None:
+            up_vector, consistency, pose_count = estimated_up
+            alignment_rotation = rotation_from_to(
+                up_vector, np.array([0.0, 0.0, 1.0], dtype=np.float64)
+            )
+            center = obj_median_center(final_obj)
+            obj_ok = align_obj_file(final_obj, alignment_rotation, center=center)
+            ply_ok = align_open3d_geometry_file(
+                final_ply, alignment_rotation, center, point_cloud=False
+            )
+            cloud_ok = align_open3d_geometry_file(
+                dense_ply, alignment_rotation, center, point_cloud=True
+            )
+            glb_ok = align_glb_file(final_glb, alignment_rotation, center)
+            orientation = {
+                "method": "COLMAP camera-up consensus",
+                "registered_camera_poses": pose_count,
+                "up_consistency": round(consistency, 4),
+                "estimated_up_before_alignment": [float(x) for x in up_vector],
+                "aligned_to_world_axis": "+Z",
+                "exports_aligned": {
+                    "obj": obj_ok, "ply": ply_ok,
+                    "dense_cloud": cloud_ok, "glb": glb_ok,
+                },
+            }
+            with log_file.open("a", encoding="utf-8") as log:
+                log.write("\nScene orientation alignment: " + str(orientation) + "\n")
+        else:
+            orientation = {
+                "method": "not applied",
+                "reason": (
+                    "COLMAP camera-up directions were unavailable or inconsistent; "
+                    "the model retains the original arbitrary SfM orientation."
+                ),
+            }
+            with log_file.open("a", encoding="utf-8") as log:
+                log.write("\nScene orientation alignment skipped: " + orientation["reason"] + "\n")
+
         if progress_cb:
             progress_cb(100, "OpenMVS reconstruction complete. Textured GLB and mesh are ready.")
         return {
             "success": True, "mesh_ply": final_ply, "mesh_obj": final_obj,
             "mesh_glb": final_glb, "dense_ply": dense_ply, "backend": "openmvs",
             "log_file": log_file, "quality_preset": preset,
+            "orientation": orientation,
         }
