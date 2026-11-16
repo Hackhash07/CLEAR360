@@ -7,6 +7,32 @@ import pytest
 from photo_reconstruction.openmvs_backend import OpenMVSBackend
 
 
+def test_colmap_camera_mode_shares_calibration_for_consistent_lens_sets():
+    from photo_reconstruction.openmvs_backend import resolve_colmap_camera_mode
+
+    mode = resolve_colmap_camera_mode({
+        "camera": {"mixed_lenses_detected": False, "warnings": []}
+    })
+
+    assert mode["single_camera"] == "1"
+    assert mode["strategy"] == "shared_camera"
+
+
+def test_colmap_camera_mode_separates_mixed_lens_calibrations():
+    from photo_reconstruction.openmvs_backend import resolve_colmap_camera_mode
+
+    mode = resolve_colmap_camera_mode({
+        "camera": {
+            "mixed_lenses_detected": True,
+            "warnings": ["Mixed camera lenses detected across session."],
+        }
+    })
+
+    assert mode["single_camera"] == "0"
+    assert mode["strategy"] == "per_image_camera"
+    assert "Mixed camera lenses" in mode["reason"]
+
+
 def test_openmvs_requires_six_photos_before_tool_lookup(tmp_path: Path) -> None:
     backend = OpenMVSBackend(
         openmvs_dir=tmp_path,
