@@ -44,11 +44,14 @@ def estimate_world_up(images_txt: str | Path) -> tuple[np.ndarray, float, int] |
         if not line or line.startswith("#"):
             continue
         parts = line.split()
-        if len(parts) < 10:
+        if len(parts) < 10 or not parts[0].isdigit() or not parts[8].isdigit():
+            # The second line of each COLMAP image record contains 2D point
+            # observations and can also contain many numbers; it is not a pose.
             continue
         try:
             # IMAGE_ID QW QX QY QZ TX TY TZ CAMERA_ID NAME
             qw, qx, qy, qz = map(float, parts[1:5])
+            _tx, _ty, _tz = map(float, parts[5:8])
             rotation = quaternion_to_rotation(qw, qx, qy, qz)
         except (ValueError, OverflowError):
             continue
