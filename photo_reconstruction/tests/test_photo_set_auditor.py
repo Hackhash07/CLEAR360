@@ -57,6 +57,16 @@ def test_resolution_changes_do_not_trigger_mixed_lens_warning():
     assert warnings == []
 
 
+def test_multiple_camera_models_are_flagged_without_focal_metadata():
+    mixed, warnings = ExifReader.check_mixed_lenses([
+        {"model": "Camera A"},
+        {"model": "Camera B"},
+    ])
+
+    assert mixed is True
+    assert any("Multiple camera models" in warning for warning in warnings)
+
+
 def test_photo_set_audit_detects_exact_duplicate_uploads(tmp_path: Path):
     first = tmp_path / "photo_01.jpg"
     duplicate = tmp_path / "photo_02.jpg"
