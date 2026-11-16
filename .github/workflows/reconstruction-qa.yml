@@ -1,0 +1,52 @@
+name: Reconstruction Quality QA
+
+on:
+  push:
+    branches:
+      - feature/universal-reconstruction-qa
+    paths:
+      - "photo_reconstruction/reconstruction_qa.py"
+      - "photo_reconstruction/openmvs_backend.py"
+      - "photo_reconstruction/quality_report.py"
+      - "photo_reconstruction/coverage_diagnostics.py"
+      - "photo_reconstruction/tests/test_reconstruction_qa.py"
+      - "photo_reconstruction/tests/test_openmvs_backend.py"
+      - "photo_reconstruction/tests/test_openmvs_quality.py"
+      - ".github/workflows/reconstruction-qa.yml"
+  pull_request:
+    paths:
+      - "photo_reconstruction/reconstruction_qa.py"
+      - "photo_reconstruction/openmvs_backend.py"
+      - "photo_reconstruction/quality_report.py"
+      - "photo_reconstruction/coverage_diagnostics.py"
+      - "photo_reconstruction/tests/test_reconstruction_qa.py"
+      - "photo_reconstruction/tests/test_openmvs_backend.py"
+      - "photo_reconstruction/tests/test_openmvs_quality.py"
+      - ".github/workflows/reconstruction-qa.yml"
+
+jobs:
+  reconstruction-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install focused QA dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy trimesh pytest
+
+      - name: Run reconstruction QA and OpenMVS contract tests
+        run: |
+          python -m pytest -q \
+            photo_reconstruction/tests/test_reconstruction_qa.py \
+            photo_reconstruction/tests/test_openmvs_backend.py \
+            photo_reconstruction/tests/test_openmvs_quality.py \
+            photo_reconstruction/tests/test_coverage_diagnostics.py
