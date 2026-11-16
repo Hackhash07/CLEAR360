@@ -84,6 +84,17 @@ def test_camera_overlap_graph_reports_connected_and_disconnected_views():
     assert report["warnings"]
 
 
+def test_single_registered_camera_is_insufficient_for_overlap():
+    report = audit_camera_overlap_from_track_ids(
+        {"camera_a.jpg": set(range(1, 21))}
+    )
+
+    assert report["available"] is True
+    assert report["status"] == "insufficient"
+    assert report["component_count"] == 1
+    assert report["warnings"]
+
+
 def test_camera_overlap_is_unavailable_without_sparse_track_evidence():
     report = audit_camera_overlap_from_track_ids(
         {"camera_a.jpg": set(), "camera_b.jpg": set()}
