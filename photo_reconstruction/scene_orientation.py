@@ -154,3 +154,82 @@ def align_obj_file(path: str | Path, rotation: np.ndarray) -> bool:
 
     obj_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return True
+
+
+
+def obj_median_center(path: str | Path) -> np.ndarray:
+    """Read a robust center from OBJ vertex records."""
+    vertices: list[list[float]] = []
+    with Path(path).open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            stripped = line.lstrip()
+            if not stripped.startswith("v "):
+                continue
+            try:
+                values = [float(v) for v in stripped.split()[1:4]]
+                if len(values) == 3 and np.isfinite(values).all():
+                    vertices.append(values)
+            except ValueError:
+                continue
+    if not vertices:
+        raise ValueError(f"No valid vertices found in OBJ: {path}")
+    return np.median(np.asarray(vertices, dtype=np.float64), axis=0)
+
+
+def align_open3d_geometry_file(
+    path: str | Path,
+    rotation: np.ndarray,
+    center: np.ndarray,
+    *,
+    point_cloud: bool = False,
+) -> bool:
+    """Apply the world-up rotation to a PLY mesh or point cloud, preserving colors."""
+    import open3d as o3d
+
+    file_path = Path(path)
+    if not file_path.is_file():
+        return False
+    if point_cloud:
+        geometry = o3d.io.read_point_cloud(str(file_path))
+        if len(geometry.points) == 0:
+            return False
+        geometry.rotate(rotation, center=center)
+        return bool(o3d.io.write_point_cloud(str(file_path), geometry, write_ascii=False))
+    geometry = o3d.io.read_triangle_mesh(str(file_path))
+    if len(geometry.vertices) == 0 or len(geometry.triangles) == 0:
+        return False
+    geometry.rotate(rotation, center=center)
+    return bool(o3d.io.write_triangle_mesh(
+        str(file_path), geometry, write_ascii=False, compressed=False
+    ))
+
+
+def align_glb_file(
+    path: str | Path,
+    rotation: np.ndarray,
+    center: np.ndarray,
+) -> bool:
+    """Apply the scene-up rotation to a GLB while retaining its materials."""
+    import trimesh
+
+    file_path = Path(path)
+    if not file_path.is_file():
+        return False
+    loaded = trimesh.load(str(file_path), force="scene", process=False)
+    if isinstance(loaded, trimesh.Scene):
+        if not loaded.geometry:
+            return False
+        transform = np.eye(4, dtype=np.float64)
+        transform[:3, :3] = rotation
+        transform[:3, 3] = center - rotation @ center
+        loaded.apply_transform(transform)
+        loaded.export(str(file_path), file_type="glb")
+        return True
+    if not hasattr(loaded, "vertices") or len(loaded.vertices) == 0:
+        return False
+    transform = np.eye(4, dtype=np.float64)
+    transform[:3, :3] = rotation
+    transform[:3, 3] = center - rotation @ center
+    loaded.apply_transform(transform)
+    loaded.export(str(file_path), file_type="glb")
+    return True
