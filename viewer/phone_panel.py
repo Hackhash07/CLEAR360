@@ -612,7 +612,8 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.current_session_id = session_id
 
         backend_label = "COLMAP + OpenMVS" if res.get("mesh_glb") else "CLEAR360 Python"
-        quality = (res.get("report") or {}).get("mesh_quality", {})
+        result_report = res.get("report") or {}
+        quality = result_report.get("mesh_quality", {})
         quality_status = quality.get("status", "not available")
         quality_score = quality.get("score")
         quality_label = (
@@ -620,6 +621,13 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             if isinstance(quality_score, (int, float))
             else f"Mesh QA: {quality_status.upper()}"
         )
+        registration = result_report.get("registration") or {}
+        overlap = registration.get("camera_overlap") or {}
+        if overlap:
+            overlap_status = (
+                "REVIEW" if overlap.get("component_count", 0) > 1 else "CONNECTED"
+            )
+            quality_label += f" · Camera overlap: {overlap_status}"
         self.lbl_status.setText(
             f"Reconstruction successful! {backend_label} backend: {session_id}. {quality_label}."
         )
