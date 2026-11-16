@@ -150,7 +150,6 @@ class PhoneReconstructionPipeline:
         from photo_reconstruction.image_preparation import stage_reconstruction_image
 
         copied_paths = []
-        image_arrays = []
         camera_infos = []
         quality_evals = []
         photo_set_records = []
@@ -190,7 +189,6 @@ class PhoneReconstructionPipeline:
             sfm_path = Path(staged["sfm_image_path"])
             archived_path = Path(staged["source_archive_path"])
             copied_paths.append(sfm_path)
-            image_arrays.append(rgb)
             quality_evals.append({"file": src.name, **q_res})
             camera_infos.append({"file": src.name, **c_info})
             original_name_by_sfm_name[sfm_path.name] = src.name
@@ -254,7 +252,7 @@ class PhoneReconstructionPipeline:
                 sparse_point_count=0,
                 dense_point_count=0,
                 mesh_triangle_count=0,
-                reprojection_error_px=0.0,
+                reprojection_error_px=None,
                 processing_time_s=time.perf_counter() - t_start,
                 scale_info=self.scale_calibrator.get_calibration_info(),
                 notes="Failed: At least 2 distinct, readable photographs required.",
