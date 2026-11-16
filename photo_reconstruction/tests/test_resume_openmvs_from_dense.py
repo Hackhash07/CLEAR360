@@ -1,8 +1,26 @@
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
 from scripts.resume_openmvs_from_dense import resume_from_dense
+
+
+def test_resume_cli_script_runs_by_path_outside_repository(tmp_path: Path):
+    project_root = Path(__file__).resolve().parents[2]
+    script = project_root / "scripts" / "resume_openmvs_from_dense.py"
+
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Resume mesh/refine/texture" in result.stdout
 
 
 def _valid_session(tmp_path: Path) -> Path:
