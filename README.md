@@ -68,6 +68,8 @@ CLEAR360 automatically:
 - Selects **COLMAP + OpenMVS** when COLMAP and all required OpenMVS executables are available.
 - Falls back to the built-in **CLEAR360 Python / Open3D** reconstruction pipeline when the external tools are unavailable.
 - Uses the balanced `standard` quality preset to keep memory use and runtime reasonable on laptop hardware.
+- Archives uploaded originals under `source_uploads/` and creates SfM-readable working copies under `original_images/`; HEIC, TIFF and BMP inputs are normalized to JPEG without discarding the original upload.
+- Saves `input_manifest.json` to map each original filename to its working filename and conversion status.
 - Saves a reconstruction session, textured OBJ/MTL/PNG for the built-in viewer, and a textured GLB for Blender/external tools when using OpenMVS.
 - Estimates the scene's vertical axis from registered COLMAP camera poses and aligns OBJ, PLY, dense cloud and GLB exports to +Z when the camera-up directions are consistent.
 - The built-in OBJ loader resolves independent vertex/UV/normal indices and combines multiple diffuse material atlases, so UV seams do not silently fall back to a grey mesh.
