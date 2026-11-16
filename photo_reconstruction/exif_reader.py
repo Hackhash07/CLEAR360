@@ -11,6 +11,8 @@ from typing import Dict, Any, Optional, List, Tuple
 from PIL import Image, ExifTags
 import numpy as np
 
+from photo_reconstruction.image_loader import ensure_image_format_support
+
 
 class ExifReader:
     """Extracts and parses camera metadata from photograph EXIF headers."""
@@ -29,6 +31,7 @@ class ExifReader:
             return exif_data
 
         try:
+            ensure_image_format_support(p)
             with Image.open(p) as img:
                 raw_exif = img._getexif()
                 if raw_exif:
