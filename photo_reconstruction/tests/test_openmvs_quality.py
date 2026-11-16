@@ -1,5 +1,6 @@
 from photo_reconstruction.openmvs_quality import (
     densify_common_options,
+    densify_fusion_options,
     reconstruct_mesh_options,
     refine_mesh_options,
     texture_mesh_options,
@@ -15,7 +16,7 @@ def test_densify_profile_restores_cpu_defaults_and_safe_gap_interpolation():
     assert _value(options, "--number-views") == "5"
     assert _value(options, "--iters") == "3"
     assert _value(options, "--geometric-iters") == "2"
-    assert _value(options, "--number-views-fuse") == "2"
+    assert "--number-views-fuse" not in options
     assert _value(options, "--postprocess-dmaps") == "2"
     assert _value(options, "--resolution-level") == "0"
     assert _value(options, "--max-resolution") == "1600"
@@ -47,3 +48,12 @@ def test_reconstruct_mesh_free_space_support_is_explicit_opt_in():
     experimental_options = reconstruct_mesh_options(free_space_support=True)
     assert "--free-space-support" not in default_options
     assert experimental_options[experimental_options.index("--free-space-support") + 1] == "1"
+
+
+
+def test_fusion_options_define_minimum_views_exactly_once():
+    options = densify_fusion_options(minimum_views=2)
+    assert options.count("--number-views-fuse") == 1
+    assert _value(options, "--number-views-fuse") == "2"
+    assert options.count("--fusion-mode") == 1
+    assert _value(options, "--fusion-mode") == "0"

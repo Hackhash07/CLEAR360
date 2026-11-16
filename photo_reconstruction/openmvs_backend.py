@@ -16,6 +16,7 @@ import numpy as np
 from photo_reconstruction.openmvs_assets import copy_mtl_diffuse_maps
 from photo_reconstruction.openmvs_quality import (
     densify_common_options,
+    densify_fusion_options,
     reconstruct_mesh_options,
     refine_mesh_options,
     texture_mesh_options,
@@ -191,7 +192,7 @@ class OpenMVSBackend:
         # The second pass uses the independent copy so first-pass depth maps remain reusable.
         self._run(
             [densify, "-i", str(scene_fuse), "-w", str(work), *common,
-             "--number-views-fuse", "2", "--fusion-mode", "0"],
+             *densify_fusion_options(minimum_views=2)],
             work, log_file, progress_cb, 72, "Fusing depth maps into a dense point cloud...",
         )
 

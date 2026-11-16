@@ -22,6 +22,7 @@ import numpy as np
 from photo_reconstruction.openmvs_assets import copy_mtl_diffuse_maps
 from photo_reconstruction.openmvs_quality import (
     densify_common_options,
+    densify_fusion_options,
     reconstruct_mesh_options,
     refine_mesh_options,
     texture_mesh_options,
@@ -185,7 +186,7 @@ def rebuild_dense_session(
     )
     _run(
         [densify, "-i", str(scene_fuse), "-w", str(stage),
-         *dense_options, "--fusion-mode", "0"],
+         *dense_options, *densify_fusion_options(minimum_views=2)],
         stage,
         log_file,
         "Geometric consistency and dense fusion",

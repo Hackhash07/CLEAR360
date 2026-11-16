@@ -36,7 +36,6 @@ def densify_common_options(
         "--min-resolution", "640",
         "--sub-resolution-levels", "2",
         "--number-views", str(number_views),
-        "--number-views-fuse", "2",
         "--iters", "3",
         "--geometric-iters", "2",
         "--postprocess-dmaps", str(postprocess_dmaps),
@@ -108,4 +107,15 @@ def texture_mesh_options(
         "--ignore-mask-label=-1",
         "--local-seam-leveling", "1",
         "--global-seam-leveling", "1",
+    ]
+
+
+
+def densify_fusion_options(*, minimum_views: int = 2) -> list[str]:
+    """Options used only by the fusion pass (not by depth-map estimation)."""
+    if minimum_views < 1:
+        raise ValueError("Fusion requires at least one supporting view.")
+    return [
+        "--number-views-fuse", str(minimum_views),
+        "--fusion-mode", "0",
     ]
