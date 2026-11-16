@@ -638,66 +638,98 @@ class Clear360Viewport(QtWidgets.QWidget):
             return
 
         if path.suffix.lower() == ".obj":
-            # The OpenMVS backend writes UVs in the OBJ and the atlas at
-            # mesh/scene_mesh.png. Use VisPy's texture filter for this path.
+            # Use VisPy's own OBJ reader so independent OBJ vertex/UV indices
+            # are resolved together. Mixing Open3D geometry with UV indices
+            # parsed separately can associate texture coordinates with the
+            # wrong triangles and produce the patchwork/faceted preview.
             try:
+                from vispy.io import read_mesh
                 from vispy.visuals.filters import TextureFilter
-                mesh = o3d.io.read_triangle_mesh(str(path))
-                verts = np.asarray(mesh.vertices, dtype=np.float32)
-                faces = np.asarray(mesh.triangles, dtype=np.uint32)
-                atlas = path.with_name("scene_mesh.png")
-                if len(verts) and len(faces) and atlas.exists():
-                    obj_uvs = []
-                    obj_faces = []
-                    uv_row_count = 0
-                    with path.open("r", encoding="utf-8", errors="replace") as handle:
-                        for line in handle:
-                            if line.startswith("vt "):
-                                vals = line.split()[1:3]
-                                obj_uvs.append([float(vals[0]), float(vals[1])])
-                            elif line.startswith("f "):
-                                row = []
-                                for item in line.split()[1:]:
-                                    bits = item.split("/")
-                                    if len(bits) > 1 and bits[1]:
-                                        row.append(int(bits[1]) - 1)
-                                if len(row) == 3:
-                                    obj_faces.append(row)
-                                    uv_row_count += 1
-                    if len(obj_uvs) and len(obj_faces) == len(faces):
-                        # Expand vertices by per-corner UV indices where needed;
-                        # OBJ UV indexing is independent of OBJ vertex indexing.
-                        face_uv = np.asarray(obj_faces, dtype=np.int64)
-                        if face_uv.min() < 0 or face_uv.max() >= len(obj_uvs):
-                            raise ValueError("OBJ contains out-of-range texture coordinates.")
-                        expanded_vertices = verts[faces.reshape(-1)]
-                        expanded_uv = np.asarray(obj_uvs, dtype=np.float32)[face_uv.reshape(-1)]
-                        expanded_faces = np.arange(len(expanded_vertices), dtype=np.uint32).reshape(-1, 3)
-                        tex_bgr = cv2.imread(str(atlas), cv2.IMREAD_COLOR)
-                        if tex_bgr is not None:
-                            tex_rgb = cv2.cvtColor(tex_bgr, cv2.COLOR_BGR2RGB)
-                            self.visual_textured_mesh.set_data(
-                                vertices=expanded_vertices, faces=expanded_faces, color="white"
+
+                verts, faces, normals, uvs = read_mesh(str(path))
+                verts = np.asarray(verts, dtype=np.float32)
+                faces = np.asarray(faces, dtype=np.uint32)
+                uvs = np.asarray(uvs, dtype=np.float32) if uvs is not None else None
+                normals = np.asarray(normals, dtype=np.float32) if normals is not None else None
+
+                # OpenMVS writes the OBJ/MTL beside this atlas. Prefer the
+                # atlas named by the material file, with the known session
+                # filename as a fallback for older outputs.
+                atlas_candidates = []
+                with path.open("r", encoding="utf-8", errors="replace") as handle:
+                    for line in handle:
+                        if line.lower().startswith("mtllib "):
+                            mtl_name = line.split(maxsplit=1)[1].strip()
+                            mtl_path = path.parent / Path(mtl_name).name
+                            if mtl_path.exists():
+                                for mtl_line in mtl_path.read_text(
+                                    encoding="utf-8", errors="replace"
+                                ).splitlines():
+                                    if mtl_line.lstrip().lower().startswith("map_kd "):
+                                        atlas_name = mtl_line.split()[-1]
+                                        candidate = mtl_path.parent / Path(atlas_name).name
+                                        if candidate.exists():
+                                            atlas_candidates.append(candidate)
+                atlas = atlas_candidates[0] if atlas_candidates else path.with_name("scene_mesh.png")
+
+                if (
+                    len(verts) >= 3
+                    and faces.ndim == 2
+                    and faces.shape[1] == 3
+                    and len(faces) > 0
+                    and uvs is not None
+                    and len(uvs) == len(verts)
+                    and atlas.exists()
+                ):
+                    tex_bgr = cv2.imread(str(atlas), cv2.IMREAD_COLOR)
+                    if tex_bgr is not None:
+                        # OBJ UVs use the conventional bottom-left origin;
+                        # VisPy's documented texture workflow flips image rows.
+                        tex_rgb = np.ascontiguousarray(
+                            np.flipud(cv2.cvtColor(tex_bgr, cv2.COLOR_BGR2RGB))
+                        )
+                        mesh_kwargs = {
+                            "vertices": verts,
+                            "faces": faces,
+                            "color": "white",
+                        }
+                        if normals is not None and normals.shape == verts.shape:
+                            mesh_kwargs["vertex_normals"] = normals
+                        self.visual_textured_mesh.set_data(**mesh_kwargs)
+                        if self.texture_filter is None:
+                            self.texture_filter = TextureFilter(
+                                texture=tex_rgb, texcoords=uvs
                             )
-                            if self.texture_filter is None:
-                                self.texture_filter = TextureFilter(
-                                    texture=tex_rgb, texcoords=expanded_uv
-                                )
-                                self.visual_textured_mesh.attach(self.texture_filter)
-                            else:
-                                self.texture_filter.texture = tex_rgb
-                                self.texture_filter.texcoords = expanded_uv
-                            self.visual_textured_mesh.visible = True
-                            self.visual_surface_mesh.visible = False
-                            center = np.mean(verts, axis=0)
-                            extent = float(np.max(np.linalg.norm(verts - center, axis=1)))
-                            self.view.camera.center = tuple(center)
-                            self.view.camera.distance = max(4.0, extent * 2.2)
-                            self.view.camera.elevation = 25.0
-                            self.view.camera.azimuth = -45.0
-                            self._hide_non_scene_overlays()
-                            self.request_update()
-                            return
+                            self.visual_textured_mesh.attach(self.texture_filter)
+                        else:
+                            self.texture_filter.texture = tex_rgb
+                            self.texture_filter.texcoords = uvs
+
+                        self.visual_textured_mesh.visible = True
+                        self.visual_surface_mesh.visible = False
+                        center = np.mean(verts, axis=0)
+                        extent = float(np.max(np.linalg.norm(verts - center, axis=1)))
+                        self.view.camera.center = tuple(center)
+                        self.view.camera.distance = max(4.0, extent * 2.2)
+                        self.view.camera.elevation = 25.0
+                        self.view.camera.azimuth = -45.0
+                        self._hide_non_scene_overlays()
+                        self.request_update()
+                        print(
+                            "Loaded textured OBJ with aligned UVs: "
+                            f"{len(verts):,} vertices, {len(faces):,} triangles, "
+                            f"atlas={atlas.name}"
+                        )
+                        if len(set(atlas_candidates)) > 1:
+                            print(
+                                "Warning: OBJ references multiple texture atlases; "
+                                "the VisPy preview currently displays the first atlas."
+                            )
+                        return
+                    raise RuntimeError(f"Could not read texture atlas: {atlas}")
+                raise ValueError(
+                    "OBJ is missing aligned UV coordinates, triangle faces, or its texture atlas."
+                )
             except Exception as exc:
                 print(f"Notice: OBJ atlas preview fallback: {exc}")
             # If no UV atlas is available, let the generic mesh loader try the OBJ.
