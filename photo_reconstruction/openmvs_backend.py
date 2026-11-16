@@ -256,6 +256,17 @@ class OpenMVSBackend:
                 "\\n".join(rewritten_lines) + "\\n", encoding="utf-8"
             )
 
+            # Keep the copied OBJ linked to the material file copied beside it.
+            obj_lines = []
+            for line in final_obj.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines():
+                if line.lstrip().lower().startswith("mtllib "):
+                    indent = line[: len(line) - len(line.lstrip())]
+                    line = f"{indent}mtllib scene_mesh.mtl"
+                obj_lines.append(line)
+            final_obj.write_text("\\n".join(obj_lines) + "\\n", encoding="utf-8")
+
         if progress_cb:
             progress_cb(100, "OpenMVS reconstruction complete. Textured GLB and mesh are ready.")
         return {
