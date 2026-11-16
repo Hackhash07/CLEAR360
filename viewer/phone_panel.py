@@ -541,7 +541,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             self,
             "Select Smartphone Photographs",
             "",
-            "Images (*.jpg *.jpeg *.png *.heic *.bmp);;All Files (*)",
+            "Images (*.jpg *.jpeg *.png *.heic *.heif *.tif *.tiff *.bmp);;All Files (*)",
         )
         if not files:
             return
@@ -610,7 +610,8 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
                 f" · {report.get('duplicate_image_count', 0)} exact duplicates"
             ),
             (
-                f"Image quality: avg {quality.get('mean_score') if quality.get('mean_score') is not None else 'n/a'}/100"
+                f"Image quality: avg "
+                f"{f\"{quality['mean_score']:.1f}/100\" if quality.get('mean_score') is not None else 'not available'}"
                 f" · blurry {quality.get('blurry_count', 0)}"
                 f" · low-feature {quality.get('low_feature_count', 0)}"
                 f" · rejected {quality.get('rejected_count', 0)}"
