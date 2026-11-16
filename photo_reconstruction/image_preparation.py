@@ -9,6 +9,8 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from photo_reconstruction.image_loader import ensure_image_format_support
+
 
 SFM_NATIVE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 
@@ -71,6 +73,7 @@ def stage_reconstruction_image(
     else:
         exif_bytes = b""
         try:
+            ensure_image_format_support(source)
             with Image.open(source) as original:
                 exif = original.getexif()
                 if exif:
