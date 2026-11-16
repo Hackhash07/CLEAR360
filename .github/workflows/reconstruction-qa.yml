@@ -55,6 +55,18 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install numpy scipy trimesh pytest pillow
 
+      - name: Compile integrated reconstruction modules
+        run: |
+          python -m py_compile \
+            photo_reconstruction/__init__.py \
+            photo_reconstruction/exif_reader.py \
+            photo_reconstruction/photo_set_auditor.py \
+            photo_reconstruction/reconstruction_qa.py \
+            photo_reconstruction/quality_report.py \
+            photo_reconstruction/pipeline.py \
+            photo_reconstruction/openmvs_backend.py \
+            viewer/phone_panel.py
+
       - name: Run reconstruction QA and OpenMVS contract tests
         run: |
           python -m pytest -q \
