@@ -299,6 +299,39 @@ def audit_camera_overlap_from_track_ids(
     )
 
 
+def remap_camera_overlap_names(
+    overlap_report: dict[str, Any],
+    working_to_original: dict[str, str],
+) -> dict[str, Any]:
+    """Replace internal normalized-image names with original upload filenames."""
+    report = dict(overlap_report)
+
+    def map_name(name: str) -> str:
+        return working_to_original.get(name, name)
+
+    report["components"] = [
+        [map_name(name) for name in component]
+        for component in overlap_report.get("components", [])
+    ]
+    report["isolated_cameras"] = [
+        map_name(name) for name in overlap_report.get("isolated_cameras", [])
+    ]
+    for key in ("supported_pairs", "observed_pairs"):
+        report[key] = [
+            {
+                **pair,
+                "image_a": map_name(pair.get("image_a", "")),
+                "image_b": map_name(pair.get("image_b", "")),
+            }
+            for pair in overlap_report.get(key, [])
+        ]
+    report["per_camera_3d_track_counts"] = {
+        map_name(name): count
+        for name, count in (overlap_report.get("per_camera_3d_track_counts") or {}).items()
+    }
+    return report
+
+
 def audit_obj_materials(obj_path: str | Path) -> dict[str, Any]:
     """Check OBJ -> MTL -> diffuse-map references using paths relative to each MTL."""
     obj_file = Path(obj_path).expanduser().resolve()
