@@ -258,11 +258,9 @@ class OpenMVSBackend:
             raise RuntimeError("OpenMVS OBJ export did not create its texture atlas PNG.")
         shutil.copy2(texture_obj, final_obj)
 
-        atlas_name_map = {}
         for index, atlas in enumerate(atlas_files):
             target_name = "scene_mesh.png" if index == 0 else f"scene_mesh_{index}.png"
             shutil.copy2(atlas, mesh_dir / target_name)
-            atlas_name_map[atlas.name] = target_name
 
         if not texture_mtl.exists():
             raise RuntimeError("OpenMVS OBJ export did not create scene_textured.mtl.")

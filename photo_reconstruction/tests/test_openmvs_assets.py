@@ -1,6 +1,7 @@
 """Tests for copying OpenMVS OBJ material texture assets."""
 
 from pathlib import Path
+import shlex
 
 import pytest
 
@@ -30,8 +31,9 @@ def test_copy_mtl_diffuse_maps_copies_every_jpeg_and_rewrites_paths(tmp_path: Pa
     assert (mesh_dir / "texture one.jpg").read_bytes() == b"jpeg-one"
     assert (mesh_dir / "texture-two.jpg").read_bytes() == b"jpeg-two"
     text = output_mtl.read_text(encoding="utf-8")
-    assert 'map_Kd "texture one.jpg"' in text
-    assert "map_Kd texture-two.jpg" in text
+    map_lines = [line for line in text.splitlines() if line.lstrip().lower().startswith("map_kd ")]
+    assert shlex.split(map_lines[0]) == ["map_Kd", "texture one.jpg"]
+    assert shlex.split(map_lines[1]) == ["map_Kd", "texture-two.jpg"]
 
 
 def test_copy_mtl_diffuse_maps_preserves_map_options(tmp_path: Path):
