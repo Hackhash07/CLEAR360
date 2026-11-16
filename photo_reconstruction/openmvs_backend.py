@@ -14,6 +14,12 @@ from typing import Callable, Optional
 import numpy as np
 
 from photo_reconstruction.openmvs_assets import copy_mtl_diffuse_maps
+from photo_reconstruction.openmvs_quality import (
+    densify_common_options,
+    reconstruct_mesh_options,
+    refine_mesh_options,
+    texture_mesh_options,
+)
 from photo_reconstruction.openmvs_tools import (
     configured_openmvs_root,
     find_openmvs_executable,
@@ -112,11 +118,13 @@ class OpenMVSBackend:
         if preset in {"draft", "quick"}:
             feature_size, max_image_size, max_resolution, resolution_level = 1000, 1000, 800, 1
         elif preset == "high":
-            feature_size, max_image_size, max_resolution, resolution_level = 6000, 2400, 1600, 1
+            feature_size, max_image_size, max_resolution, resolution_level = 6000, 2400, 2400, 0
         elif preset == "maximum":
-            feature_size, max_image_size, max_resolution, resolution_level = 8000, 3200, 2000, 0
+            feature_size, max_image_size, max_resolution, resolution_level = 8000, 3200, 3200, 0
         else:
-            feature_size, max_image_size, max_resolution, resolution_level = 2500, 1600, 1200, 1
+            # Standard keeps the full 1600px undistorted images for dense stereo.
+            # The previous level=1 reduced them to ~800px and discarded fine detail.
+            feature_size, max_image_size, max_resolution, resolution_level = 2500, 1600, 1600, 0
         threads = 1  # Keep laptop memory usage predictable.
 
         db = work / "database.db"
@@ -169,13 +177,13 @@ class OpenMVSBackend:
 
         scene_fuse = work / "scene_fuse.mvs"
         shutil.copy2(scene_mvs, scene_fuse)
-        common = [
-            "--archive-type", "2", "--max-threads", str(threads),
-            "--resolution-level", str(resolution_level),
-            "--max-resolution", str(max_resolution), "--min-resolution", "320",
-            "--number-views", "4", "--iters", "2", "--geometric-iters", "1",
-            "--tower-mode", "0",
-        ]
+        common = densify_common_options(
+            resolution_level=resolution_level,
+            max_resolution=max_resolution,
+            max_threads=threads,
+            number_views=5,
+            postprocess_dmaps=2,
+        )
         self._run(
             [densify, "-i", str(scene_mvs), "-w", str(work), *common, "--fusion-mode", "1"],
             work, log_file, progress_cb, 62, "Estimating multi-view depth maps...",
@@ -195,9 +203,7 @@ class OpenMVSBackend:
         mesh_scene = work / "scene_mesh.mvs"
         self._run(
             [reconstruct, "-i", str(dense_scene), "-o", str(mesh_scene),
-             "--archive-type", "2", "--max-threads", str(threads),
-             # Clean long unsupported triangles and close only small boundary loops.
-             "--remove-spurious", "4", "--close-holes", "30", "--smooth", "2"],
+             *reconstruct_mesh_options(max_threads=threads, remove_spurious=20)],
             work, log_file, progress_cb, 80, "Reconstructing triangular surface mesh...",
         )
         mesh_ply = work / "scene_mesh.ply"
@@ -207,20 +213,10 @@ class OpenMVSBackend:
         refined_scene = work / "scene_mesh_refined.mvs"
         self._run(
             [refine, "-i", str(mesh_scene), "-m", str(mesh_ply), "-o", str(refined_scene),
-             "--archive-type", "2", "--max-threads", str(threads),
-             "--resolution-level", "1", "--min-resolution", "320",
-             "--max-views", "4", "--decimate", "1", "--close-holes", "30",
-             "--scales", "2", "--reduce-memory", "1"],
+             *refine_mesh_options(max_threads=threads, max_views=6)],
             work, log_file, progress_cb, 86, "Refining mesh geometry...",
         )
-        texture_options = [
-            "--max-threads", str(threads),
-            "--resolution-level", "0", "--min-resolution", "320",
-            "--max-texture-size", "2048", "--virtual-face-images", "3",
-            "--cost-smoothness-ratio", "0.7", "--close-holes", "0",
-            "--sharpness-weight", "0.5", "--ignore-mask-label=-1",
-            "--local-seam-leveling", "0", "--global-seam-leveling", "0",
-        ]
+        texture_options = texture_mesh_options(max_threads=threads, max_texture_size=2048)
         glb_work = work / "scene_textured.glb"
         self._run(
             [texture, "-i", str(refined_scene), "-o", str(glb_work),

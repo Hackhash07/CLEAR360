@@ -18,6 +18,11 @@ from pathlib import Path
 import numpy as np
 
 from photo_reconstruction.openmvs_assets import copy_mtl_diffuse_maps
+from photo_reconstruction.openmvs_quality import (
+    reconstruct_mesh_options,
+    refine_mesh_options,
+    texture_mesh_options,
+)
 from photo_reconstruction.openmvs_tools import (
     configured_openmvs_root,
     find_openmvs_executable,
@@ -81,13 +86,19 @@ def _rewrite_obj_mtllib(obj_path: Path, library_name: str) -> None:
     obj_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def rebuild_session(session_dir: Path, *, output_tag: str = "mesh_quality_rebuild") -> dict:
+def rebuild_session(
+    session_dir: Path,
+    *,
+    output_tag: str = "mesh_quality_rebuild_v2",
+    backup_name: str = "mesh_before_quality_rebuild_v2",
+    remove_spurious: float = 20.0,
+) -> dict:
     session_dir = session_dir.expanduser().resolve()
     work = session_dir / "openmvs"
     dense_scene = work / "scene_fuse_dense.mvs"
     images_txt = work / "sparse_text" / "images.txt"
     mesh_dir = session_dir / "mesh"
-    backup_dir = session_dir / "mesh_before_quality_rebuild"
+    backup_dir = session_dir / backup_name
     stage = work / output_tag
 
     if not dense_scene.is_file():
@@ -128,11 +139,8 @@ def rebuild_session(session_dir: Path, *, output_tag: str = "mesh_quality_rebuil
     mesh_scene = stage / "scene_mesh.mvs"
     mesh_ply = stage / "scene_mesh.ply"
     _run(
-        [
-            reconstruct, "-i", str(dense_scene), "-o", str(mesh_scene),
-            "--archive-type", "2", "--max-threads", "1",
-            "--remove-spurious", "4", "--close-holes", "30", "--smooth", "2",
-        ],
+        [reconstruct, "-i", str(dense_scene), "-o", str(mesh_scene),
+         *reconstruct_mesh_options(max_threads=1, remove_spurious=remove_spurious)],
         work,
         log_file,
     )
@@ -144,14 +152,9 @@ def rebuild_session(session_dir: Path, *, output_tag: str = "mesh_quality_rebuil
     refined_scene = stage / "scene_mesh_refined.mvs"
     refined_ply = stage / "scene_mesh_refined.ply"
     _run(
-        [
-            refine, "-i", str(mesh_scene), "-m", str(mesh_ply),
-            "-o", str(refined_scene), "--archive-type", "2",
-            "--max-threads", "1", "--resolution-level", "1",
-            "--min-resolution", "320", "--max-views", "4",
-            "--decimate", "1", "--close-holes", "30",
-            "--scales", "2", "--reduce-memory", "1",
-        ],
+        [refine, "-i", str(mesh_scene), "-m", str(mesh_ply),
+         "-o", str(refined_scene),
+         *refine_mesh_options(max_threads=1, max_views=6)],
         work,
         log_file,
     )
@@ -160,14 +163,7 @@ def rebuild_session(session_dir: Path, *, output_tag: str = "mesh_quality_rebuil
             "RefineMesh did not create both scene_mesh_refined.mvs and .ply."
         )
 
-    texture_options = [
-        "--max-threads", "1", "--resolution-level", "0",
-        "--min-resolution", "320", "--max-texture-size", "2048",
-        "--virtual-face-images", "3", "--cost-smoothness-ratio", "0.7",
-        "--close-holes", "0", "--sharpness-weight", "0.5",
-        "--ignore-mask-label=-1", "--local-seam-leveling", "0",
-        "--global-seam-leveling", "0",
-    ]
+    texture_options = texture_mesh_options(max_threads=1, max_texture_size=2048)
     glb_work = stage / "scene_textured.glb"
     obj_work = stage / "scene_textured.obj"
     _run(
@@ -235,10 +231,11 @@ def rebuild_session(session_dir: Path, *, output_tag: str = "mesh_quality_rebuil
         "camera_up_consistency": round(float(consistency), 4),
         "estimated_up_before_alignment": [float(value) for value in up_vector],
         "reconstruct_mesh": {
-            "remove_spurious": 4, "close_holes": 30, "smooth_iterations": 2,
+            "remove_spurious": remove_spurious, "close_holes": 30, "smooth_iterations": 2,
+            "note": "20 is the OpenMVS 2.4.0 default; smaller values remove more long-edge faces",
         },
         "refine_mesh": {
-            "resolution_level": 1, "max_views": 4,
+            "resolution_level": 0, "min_resolution": 640, "max_views": 6,
             "close_holes": 30, "scales": 2, "reduce_memory": 1,
         },
         "texture_mesh": {
@@ -286,11 +283,21 @@ def main() -> int:
         "--data-root", type=Path,
         default=project_root / "data" / "phone_reconstruction",
     )
-    parser.add_argument("--output-tag", default="mesh_quality_rebuild")
+    parser.add_argument("--output-tag", default="mesh_quality_rebuild_v2")
+    parser.add_argument("--backup-name", default="mesh_before_quality_rebuild_v2")
+    parser.add_argument(
+        "--remove-spurious", type=float, default=20.0,
+        help="OpenMVS long-edge / isolated-component filter multiplier (20 is the 2.4.0 default; smaller is more aggressive)",
+    )
     args = parser.parse_args()
     session_dir = args.data_root.expanduser().resolve() / args.session
 
-    rebuild_session(session_dir, output_tag=args.output_tag)
+    rebuild_session(
+        session_dir,
+        output_tag=args.output_tag,
+        backup_name=args.backup_name,
+        remove_spurious=args.remove_spurious,
+    )
     return 0
 
 
