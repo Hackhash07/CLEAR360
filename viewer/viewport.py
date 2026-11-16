@@ -707,10 +707,16 @@ class Clear360Viewport(QtWidgets.QWidget):
 
                         self.visual_textured_mesh.visible = True
                         self.visual_surface_mesh.visible = False
-                        center = np.mean(verts, axis=0)
-                        extent = float(np.max(np.linalg.norm(verts - center, axis=1)))
+                        # Ignore a small number of stray reconstruction vertices
+                        # when framing the scene; they can otherwise push the camera
+                        # far away and make the real model appear tiny.
+                        bounds_min, bounds_max = np.percentile(
+                            verts, [1.0, 99.0], axis=0
+                        )
+                        center = (bounds_min + bounds_max) * 0.5
+                        extent = float(np.linalg.norm(bounds_max - bounds_min))
                         self.view.camera.center = tuple(center)
-                        self.view.camera.distance = max(4.0, extent * 2.2)
+                        self.view.camera.distance = max(3.0, extent * 1.8)
                         self.view.camera.elevation = 25.0
                         self.view.camera.azimuth = -45.0
                         self._hide_non_scene_overlays()
