@@ -5,6 +5,7 @@ on:
     branches:
       - feature/universal-reconstruction-qa
     paths:
+      - "photo_reconstruction/__init__.py"
       - "photo_reconstruction/reconstruction_qa.py"
       - "photo_reconstruction/openmvs_backend.py"
       - "photo_reconstruction/quality_report.py"
