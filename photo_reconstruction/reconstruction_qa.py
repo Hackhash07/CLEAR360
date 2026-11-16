@@ -176,6 +176,30 @@ def summarize_camera_overlap(
         raise ValueError("minimum_shared_tracks must be at least one.")
 
     names = sorted(set(camera_names))
+    observed_track_total = sum(
+        int(per_camera_track_counts.get(name, 0)) for name in names
+    )
+    if not names or observed_track_total == 0:
+        return {
+            "available": False,
+            "status": "unavailable",
+            "minimum_shared_3d_tracks": minimum_shared_tracks,
+            "registered_camera_count": len(names),
+            "supported_pair_count": 0,
+            "observed_pair_count": 0,
+            "possible_pair_count": len(names) * (len(names) - 1) // 2,
+            "supported_pair_ratio": 0.0,
+            "component_count": None,
+            "components": [],
+            "isolated_cameras": [],
+            "per_camera_3d_track_counts": {
+                name: int(per_camera_track_counts.get(name, 0)) for name in names
+            },
+            "supported_pairs": [],
+            "observed_pairs": [],
+            "warnings": ["No registered-camera 3D track evidence was available for overlap analysis."],
+        }
+
     normalized_pairs = {
         tuple(sorted((name_a, name_b))): int(count)
         for (name_a, name_b), count in pairwise_shared_tracks.items()
@@ -225,6 +249,8 @@ def summarize_camera_overlap(
         )
 
     return {
+        "available": True,
+        "status": "connected" if len(components) <= 1 else "disconnected",
         "minimum_shared_3d_tracks": minimum_shared_tracks,
         "registered_camera_count": len(names),
         "supported_pair_count": len(supported_pairs),
