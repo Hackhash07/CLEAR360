@@ -11,7 +11,7 @@ import importlib
 import os
 from typing import Any
 
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 _LAZY_EXPORTS = {
     "ImageLoader": ("photo_reconstruction.image_loader", "ImageLoader"),
