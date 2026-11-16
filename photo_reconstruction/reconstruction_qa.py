@@ -14,6 +14,8 @@ from typing import Any
 
 import numpy as np
 import trimesh
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import connected_components
 
 
 
@@ -86,18 +88,37 @@ def _audit_geometry(mesh: trimesh.Trimesh) -> dict[str, Any]:
     unique_edge_lengths = mesh.edges_unique_length
     face_adjacency = mesh.face_adjacency
     if face_count == 0:
-        connected_components = 0
+        component_count = 0
+        component_face_counts = np.zeros(0, dtype=np.int64)
     elif len(face_adjacency) == 0:
         # A single isolated triangle is one component; multiple isolated faces
         # are separate components even though the adjacency edge list is empty.
-        connected_components = face_count
+        component_count = face_count
+        component_face_counts = np.ones(face_count, dtype=np.int64)
     else:
-        try:
-            connected_components = int(
-                trimesh.graph.connected_component_count(face_adjacency)
-            )
-        except Exception:
-            connected_components = 1
+        rows = np.concatenate((face_adjacency[:, 0], face_adjacency[:, 1]))
+        cols = np.concatenate((face_adjacency[:, 1], face_adjacency[:, 0]))
+        adjacency = coo_matrix(
+            (np.ones(len(rows), dtype=np.uint8), (rows, cols)),
+            shape=(face_count, face_count),
+        ).tocsr()
+        component_count, component_labels = connected_components(
+            adjacency, directed=False, return_labels=True
+        )
+        component_face_counts = np.bincount(
+            component_labels, minlength=component_count
+        )
+
+    largest_component_ratio = (
+        float(component_face_counts.max() / face_count) if face_count else 0.0
+    )
+    small_component_threshold = max(1, int(np.ceil(face_count * 0.001)))
+    small_component_mask = component_face_counts < small_component_threshold
+    small_component_count = int(np.sum(small_component_mask))
+    small_component_face_ratio = (
+        float(component_face_counts[small_component_mask].sum() / face_count)
+        if face_count else 0.0
+    )
 
     is_watertight = bool(mesh.is_watertight)
     boundary_edge_count = boundary_edges
@@ -114,7 +135,10 @@ def _audit_geometry(mesh: trimesh.Trimesh) -> dict[str, Any]:
         "is_winding_consistent": bool(mesh.is_winding_consistent),
         "euler_number": int(mesh.euler_number),
         "surface_type": surface_type,
-        "connected_components": connected_components,
+        "connected_components": int(component_count),
+        "largest_component_face_ratio": largest_component_ratio,
+        "small_component_count_below_0_1pct": small_component_count,
+        "small_component_face_ratio": small_component_face_ratio,
         "non_manifold_edges": non_manifold_edges,
         "boundary_edges": boundary_edges,
         "manifold_interior_edges": interior_edges,
@@ -330,6 +354,9 @@ def audit_reconstruction_outputs(
                 min(10.0, 2.0 * np.log2(max(1, int(geometry["connected_components"]))))
                 if int(geometry["connected_components"]) > 1 else 0.0
             ),
+            "small_component_faces": min(
+                15.0, float(geometry["small_component_face_ratio"]) * 100.0
+            ),
         }
         score = max(0.0, 100.0 - sum(penalties.values()))
         geometry["derived_ratios"] = {
@@ -350,8 +377,14 @@ def audit_reconstruction_outputs(
             )
         if int(geometry["connected_components"]) > 1:
             warnings.append(
-                f"The mesh contains {geometry['connected_components']} disconnected components. "
+                f"The mesh contains {geometry['connected_components']} disconnected components "
+                f"(largest component covers {geometry['largest_component_face_ratio'] * 100:.1f}% of faces). "
                 "This may be valid for multi-part scenes; inspect small floating fragments before cleanup."
+            )
+        if geometry["small_component_face_ratio"] > 0.01:
+            warnings.append(
+                f"{geometry['small_component_face_ratio'] * 100:.1f}% of faces belong to components "
+                "smaller than 0.1% of the mesh; inspect for floating fragments."
             )
         if not geometry["is_winding_consistent"]:
             warnings.append("Face winding is inconsistent.")
