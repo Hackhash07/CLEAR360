@@ -201,3 +201,29 @@ def test_photo_set_audit_reports_unreadable_uploads(tmp_path: Path):
     assert report["status"] == "blocked"
     assert report["valid_photo_count"] == 1
     assert report["invalid_images"][0]["image"] == "missing.jpg"
+
+def test_camera_metadata_merge_keeps_higher_coverage_from_reaudited_files():
+    merged = PhotoSetQualityAuditor.merge_source_camera_metadata(
+        {
+            "camera": {
+                "mixed_lenses_detected": False,
+                "warnings": [],
+                "metadata_available_count": 4,
+                "metadata_coverage_percentage": 100.0,
+            },
+            "warnings": [],
+        },
+        {
+            "camera": {
+                "mixed_lenses_detected": False,
+                "warnings": [],
+                "metadata_available_count": 0,
+                "metadata_coverage_percentage": 0.0,
+            },
+            "warnings": [],
+        },
+    )
+
+    assert merged["camera"]["metadata_available_count"] == 4
+    assert merged["camera"]["metadata_coverage_percentage"] == 100.0
+    assert merged["source_camera_metadata_preserved"] is False
