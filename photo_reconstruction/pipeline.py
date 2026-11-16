@@ -401,7 +401,23 @@ class PhoneReconstructionPipeline:
             MeshBuilder.save_mesh_obj(mesh_v, mesh_f, mesh_c, mesh_obj)
             MeshBuilder.save_mesh_ply(mesh_v, mesh_f, mesh_c, mesh_ply, normals=mesh_n)
 
-        # 7. Quality Report Compilation
+        # 7. Backend-independent geometric and export quality audit.
+        update_progress(94, "Auditing reconstructed geometry and texture references...")
+        from photo_reconstruction.reconstruction_qa import audit_reconstruction_outputs
+
+        mesh_quality = audit_reconstruction_outputs(
+            mesh_ply,
+            obj_path=mesh_obj if mesh_obj.is_file() else None,
+            texturing_report_path=(
+                session_dir / "texturing_report.json"
+                if (session_dir / "texturing_report.json").is_file()
+                else None
+            ),
+        )
+        with open(session_dir / "reconstruction_quality.json", "w", encoding="utf-8") as f_qa:
+            json.dump(mesh_quality, f_qa, indent=2)
+
+        # 8. Standardized reconstruction report compilation.
         update_progress(95, "Compiling reconstruction quality report...")
         t_total = time.perf_counter() - t_start
 
@@ -431,6 +447,7 @@ class PhoneReconstructionPipeline:
             },
             notes=notes_text,
             quality_preset=active_preset,
+            mesh_quality=mesh_quality,
         )
         QualityReportGenerator.save_report_json(report, session_dir / "report.json")
 
