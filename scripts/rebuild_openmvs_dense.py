@@ -269,7 +269,13 @@ def rebuild_dense_session(
         raise RuntimeError("Could not align rebuilt mesh PLY.")
     if not align_glb_file(new_glb, rotation, center):
         raise RuntimeError("Could not align rebuilt GLB.")
-    if not align_open3d_geometry_file(dense_ply, rotation, center, point_cloud=True):
+    # Keep the staged MVS project and its original-frame dense PLY consistent.
+    # Export a separate Z-up copy for inspection instead of mutating the source.
+    aligned_dense_ply = stage / "scene_fuse_dense_aligned.ply"
+    shutil.copy2(dense_ply, aligned_dense_ply)
+    if not align_open3d_geometry_file(
+        aligned_dense_ply, rotation, center, point_cloud=True
+    ):
         raise RuntimeError("Could not align rebuilt dense point cloud.")
 
     # Validate all map_Kd paths before swapping the current mesh directory.
@@ -310,6 +316,7 @@ def rebuild_dense_session(
             "more aggressive at deleting long-edge faces."
         ),
         "workspace": str(stage),
+        "aligned_dense_cloud": str(aligned_dense_ply),
         "log_file": str(log_file),
         "backup_directory": str(backup_dir),
     }
