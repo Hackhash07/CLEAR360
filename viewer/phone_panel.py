@@ -127,6 +127,9 @@ class ReconstructionWorker(QtCore.QThread):
                         "has_failures": bool(result.get("failed_images")),
                         "failure_reasons": [],
                         "guidance": (
+                            "Some uploaded photographs were not registered. "
+                            "Review failed_images and the mesh quality warnings."
+                            if result.get("failed_images") else
                             "Review the reconstruction quality warnings before using this model."
                             if mesh_warnings else "No mesh or export QA warnings were reported."
                         ),
@@ -602,10 +605,24 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.current_session_id = session_id
 
         backend_label = "COLMAP + OpenMVS" if res.get("mesh_glb") else "CLEAR360 Python"
-        self.lbl_status.setText(
-            f"Reconstruction successful! {backend_label} backend: {session_id}."
+        quality = (res.get("report") or {}).get("mesh_quality", {})
+        quality_status = quality.get("status", "not available")
+        quality_score = quality.get("score")
+        quality_label = (
+            f"Mesh QA: {quality_status.upper()} ({quality_score:.1f}/100)"
+            if isinstance(quality_score, (int, float))
+            else f"Mesh QA: {quality_status.upper()}"
         )
-        self.lbl_status.setStyleSheet("font-size: 10px; color: #22c55e;")
+        self.lbl_status.setText(
+            f"Reconstruction successful! {backend_label} backend: {session_id}. {quality_label}."
+        )
+        status_color = (
+            "#22c55e" if quality_status == "healthy"
+            else "#eab308" if quality_status == "review"
+            else "#ef4444" if quality_status == "poor"
+            else "#38bdf8"
+        )
+        self.lbl_status.setStyleSheet(f"font-size: 10px; color: {status_color};")
         self._refresh_session_list()
 
         # Emit completion signal to open in 3D viewport
