@@ -95,8 +95,8 @@ def _rewrite_obj_mtllib(obj_path: Path, library_name: str) -> None:
 def resume_from_dense(
     session: Path,
     *,
-    output_tag: str = "mesh_from_existing_dense",
-    backup_name: str = "mesh_before_dense_resume",
+    output_tag: str = "mesh_from_existing_dense_v2",
+    backup_name: str = "mesh_before_dense_resume_v2",
     free_space_support: bool = False,
     remove_spurious: float = 20.0,
     max_texture_size: int = 2048,
@@ -105,6 +105,7 @@ def resume_from_dense(
     work = session / "openmvs"
     dense_scene = work / "scene_fuse_dense.mvs"
     dense_ply = work / "scene_fuse_dense.ply"
+    dense_images = work / "dense" / "images"
     images_txt = work / "sparse_text" / "images.txt"
     mesh_dir = session / "mesh"
     backup_dir = session / backup_name
@@ -117,6 +118,10 @@ def resume_from_dense(
         )
     if not images_txt.is_file():
         raise FileNotFoundError(f"COLMAP camera poses missing: {images_txt}")
+    if not dense_images.is_dir():
+        raise FileNotFoundError(
+            f"Undistorted COLMAP images folder missing: {dense_images}"
+        )
     if not (session / "original_images").is_dir():
         raise FileNotFoundError(f"Original photographs missing: {session / 'original_images'}")
     if not mesh_dir.is_dir():
@@ -158,7 +163,7 @@ def resume_from_dense(
     _run(
         [reconstruct, "-i", str(dense_scene), "-o", str(mesh_scene),
          *reconstruct_options],
-        stage,
+        work,
         log_file,
         "Reconstruct mesh from saved dense scene",
     )
@@ -170,7 +175,7 @@ def resume_from_dense(
     _run(
         [refine, "-i", str(mesh_scene), "-m", str(mesh_ply), "-o", str(refined_scene),
          *refine_mesh_options(max_threads=1, max_views=6)],
-        stage,
+        work,
         log_file,
         "Refine mesh at native image resolution",
     )
@@ -185,14 +190,14 @@ def resume_from_dense(
     _run(
         [texture, "-i", str(refined_scene), "-m", str(refined_ply),
          "-o", str(glb_work), "--export-type", "glb", *texture_options],
-        stage,
+        work,
         log_file,
         "Export textured GLB",
     )
     _run(
         [texture, "-i", str(refined_scene), "-m", str(refined_ply),
          "-o", str(obj_work), "--export-type", "obj", *texture_options],
-        stage,
+        work,
         log_file,
         "Export textured OBJ and MTL",
     )
@@ -310,8 +315,8 @@ def main() -> int:
         "--data-root", type=Path,
         default=project_root / "data" / "phone_reconstruction",
     )
-    parser.add_argument("--output-tag", default="mesh_from_existing_dense")
-    parser.add_argument("--backup-name", default="mesh_before_dense_resume")
+    parser.add_argument("--output-tag", default="mesh_from_existing_dense_v2")
+    parser.add_argument("--backup-name", default="mesh_before_dense_resume_v2")
     parser.add_argument("--free-space-support", action="store_true")
     parser.add_argument("--remove-spurious", type=float, default=20.0)
     parser.add_argument("--max-texture-size", type=int, default=2048)
