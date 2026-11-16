@@ -18,7 +18,6 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
 
-
 def _load_triangle_mesh(path: Path) -> trimesh.Trimesh:
     """Load a mesh file without silently repairing or dropping disconnected parts."""
     loaded = trimesh.load(path, force="scene", process=False)
