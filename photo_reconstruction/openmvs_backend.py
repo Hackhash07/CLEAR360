@@ -8,6 +8,8 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+
+import numpy as np
 from pathlib import Path
 from typing import Callable, Optional
 
