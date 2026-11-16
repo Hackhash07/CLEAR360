@@ -114,24 +114,6 @@ def _colmap_registration_summary(
     mean_error = (
         float(np.mean(reprojection_errors)) if reprojection_errors else None
     )
-    camera_overlap = {
-        "minimum_shared_3d_tracks": minimum_shared_tracks,
-        "registered_camera_count": len(registered_ids),
-        "supported_pair_count": len(supported_pairs),
-        "possible_pair_count": possible_pairs,
-        "supported_pair_ratio": round(
-            len(supported_pairs) / max(1, possible_pairs), 4
-        ),
-        "component_count": len(camera_components),
-        "components": camera_components,
-        "isolated_cameras": isolated_cameras,
-        "per_camera_3d_track_counts": {
-            image_id_to_name[image_id]: int(per_image_tracks.get(image_id, 0))
-            for image_id in sorted(registered_ids)
-        },
-        "supported_pairs": supported_pairs,
-        "warnings": camera_overlap_warnings,
-    }
     return {
         "uploaded_count": len(uploaded_names),
         "registered_count": len(registered_upload_names),
