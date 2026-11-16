@@ -403,7 +403,20 @@ class PhoneReconstructionPipeline:
 
         # 7. Backend-independent geometric and export quality audit.
         update_progress(94, "Auditing reconstructed geometry and texture references...")
-        from photo_reconstruction.reconstruction_qa import audit_reconstruction_outputs
+        from photo_reconstruction.reconstruction_qa import (
+            audit_camera_overlap_from_track_ids,
+            audit_reconstruction_outputs,
+        )
+
+        camera_track_ids = {
+            image_name: {
+                int(track["point3D_id"])
+                for track in observations
+                if track.get("point3D_id") is not None
+            }
+            for image_name, observations in sfm_res.get("sparse_tracks", {}).items()
+        }
+        camera_overlap = audit_camera_overlap_from_track_ids(camera_track_ids)
 
         mesh_quality = audit_reconstruction_outputs(
             mesh_ply,
@@ -448,6 +461,7 @@ class PhoneReconstructionPipeline:
             notes=notes_text,
             quality_preset=active_preset,
             mesh_quality=mesh_quality,
+            camera_overlap=camera_overlap,
         )
         QualityReportGenerator.save_report_json(report, session_dir / "report.json")
 
@@ -497,6 +511,7 @@ class PhoneReconstructionPipeline:
             "camera_poses": camera_poses,
             "quality_preset": active_preset,
             "report": report,
+            "camera_overlap": camera_overlap,
         }
 
 
