@@ -624,9 +624,12 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         registration = result_report.get("registration") or {}
         overlap = registration.get("camera_overlap") or {}
         if overlap:
-            overlap_status = (
-                "REVIEW" if overlap.get("component_count", 0) > 1 else "CONNECTED"
-            )
+            if not overlap.get("available", False):
+                overlap_status = "NOT AVAILABLE"
+            elif overlap.get("component_count", 0) > 1:
+                overlap_status = "REVIEW"
+            else:
+                overlap_status = "CONNECTED"
             quality_label += f" · Camera overlap: {overlap_status}"
         self.lbl_status.setText(
             f"Reconstruction successful! {backend_label} backend: {session_id}. {quality_label}."
