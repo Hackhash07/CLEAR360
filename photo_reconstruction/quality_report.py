@@ -32,6 +32,7 @@ class QualityReportGenerator:
         image_quality_summary: Optional[Dict[str, Any]] = None,
         notes: Optional[str] = None,
         quality_preset: Optional[str] = None,
+        mesh_quality: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Assemble standardized JSON photogrammetry report.
@@ -70,6 +71,7 @@ class QualityReportGenerator:
                 "total_processing_time_s": round(processing_time_s, 2),
             },
             "image_quality_summary": image_quality_summary or {},
+            "mesh_quality": mesh_quality or {},
             "diagnostics": {
                 "has_failures": len(failed_images) > 0,
                 "failure_reasons": (
