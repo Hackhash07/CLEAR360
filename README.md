@@ -57,27 +57,28 @@ Executes:
 
 ---
 
-## Photo Reconstruction Backend Selection
+## Automatic Photo-to-3D Reconstruction
 
-In **MODE 2: Phone Photo 3D World**, choose the reconstruction approach that matches the capture:
+In **MODE 2: Phone Photo 3D World**, the user uploads photographs and starts reconstruction. No manual backend, quality preset, region drawing, or depth values are required.
 
-- **CLEAR360 (Python / Open3D)** — the existing default multi-view reconstruction pipeline.
-- **COLMAP + OpenMVS** — optional external SfM/MVS backend that exports a textured GLB and a PLY mesh into the session folder.
-- **Guided Photo Projection (Blender-style)** — click the separate guided-projection button, choose one sharp reference photo, outline important regions (for example, wall, fountain frame, basin and sculpture), and assign each region a forward depth offset. CLEAR360 builds a textured OBJ/MTL/PNG model with those photo regions as depth layers.
+CLEAR360 automatically:
+- Selects **COLMAP + OpenMVS** when COLMAP and all required OpenMVS executables are available.
+- Falls back to the built-in **CLEAR360 Python / Open3D** reconstruction pipeline when the external tools are unavailable.
+- Uses the balanced `standard` quality preset to keep memory use and runtime reasonable on laptop hardware.
+- Saves a reconstruction session, textured OBJ/MTL/PNG for the built-in viewer, and a textured GLB for Blender/external tools when using OpenMVS.
 
-Guided Photo Projection is a **2.5D, user-assisted modelling tool**, not automatic full-volume photogrammetry: it preserves the selected front photograph and adds the depth layers you define. It cannot recover hidden backsides or side geometry that is absent from the reference view. Use COLMAP + OpenMVS with a well-overlapped walk-around sequence when a complete 360-degree model is required.
-
-For the OpenMVS backend, install COLMAP and OpenMVS locally, then set the environment variable to the directory containing the OpenMVS executables (including `InterfaceCOLMAP`):
+For automatic COLMAP + OpenMVS detection, install the tools locally and set the OpenMVS executable directory:
 
 ```bash
 export CLEAR360_OPENMVS_DIR="$HOME/Applications/OpenMVS-2.4.0"
+export CLEAR360_COLMAP_BIN="$(command -v colmap)"
 ```
 
-The COLMAP executable must also be available on `PATH`, or set `CLEAR360_COLMAP_BIN` to its full path. The backend runs in the application's reconstruction worker thread and writes its log to `data/phone_reconstruction/<session>/openmvs_pipeline.log`. Install the GLB loader dependency with `pip install -e .` (or `pip install trimesh`).
+The backend selector checks for COLMAP and all required OpenMVS executables before starting. Its decision is shown in the reconstruction status label. The OpenMVS processing log is saved at `data/phone_reconstruction/<session>/openmvs_pipeline.log`.
 
-The OpenMVS backend exports a textured OBJ/PNG atlas for the built-in desktop viewer and a textured GLB for Blender or other 3D tools. Its result remains in uncalibrated photogrammetry units; metric scale calibration is currently supported by the CLEAR360 Python backend only.
+The OpenMVS result remains in uncalibrated photogrammetry units. The automatic workflow does not request a manually supplied scale measurement.
 
-Use photographs captured with physical camera movement and substantial overlap. A collection of six cameras facing outwards from fixed positions around a vehicle does **not** automatically provide the same parallax as a walk-around photo set; for the eventual six-camera rig, calibration, synchronization, and cross-camera overlap must be validated before expecting a complete fused 3D world.
+**Capture requirements still matter:** photographs must show the same static scene from physically different viewpoints, with strong visual overlap. Each important surface should be visible in multiple images. Six unrelated views or photographs taken from one position by only rotating the camera do not provide enough parallax for a complete 3D model. COLMAP's guidance recommends high overlap, different viewpoints, consistent illumination, and good surface texture. See the [COLMAP reconstruction tutorial](https://colmap.github.io/tutorial.html).
 
 ## 4. Documentation Reports
 
