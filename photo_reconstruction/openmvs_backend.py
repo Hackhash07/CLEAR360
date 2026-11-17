@@ -350,9 +350,9 @@ class OpenMVSBackend:
         registration_summary["camera_calibration"] = camera_mode
         with log_file.open("a", encoding="utf-8") as log:
             log.write(
-                "\\nCOLMAP registration summary: "
+                "\nCOLMAP registration summary: "
                 + json.dumps(registration_summary, sort_keys=True)
-                + "\\n"
+                + "\n"
             )
         _validate_sparse_model_for_dense(registration_summary, len(image_paths))
 
