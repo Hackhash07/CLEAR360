@@ -40,6 +40,22 @@ from photo_reconstruction.scene_orientation import (
 ProgressCallback = Optional[Callable[[int, str], None]]
 
 
+def _colmap_feature_extraction_options(max_image_size: int, max_num_features: int) -> list[str]:
+    """Return CPU feature-extraction options accepted by current COLMAP releases."""
+    return [
+        "--FeatureExtraction.max_image_size", str(max_image_size),
+        "--SiftExtraction.max_num_features", str(max_num_features),
+        "--FeatureExtraction.use_gpu", "0",
+    ]
+
+
+def _colmap_feature_matching_options() -> list[str]:
+    """Return CPU feature-matching options accepted by current COLMAP releases."""
+    return ["--FeatureMatching.use_gpu", "0"]
+
+
+
+
 def _colmap_registration_summary(
     images_txt: Path,
     image_paths: list[Path],
@@ -254,15 +270,13 @@ class OpenMVSBackend:
              "--ImageReader.single_camera", camera_mode["single_camera"],
              "--ImageReader.single_camera_per_image", camera_mode["single_camera_per_image"],
              "--ImageReader.camera_model", "SIMPLE_RADIAL",
-             "--FeatureExtraction.max_image_size", str(max_image_size),
-             "--SiftExtraction.max_num_features", str(feature_size),
-             "--FeatureExtraction.use_gpu", "0"],
+             *_colmap_feature_extraction_options(max_image_size, feature_size)],
             work, log_file, progress_cb, 8,
              f"Extracting image features (COLMAP; {camera_mode['strategy']})...",
         )
         self._run(
             [colmap, "exhaustive_matcher", "--database_path", str(db),
-             "--FeatureMatching.use_gpu", "0"],
+             *_colmap_feature_matching_options()],
             work, log_file, progress_cb, 20, "Matching overlapping photographs...",
         )
         self._run(
