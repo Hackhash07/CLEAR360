@@ -211,6 +211,8 @@ class ReconstructionWorker(QtCore.QThread):
                     "photo_set": actual_photo_set_report,
                     "geometric_metrics": {
                         "sparse_points": result.get("sparse_point_count", 0),
+                        "dense_points": result.get("dense_point_count"),
+                        "dense_points_before_visibility_filter": result.get("dense_point_count_unfiltered"),
                         "mesh_vertices": geometry_quality.get("vertex_count", 0),
                         "mesh_triangles": geometry_quality.get("face_count", 0),
                         "mean_reprojection_error_px": result.get("reprojection_error_px"),
