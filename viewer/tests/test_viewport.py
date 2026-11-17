@@ -94,3 +94,69 @@ def test_photogrammetry_mesh_visuals_are_unlit(viewport):
     # Source-image atlases should not be darkened by normal-dependent Phong shading.
     assert viewport.visual_textured_mesh.shading is None
     assert viewport.visual_obj_untextured_mesh.shading is None
+
+
+
+def test_external_obj_with_vertex_normals_loads_textured(viewport, tmp_path):
+    from PIL import Image
+
+    Image.new("RGB", (8, 8), (180, 90, 35)).save(tmp_path / "atlas.png")
+    (tmp_path / "scene.mtl").write_text(
+        "newmtl surface\nmap_Kd atlas.png\n",
+        encoding="utf-8",
+    )
+    obj = tmp_path / "scene_mesh.obj"
+    obj.write_text(
+        "mtllib scene.mtl\n"
+        "v 0 0 0\n"
+        "v 1 0 0\n"
+        "v 0 1 0\n"
+        "vt 0 0\n"
+        "vt 1 0\n"
+        "vt 0 1\n"
+        "vn 0 0 1\n"
+        "usemtl surface\n"
+        "f 1/1/1 2/2/1 3/3/1\n",
+        encoding="utf-8",
+    )
+
+    loaded_mode = viewport.load_external_mesh(str(obj))
+
+    assert loaded_mode == "textured"
+    assert viewport.visual_textured_mesh.visible is True
+    assert viewport.visual_surface_mesh.visible is False
+    assert viewport.visual_obj_untextured_mesh.visible is False
+
+
+def test_external_obj_with_partial_uvs_keeps_textured_faces(viewport, tmp_path):
+    from PIL import Image
+
+    Image.new("RGB", (8, 8), (180, 90, 35)).save(tmp_path / "atlas.png")
+    (tmp_path / "scene.mtl").write_text(
+        "newmtl surface\nmap_Kd atlas.png\n",
+        encoding="utf-8",
+    )
+    obj = tmp_path / "scene_mesh.obj"
+    obj.write_text(
+        "mtllib scene.mtl\n"
+        "v 0 0 0\n"
+        "v 1 0 0\n"
+        "v 1 1 0\n"
+        "v 0 1 0\n"
+        "vt 0 0\n"
+        "vt 1 0\n"
+        "vt 1 1\n"
+        "vt 0 1\n"
+        "vn 0 0 1\n"
+        "usemtl surface\n"
+        "f 1/1/1 2//1 3/3/1\n"
+        "f 1/1/1 3/3/1 4/4/1\n",
+        encoding="utf-8",
+    )
+
+    loaded_mode = viewport.load_external_mesh(str(obj))
+
+    assert loaded_mode == "textured"
+    assert viewport.visual_textured_mesh.visible is True
+    assert viewport.visual_obj_untextured_mesh.visible is True
+    assert viewport._obj_untextured_triangle_count == 1

@@ -665,18 +665,14 @@ class Clear360Viewport(QtWidgets.QWidget):
                 loaded_obj = load_textured_obj(path)
                 verts = loaded_obj.vertices
                 faces = loaded_obj.faces
-                normals = loaded_obj.normals
                 uvs = loaded_obj.uvs
                 texture_rgb = np.ascontiguousarray(np.flipud(loaded_obj.texture))
 
-                mesh_kwargs = {
-                    "vertices": verts,
-                    "faces": faces,
-                    "color": "white",
-                }
-                if normals is not None and normals.shape == verts.shape:
-                    mesh_kwargs["vertex_normals"] = normals
-                self.visual_textured_mesh.set_data(**mesh_kwargs)
+                # MeshVisual.set_data has no vertex_normals argument;
+                # VisPy computes mesh normals from the indexed geometry.
+                self.visual_textured_mesh.set_data(
+                    vertices=verts, faces=faces, color="white"
+                )
                 if self.texture_filter is None:
                     self.texture_filter = TextureFilter(
                         texture=texture_rgb, texcoords=uvs
@@ -851,15 +847,13 @@ class Clear360Viewport(QtWidgets.QWidget):
                 tex_bgr = cv2.imread(str(atlas_png))
                 if tex_bgr is not None:
                     tex_rgb = cv2.cvtColor(tex_bgr, cv2.COLOR_BGR2RGB)
-                    obj_v, obj_vt, obj_vn, obj_f = [], [], [], []
+                    obj_v, obj_vt, obj_f = [], [], []
                     with obj_file.open("r", encoding="utf-8", errors="replace") as f_obj:
                         for line in f_obj:
                             if line.startswith("v "):
                                 obj_v.append([float(x) for x in line.split()[1:4]])
                             elif line.startswith("vt "):
                                 obj_vt.append([float(x) for x in line.split()[1:3]])
-                            elif line.startswith("vn "):
-                                obj_vn.append([float(x) for x in line.split()[1:4]])
                             elif line.startswith("f "):
                                 parts = line.split()[1:4]
                                 obj_f.append([int(pt.split("/")[0]) - 1 for pt in parts])
@@ -867,9 +861,9 @@ class Clear360Viewport(QtWidgets.QWidget):
                         t_verts = np.asarray(obj_v, dtype=np.float32)
                         t_faces = np.asarray(obj_f, dtype=np.uint32)
                         t_uvs = np.asarray(obj_vt, dtype=np.float32)
-                        t_norms = np.asarray(obj_vn, dtype=np.float32) if len(obj_vn) == len(obj_v) else None
+                        # VisPy computes normals internally from vertices/faces.
                         self.visual_textured_mesh.set_data(
-                            vertices=t_verts, faces=t_faces, vertex_normals=t_norms, color="white"
+                            vertices=t_verts, faces=t_faces, color="white"
                         )
                         if self.texture_filter is None:
                             self.texture_filter = TextureFilter(texture=tex_rgb, texcoords=t_uvs)
