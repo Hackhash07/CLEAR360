@@ -13,6 +13,8 @@ on:
       - "photo_reconstruction/__init__.py"
       - "photo_reconstruction/image_loader.py"
       - "photo_reconstruction/tests/test_phone_reconstruction.py"
+      - "photo_reconstruction/session_manager.py"
+      - "photo_reconstruction/tests/test_session_storage.py"
       - "photo_reconstruction/image_preparation.py"
       - "photo_reconstruction/camera_calibration.py"
       - "photo_reconstruction/sfm_engine.py"
@@ -69,6 +71,8 @@ on:
       - "photo_reconstruction/tests/test_image_preparation.py"
       - "photo_reconstruction/image_loader.py"
       - "photo_reconstruction/tests/test_phone_reconstruction.py"
+      - "photo_reconstruction/session_manager.py"
+      - "photo_reconstruction/tests/test_session_storage.py"
       - "photo_reconstruction/reconstruction_qa.py"
       - "photo_reconstruction/openmvs_backend.py"
       - "photo_reconstruction/texture_arrays.py"
@@ -130,6 +134,7 @@ jobs:
             photo_reconstruction/__init__.py \
             photo_reconstruction/image_loader.py \
             photo_reconstruction/image_preparation.py \
+            photo_reconstruction/session_manager.py \
             photo_reconstruction/camera_calibration.py \
             photo_reconstruction/image_loader.py \
             photo_reconstruction/sfm_engine.py \
@@ -168,6 +173,7 @@ jobs:
             photo_reconstruction/tests/test_photo_set_auditor.py \
             photo_reconstruction/tests/test_image_quality_normalization.py \
             photo_reconstruction/tests/test_image_preparation.py \
+            photo_reconstruction/tests/test_session_storage.py \
             photo_reconstruction/tests/test_camera_calibration.py \
             photo_reconstruction/tests/test_mesh_builder_vectorized.py \
             photo_reconstruction/tests/test_texture_arrays.py \
