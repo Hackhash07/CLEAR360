@@ -59,6 +59,11 @@ def _colmap_feature_matching_options() -> list[str]:
     ]
 
 
+def _openmvs_fusion_minimum_views(quality_preset: str) -> int:
+    """Use stricter multi-view support for quality runs; allow 2-view draft coverage."""
+    return 2 if quality_preset.lower() in {"draft", "quick"} else 3
+
+
 
 
 def _colmap_registration_summary(
@@ -351,7 +356,7 @@ class OpenMVSBackend:
                 "max_resolution": max_resolution,
                 "resolution_level": resolution_level,
                 "number_views": 5,
-                "minimum_views_fuse": 2,
+                "minimum_views_fuse": _openmvs_fusion_minimum_views(preset),
                 "postprocess_dmaps": postprocess_dmaps,
                 "cpu_confidence_recalibration": bool(postprocess_dmaps & 8),
                 "max_threads": threads,
@@ -375,7 +380,9 @@ class OpenMVSBackend:
         # The second pass uses the independent copy so first-pass depth maps remain reusable.
         self._run(
             [densify, "-i", str(scene_fuse), "-w", str(work), *common,
-             *densify_fusion_options(minimum_views=2)],
+             *densify_fusion_options(
+                 minimum_views=_openmvs_fusion_minimum_views(preset)
+             )],
             work, log_file, progress_cb, 72, "Fusing depth maps into a dense point cloud...",
         )
 
