@@ -103,19 +103,39 @@ def _openmvs_point_cloud_filter_threshold(quality_preset: str) -> int | None:
     return None if quality_preset.lower() in {"fast", "draft", "quick"} else -20
 
 def _openmvs_standard_profile() -> dict[str, int]:
-    """Balanced Standard settings: reduce dense-MVS cost, retain final asset stages."""
+    """Balanced Standard settings: retain multi-view quality with a lighter MVS grid."""
     return {
         "feature_size": 6000,
         "max_image_size": 1440,
-        "max_resolution": 1400,
+        "max_resolution": 1200,
         "resolution_level": 0,
         "dense_views": 4,
         "dense_iterations": 2,
         "geometric_iterations": 2,
-        "min_dense_resolution": 560,
+        "min_dense_resolution": 480,
         "sub_resolution_levels": 1,
         "postprocess_dmaps": 2,
     }
+
+
+def _openmvs_standard_thread_budget(
+    image_count: int,
+    cpu_count: int | None = None,
+) -> int:
+    """Use two OpenMVS workers for small photo sets; stay conservative on larger sets.
+
+    Dense stereo is memory-intensive. On laptop hardware, more threads are not
+    automatically faster because memory pressure can trigger swapping. The
+    bounded budget speeds up the common 6–12 image Standard job while keeping
+    larger captures at one worker.
+    """
+    if image_count < 1:
+        raise ValueError("image_count must be at least one.")
+    available_cpus = max(
+        1,
+        int(cpu_count if cpu_count is not None else (os.cpu_count() or 1)),
+    )
+    return 2 if image_count <= 12 and available_cpus >= 2 else 1
 
 
 def _validate_sparse_model_for_dense(
@@ -377,7 +397,12 @@ class OpenMVSBackend:
             max_resolution = standard_profile["max_resolution"]
             resolution_level = standard_profile["resolution_level"]
 
-        threads = 2 if fast_preview else 1
+        if fast_preview:
+            threads = 2
+        elif standard_profile is not None:
+            threads = _openmvs_standard_thread_budget(len(image_paths))
+        else:
+            threads = 1
         if fast_preview:
             dense_views = 3
             dense_iterations = 1
