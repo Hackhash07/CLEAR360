@@ -472,8 +472,8 @@ class OpenMVSBackend:
                 visibility_filter_report["error"] = str(exc)
                 with log_file.open("a", encoding="utf-8") as log:
                     log.write(
-                        "\\nVisibility-filter fallback: " + str(exc)
-                        + "\\nUsing the preserved unfiltered dense point cloud.\\n"
+                        "\nVisibility-filter fallback: " + str(exc)
+                        + "\nUsing the preserved unfiltered dense point cloud.\n"
                     )
 
         pipeline_configuration["openmvs"]["visibility_filter_applied"] = (
@@ -484,9 +484,9 @@ class OpenMVSBackend:
         )
         with log_file.open("a", encoding="utf-8") as log:
             log.write(
-                "\\nVisibility-filter result: "
+                "\nVisibility-filter result: "
                 + json.dumps(visibility_filter_report, sort_keys=True)
-                + "\\n"
+                + "\n"
             )
 
         mesh_scene = work / "scene_mesh.mvs"
