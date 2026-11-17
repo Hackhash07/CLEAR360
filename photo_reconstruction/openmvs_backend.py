@@ -16,20 +16,20 @@ from typing import Callable, Optional
 
 import numpy as np
 
+from photo_reconstruction.camera_calibration import resolve_colmap_camera_mode
 from photo_reconstruction.openmvs_assets import (
     copy_mtl_diffuse_maps,
     export_obj_materials_to_glb,
 )
 from photo_reconstruction.openmvs_quality import (
+    apple_silicon_high_profile,
     densify_common_options,
     densify_fusion_options,
     reconstruct_mesh_options,
     refine_mesh_options,
-    texture_mesh_options,
-    apple_silicon_high_profile,
     resolve_openmvs_thread_count,
+    texture_mesh_options,
 )
-from photo_reconstruction.camera_calibration import resolve_colmap_camera_mode
 from photo_reconstruction.openmvs_tools import (
     configured_openmvs_root,
     find_openmvs_executable,
@@ -439,8 +439,8 @@ class OpenMVSBackend:
             min_dense_resolution = apple_silicon_profile["min_dense_resolution"]
             sub_resolution_levels = apple_silicon_profile["sub_resolution_levels"]
         else:
-            # Draft/Quick keeps the established conservative full-depth solve;
-            # High/Maximum retain the original maximum-quality settings.
+            # Draft/Quick keeps the established conservative full-depth solve.
+            # Non-Apple High and Maximum retain the original full-quality settings.
             dense_views = 5
             dense_iterations = 3
             geometric_iterations = 2
