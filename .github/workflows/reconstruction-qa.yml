@@ -33,6 +33,9 @@ on:
       - "photo_reconstruction/tests/test_reconstruction_qa.py"
       - "photo_reconstruction/tests/test_openmvs_backend.py"
       - "photo_reconstruction/tests/test_openmvs_quality.py"
+      - "photo_reconstruction/mesh_builder.py"
+      - "photo_reconstruction/nearest_neighbors.py"
+      - "photo_reconstruction/tests/test_mesh_builder_vectorized.py"
       - ".github/workflows/reconstruction-qa.yml"
   pull_request:
     paths:
@@ -58,6 +61,9 @@ on:
       - "photo_reconstruction/tests/test_reconstruction_qa.py"
       - "photo_reconstruction/tests/test_openmvs_backend.py"
       - "photo_reconstruction/tests/test_openmvs_quality.py"
+      - "photo_reconstruction/mesh_builder.py"
+      - "photo_reconstruction/nearest_neighbors.py"
+      - "photo_reconstruction/tests/test_mesh_builder_vectorized.py"
       - ".github/workflows/reconstruction-qa.yml"
 
 jobs:
@@ -95,6 +101,8 @@ jobs:
             photo_reconstruction/pipeline.py \
             photo_reconstruction/openmvs_backend.py \
             photo_reconstruction/openmvs_assets.py \
+            photo_reconstruction/mesh_builder.py \
+            photo_reconstruction/nearest_neighbors.py \
             viewer/app.py \
             viewer/phone_panel.py
 
@@ -109,4 +117,5 @@ jobs:
             photo_reconstruction/tests/test_photo_set_auditor.py \
             photo_reconstruction/tests/test_image_quality_normalization.py \
             photo_reconstruction/tests/test_image_preparation.py \
-            photo_reconstruction/tests/test_camera_calibration.py
+            photo_reconstruction/tests/test_camera_calibration.py \
+            photo_reconstruction/tests/test_mesh_builder_vectorized.py
