@@ -83,3 +83,77 @@ class SessionManager:
             return None
         with open(report_file, "r", encoding="utf-8") as f:
             return json.load(f)
+
+    def cleanup_successful_session(self, session_id: str) -> Dict[str, Any]:
+        """Remove only known bulky intermediates from a completed OpenMVS session.
+
+        Final mesh/texture assets, root-level reports, manifests and logs are
+        deliberately retained so the session remains viewable and auditable.
+        Failed sessions are never passed here by the worker. Existing sessions
+        are never swept automatically.
+        """
+        if (
+            not isinstance(session_id, str)
+            or not session_id.startswith("session_")
+            or Path(session_id).name != session_id
+        ):
+            raise ValueError("Cleanup requires a direct session_XXX folder name.")
+
+        root = self.root_dir.resolve()
+        session_path = self.root_dir / session_id
+        if not session_path.is_dir() or session_path.is_symlink():
+            raise FileNotFoundError(f"Session directory not found: {session_id}")
+        resolved_session = session_path.resolve()
+        if resolved_session.parent != root or resolved_session.name != session_id:
+            raise ValueError("Refusing to clean a session outside the configured root.")
+
+        # These are generated working folders only. In particular, mesh/ is
+        # excluded because it contains the final OBJ, GLB, PLY and texture maps.
+        intermediate_dirs = (
+            "openmvs",
+            "source_uploads",
+            "original_images",
+            "exif_metadata",
+            "camera_poses",
+            "sparse_cloud",
+            "dense_cloud",
+        )
+        removed: List[str] = []
+        bytes_removed = 0
+
+        for directory_name in intermediate_dirs:
+            candidate = session_path / directory_name
+            if candidate.is_symlink() or not candidate.is_dir():
+                continue
+
+            # Count regular files without following symlinks before removal.
+            stack = [candidate]
+            directory_bytes = 0
+            while stack:
+                current = stack.pop()
+                try:
+                    for child in current.iterdir():
+                        if child.is_symlink():
+                            continue
+                        if child.is_dir():
+                            stack.append(child)
+                        elif child.is_file():
+                            try:
+                                directory_bytes += child.stat().st_size
+                            except OSError:
+                                pass
+                except OSError:
+                    continue
+
+            shutil.rmtree(candidate)
+            removed.append(directory_name)
+            bytes_removed += directory_bytes
+
+        return {
+            "enabled": True,
+            "removed_directories": removed,
+            "bytes_removed": bytes_removed,
+            "megabytes_removed": round(bytes_removed / (1024 * 1024), 2),
+            "final_mesh_and_reports_retained": True,
+            "older_sessions_touched": False,
+        }
