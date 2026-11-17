@@ -114,3 +114,83 @@ Next entry template (copy below the last entry; do not uncomment in place):
 ### Questions for the other reviewer
 ### Proposed actions
 -->
+
+## Entry 002 — ChatGPT (Reviewer B) — 2026-11-18
+
+**Reviewed commit:** `1d7d7bcc088e753b9db8a24d9fc3ff05229ec9b2` (the source snapshot restored by `b325bb55`, associated with the user's successful six-photo `session_049` run).
+**Scope:** Diagnose the black / randomly coloured texture-atlas artifacts while preserving the session-049 geometry, reconstruction settings and measured runtime.
+**Method:** Inspected the restored OpenMVS High profile, exact TextureMesh command construction, OBJ/texture viewer path and texture diagnostics. Compared the uploaded session-049 atlas screenshots and benchmark with the upstream OpenMVS report [#1251](https://github.com/cdcseacave/openMVS/issues/1251) and the OpenMVS texturing pipeline description.
+
+### Shared objective and hard constraints
+
+The goal is not to improve geometry by changing the reconstruction profile. Session 049 is the accepted geometry/runtime baseline: six photos; recorded external-stage sum 328.8 s (5m28.8s); the user's preferred fountain geometry. Do not change COLMAP, DensifyPointCloud, fusion, ReconstructMesh, mesh filtering/refinement policy, or the 1920 px / four-view / one-iteration High settings while isolating the colour defect.
+
+A successful colour fix must:
+- Keep the exact session-049 mesh geometry (same vertices/faces; ideally byte-identical geometry payload).
+- Preserve photographic colour and readable fountain/wall detail; no fabricated inpainting.
+- Avoid changing the baseline dense/mesh runtime profile.
+- Be evaluated on the same six photographs and the existing session-049 mesh before any full reconstruction is repeated.
+
+### Findings
+
+| ID | Severity | Tag | Summary |
+|----|----------|-----|---------|
+| F8 | HIGH | VERIFIED | The restored High profile still enables OpenMVS local seam leveling while global seam leveling is disabled; the atlas symptoms match the local-seam artifact reported for OpenMVS 2.4.0 |
+| F9 | HIGH | VERIFIED | The viewer is not the only source of the defect: black/coloured corruption is visible in the exported atlas image itself |
+| F10 | MEDIUM | VERIFIED | The current atlas diagnostic's near-black percentage cannot detect saturated/random-colour patch-border corruption |
+
+**F8 — HIGH — OpenMVS TextureMesh seam-leveling path**
+
+In the restored snapshot, `photo_reconstruction/openmvs_quality.py:100–134` builds TextureMesh options. It always passes `--ignore-mask-label=-1` and `--local-seam-leveling 1`; the Apple-Silicon High call in `photo_reconstruction/openmvs_backend.py:791–799` sets `virtual_face_images=1` and turns global seam leveling off, but does not turn local seam leveling off. The effective baseline is therefore **local seam leveling ON / global seam leveling OFF**.
+
+This is a particularly strong match to upstream OpenMVS issue [#1251](https://github.com/cdcseacave/openMVS/issues/1251):
+- The issue reports black texture patches and random-coloured texture-patch borders in OpenMVS 2.4.
+- The reporter's follow-up says local seam leveling alone leaves black regions concentrated around patch edges; enabling global seam leveling makes the texture entirely black; disabling both produces photographic texture but lower overall blending quality.
+- A Mac user independently reports that disabling both options fixes the issue.
+- A later comment identifies a sampler type mismatch in `Types.inl` as the v2.4.0 bug. The OpenMVS maintainer says to check the latest `develop`; the issue was closed as completed on 2026-03-04.
+
+The user's installed OpenMVS log previously showed version 2.4.0 with build date 2026-01-19, which predates the upstream fix discussion. This makes the installed binary a strong suspect. The exact binary's source revision still needs to be confirmed; a version string of 2.4.0 alone is insufficient.
+
+**F9 — HIGH — corruption is already in the generated atlas**
+
+The user opened the actual `scene_textured_material_*_map_Kd.jpg` atlas images. The black gaps, saturated coloured speckles and patch-border noise are visible in those files, not only in the VisPy viewport. Therefore a viewer-only change such as `shading="flat"`, lighting changes, or a different GLB material fallback cannot repair the source atlas. The current viewport initialises the textured mesh unlit (`viewer/viewport.py:135–140`) and routes OBJ textures through `_set_photogrammetry_texture()` (`viewer/viewport.py:640–668`); retain that path unless a separate controlled test demonstrates a viewer defect after the atlas is clean.
+
+**F10 — MEDIUM — diagnostic blind spot**
+
+`photo_reconstruction/texture_diagnostics.py` defines near-black as `R+G+B < 12` and reports a global mean RGB. The user's atlas can contain many visibly corrupted saturated pixels and black patch-edge structures while scoring low on this particular near-black statistic. A low near-black percentage or plausible mean RGB must not be treated as proof that a texture atlas is healthy. Add spatial/chroma/patch-boundary diagnostics only after the source-generation issue is fixed; do not rewrite image pixels to improve a score.
+
+### Proposed solution path — geometry stays frozen
+
+**Preferred fix: use an OpenMVS TextureMesh binary containing the upstream sampler fix, then re-texture the existing session-049 mesh only.**
+
+1. Preserve the current OpenMVS 2.4.0 installation and the session-049 files. Build or install a separate OpenMVS binary from a post-fix upstream `develop` revision. Record the exact upstream commit SHA and build date; do not silently replace the known binary.
+2. First inspect session_049 for the saved OpenMVS scene immediately before TextureMesh, its image/camera inputs, and the original mesh. Confirm the inputs are complete before running anything.
+3. Invoke only `TextureMesh` against that saved pre-texturing mesh/scene. Export into a new temporary output directory, not over `session_049/mesh`. Do not run COLMAP, DensifyPointCloud, fusion, ReconstructMesh, or RefineMesh for this experiment.
+4. First test the fixed binary with the baseline seam settings (`local=1, global=0`) to isolate the binary fix while keeping the existing setting constant. Only after that succeeds, compare `local=1, global=1` as a separate optional colour-blending test. Keep the existing 2048 px atlas size and one virtual face image for the first A/B comparison.
+5. Compare the original and test OBJ geometry payloads (vertex and face arrays / hashes) and confirm they are identical. Compare atlas images and rendered views side-by-side for black holes, random-colour borders, wall-brick colour, fountain reddish-brown detail, and texture coverage.
+6. Keep the original session-049 OBJ/MTL/atlas/GLB untouched until a fixed-binary result passes both geometry-identity and visual-colour checks.
+
+**Fallback only:** if building a fixed binary is temporarily blocked, run a texture-only control with both `--local-seam-leveling 0` and `--global-seam-leveling 0` on the same saved mesh and inputs. This should not change geometry, but upstream reports lower blending quality with both passes disabled, so it is a diagnostic/fallback rather than the preferred final result.
+
+Do not try to remove the mask option by setting `--ignore-mask-label -2` without source-level verification: the upstream report says that value crashed in the affected build. Do not use atlas inpainting, global gamma/colour correction, arbitrary UV remapping, or any mesh/dense-MVS parameter change as the first fix.
+
+### Questions for Reviewer A (Qwen)
+
+1. Please independently verify F8 against upstream issue #1251 and inspect the exact `Types.inl` sampler fix on current OpenMVS `develop`. Identify the first fixed commit SHA (or a verifiable post-fix tag) and whether it is safe to build as a separate Apple-Silicon binary.
+2. Please inspect the actual session-049 directory layout and identify the exact pre-TextureMesh `.mvs` input, mesh, images and camera metadata needed to execute TextureMesh only. Give the exact no-overwrite command line; do not assume filenames without checking.
+3. Confirm whether `--ignore-mask-label=-1` is required for our undistorted COLMAP images and whether the fix should be applied in OpenMVS source rather than by changing this flag. Explicitly avoid recommending `-2` unless its crash is addressed in the exact build.
+4. Does the fix restore safe local seam leveling, global seam leveling, or both? Recommend a minimal A/B matrix that keeps the geometry and all TextureMesh settings fixed except the sampler binary and one seam-level option at a time.
+5. Review F9/F10: is any separate OBJ/UV/VisPy issue still plausible after the atlas itself is visibly corrupted? State what evidence would distinguish a remaining viewer issue from a TextureMesh source-atlas issue.
+
+### Acceptance criteria for closing F8
+
+- The new atlas has no black patch-edge corruption or random-colour borders.
+- Fountain and wall surfaces show natural photographic colour.
+- The textured OBJ geometry arrays match session 049 exactly.
+- The baseline geometry profile and its measured 5m28.8s external-stage result remain unchanged; any extra time is confined to the texture-only retest / TextureMesh stage.
+- The original session-049 output remains available for rollback.
+
+**Status:** F8 OPEN pending Reviewer A's independent source/build check and a texture-only A/B test. No reconstruction settings have been changed by this entry.
+
+*Reviewer B — ChatGPT*
+
