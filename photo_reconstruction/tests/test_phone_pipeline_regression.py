@@ -389,3 +389,20 @@ def test_openmvs_worker_writes_input_manifest_before_backend(
     assert len(failures) == 1
     assert "Fake OpenMVS backend reached" in failures[0][0]
     assert "cannot access local variable 'json'" not in failures[0][0]
+
+
+def test_phone_panel_exposes_standard_and_high_quality_presets(qapp, tmp_path):
+    panel = PhoneReconstructionPanel(data_root=tmp_path)
+    try:
+        assert panel.combo_quality_preset.count() == 2
+        assert panel.combo_quality_preset.currentData() == "standard"
+        assert "balanced first full run" in panel.lbl_auto_quality.text()
+
+        high_index = panel.combo_quality_preset.findData("high")
+        assert high_index >= 0
+        panel.combo_quality_preset.setCurrentIndex(high_index)
+
+        assert panel.combo_quality_preset.currentData() == "high"
+        assert "higher RAM use" in panel.lbl_auto_quality.text()
+    finally:
+        panel.close()
