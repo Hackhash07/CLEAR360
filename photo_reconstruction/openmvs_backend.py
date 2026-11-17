@@ -427,7 +427,7 @@ class OpenMVSBackend:
         elif preset in {"draft", "quick"}:
             feature_size, max_image_size, max_resolution, resolution_level = 2500, 1000, 800, 1
         elif apple_silicon_high:
-            # Keep COLMAP feature extraction unchanged; trim only dense MVS work.
+            # Preserve COLMAP features; reduce dense and mesh/texturing finishing cost.
             apple_silicon_profile = apple_silicon_high_profile()
             feature_size = apple_silicon_profile["feature_size"]
             max_image_size = apple_silicon_profile["max_image_size"]
