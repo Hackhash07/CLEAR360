@@ -147,7 +147,10 @@ class PhoneReconstructionPipeline:
 
         # 2. Ingest, preserve originals, and prepare SfM-readable working images.
         update_progress(10, f"Validating and ingesting {len(image_paths)} images...")
-        from photo_reconstruction.image_preparation import stage_reconstruction_image
+        from photo_reconstruction.image_preparation import (
+            session_relative_path,
+            stage_reconstruction_image,
+        )
 
         copied_paths = []
         camera_infos = []
@@ -205,7 +208,7 @@ class PhoneReconstructionPipeline:
             })
             input_manifest.append({
                 "original_filename": src.name,
-                "source_archive": archived_path.relative_to(session_dir).as_posix(),
+                "source_archive": session_relative_path(archived_path, session_dir),
                 "sfm_filename": sfm_path.name,
                 "working_format": staged["working_format"],
                 "converted_for_sfm": staged["converted_for_sfm"],
