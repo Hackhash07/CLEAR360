@@ -145,6 +145,13 @@ def _openmvs_point_cloud_filter_threshold(quality_preset: str) -> int | None:
     """Apply camera-visibility cleanup only to full-quality reconstructions."""
     return None if quality_preset.lower() in {"fast", "draft", "quick"} else -20
 
+
+def _should_run_mesh_refinement(
+    quality_preset: str, *, apple_silicon: bool = False
+) -> bool:
+    """Keep full refinement except for the balanced Apple-Silicon High profile."""
+    return not (quality_preset.strip().lower() == "high" and apple_silicon)
+
 def _openmvs_standard_profile() -> dict[str, int]:
     """Balanced Standard settings: reduce dense-MVS cost, retain final asset stages."""
     return {
@@ -364,6 +371,7 @@ class OpenMVSBackend:
 
         preset = quality_preset.lower()
         fast_preview = preset == "fast"
+        apple_silicon_high = preset == "high" and _is_apple_silicon()
         densify = self._binary("DensifyPointCloud")
         interface_colmap = self._binary("InterfaceCOLMAP")
         if fast_preview:
@@ -371,7 +379,11 @@ class OpenMVSBackend:
             reconstruct = refine = texture = None
         else:
             reconstruct = self._binary("ReconstructMesh")
-            refine = self._binary("RefineMesh")
+            refine = (
+                self._binary("RefineMesh")
+                if _should_run_mesh_refinement(preset, apple_silicon=_is_apple_silicon())
+                else None
+            )
             texture = self._binary("TextureMesh")
 
         # Audit only after executable checks so dependency errors remain actionable;
@@ -414,7 +426,7 @@ class OpenMVSBackend:
             feature_size, max_image_size, max_resolution, resolution_level = 1500, 800, 640, 1
         elif preset in {"draft", "quick"}:
             feature_size, max_image_size, max_resolution, resolution_level = 2500, 1000, 800, 1
-        elif preset == "high" and _is_apple_silicon():
+        elif apple_silicon_high:
             # Keep COLMAP feature extraction unchanged; trim only dense MVS work.
             apple_silicon_profile = apple_silicon_high_profile()
             feature_size = apple_silicon_profile["feature_size"]
@@ -591,7 +603,20 @@ class OpenMVSBackend:
                 "preview_only": fast_preview,
                 "meshing_skipped": fast_preview,
                 "mesh_qa_skipped": fast_preview,
-                "refinement_skipped": fast_preview,
+                "refinement_skipped": (
+                    fast_preview
+                    or not _should_run_mesh_refinement(
+                        preset, apple_silicon=apple_silicon_high
+                    )
+                ),
+                "refinement_skip_reason": (
+                    "point_cloud_preview" if fast_preview
+                    else "apple_silicon_high_speed_profile" if apple_silicon_high
+                    else None
+                ),
+                "texture_virtual_face_images": 1 if apple_silicon_high else 3,
+                "texture_local_seam_leveling": 1,
+                "texture_global_seam_leveling": 0 if apple_silicon_high else 1,
                 "texturing_skipped": fast_preview,
             },
             "input_photo_count": len(image_paths),
@@ -734,22 +759,51 @@ class OpenMVSBackend:
                     "mesh QA, refinement and texturing intentionally skipped.\n"
                 )
         else:
-            refined_scene = work / "scene_mesh_refined.mvs"
-            self._run(
-                [refine, "-i", str(mesh_scene), "-m", str(mesh_ply), "-o", str(refined_scene),
-                 *refine_mesh_options(max_threads=threads, max_views=6)],
-                work, log_file, progress_cb, 86, "Refining mesh geometry...",
-            )
+            texture_input_scene = mesh_scene
+            texture_input_ply = mesh_ply
+            if _should_run_mesh_refinement(
+                preset, apple_silicon=apple_silicon_high
+            ):
+                refined_scene = work / "scene_mesh_refined.mvs"
+                self._run(
+                    [refine, "-i", str(mesh_scene), "-m", str(mesh_ply), "-o", str(refined_scene),
+                     *refine_mesh_options(max_threads=threads, max_views=6)],
+                    work, log_file, progress_cb, 86, "Refining mesh geometry...",
+                )
+                texture_input_scene = refined_scene
+                texture_input_ply = work / "scene_mesh_refined.ply"
+                if not texture_input_ply.exists():
+                    texture_input_ply = mesh_ply
+            else:
+                message = (
+                    "Apple-Silicon High: skipping RefineMesh to reduce triangle "
+                    "count and TextureMesh workload; use Maximum for full refinement."
+                )
+                if progress_cb:
+                    progress_cb(86, message)
+                with log_file.open("a", encoding="utf-8") as log:
+                    log.write("\n" + message + "\n")
+
             # OpenMVS TextureMesh calculates view selection, seams and texture
             # patches before exporting. Run that expensive calculation ONCE for
             # OBJ, then derive GLB from the exact same UV/material/image package.
             # Use the same memory-aware thread cap for the texture stage.
-            texture_options = texture_mesh_options(
-                max_threads=threads, max_texture_size=2048
-            )
+            if apple_silicon_high:
+                # OpenMVS 2.4.0 has a reported global seam-leveling black-texture
+                # regression. Keep local seam leveling and reduce virtual views.
+                texture_options = texture_mesh_options(
+                    max_threads=threads,
+                    max_texture_size=2048,
+                    virtual_face_images=1,
+                    global_seam_leveling=False,
+                )
+            else:
+                texture_options = texture_mesh_options(
+                    max_threads=threads, max_texture_size=2048
+                )
             obj_work = work / "scene_textured.obj"
             self._run(
-                [texture, "-i", str(refined_scene), "-o", str(obj_work),
+                [texture, "-i", str(texture_input_scene), "-o", str(obj_work),
                  "--export-type", "obj", *texture_options],
                 work, log_file, progress_cb, 92,
                 "Generating the texture atlas once (OpenMVS OBJ)...",
@@ -757,10 +811,7 @@ class OpenMVSBackend:
 
             final_glb = mesh_dir / "scene_textured.glb"
             final_obj = mesh_dir / "scene_mesh.obj"
-            refined_ply = work / "scene_mesh_refined.ply"
-            if not refined_ply.exists():
-                refined_ply = mesh_ply
-            shutil.copy2(refined_ply, final_ply)
+            shutil.copy2(texture_input_ply, final_ply)
 
             texture_mtl = work / "scene_textured.mtl"
             if not obj_work.is_file():
