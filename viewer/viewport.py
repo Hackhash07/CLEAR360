@@ -688,7 +688,6 @@ class Clear360Viewport(QtWidgets.QWidget):
 
         if path.suffix.lower() == ".obj":
             try:
-                from vispy.visuals.filters import TextureFilter
                 from viewer.obj_texture_loader import load_textured_obj
 
                 loaded_obj = load_textured_obj(path)
@@ -832,8 +831,15 @@ class Clear360Viewport(QtWidgets.QWidget):
                 return display_mode
             except Exception as exc:
                 print(f"Notice: GLB preview fallback: {exc}")
-                fallback_ply = path.with_suffix(".ply")
-                if fallback_ply.exists():
+                fallback_candidates = (
+                    path.with_suffix(".ply"),
+                    path.with_name("scene_mesh.ply"),
+                )
+                fallback_ply = next(
+                    (candidate for candidate in fallback_candidates if candidate.is_file()),
+                    None,
+                )
+                if fallback_ply is not None:
                     path = fallback_ply
                 else:
                     self.canvas.native.setToolTip(
