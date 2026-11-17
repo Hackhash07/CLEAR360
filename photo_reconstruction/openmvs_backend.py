@@ -66,6 +66,39 @@ def _openmvs_fusion_minimum_views(quality_preset: str) -> int:
 
 
 
+def _validate_sparse_model_for_dense(
+    registration_summary: dict[str, Any],
+    uploaded_count: int,
+) -> None:
+    """Stop dense MVS when sparse cameras do not form a sufficiently supported block."""
+    if uploaded_count < 1:
+        raise ValueError("At least one uploaded image is required for sparse-model validation.")
+    registered_count = int(registration_summary.get("registered_count", 0) or 0)
+    minimum_registered = max(3, int(np.ceil(0.60 * uploaded_count)))
+    if registered_count < minimum_registered:
+        failed = registration_summary.get("failed_images", [])
+        failed_text = ", ".join(str(name) for name in failed[:8]) or "not reported"
+        raise RuntimeError(
+            "COLMAP sparse reconstruction is too incomplete for dense MVS: "
+            f"{registered_count}/{uploaded_count} images registered; "
+            f"at least {minimum_registered} are required. "
+            f"Unregistered images: {failed_text}. Capture more overlapping viewpoints."
+        )
+
+    overlap = registration_summary.get("camera_overlap") or {}
+    if not overlap.get("available") or overlap.get("status") != "connected":
+        components = overlap.get("components") or []
+        component_summary = "; ".join(
+            ", ".join(str(name) for name in component)
+            for component in components[:6]
+        ) or "no connected camera-track evidence"
+        raise RuntimeError(
+            "COLMAP registered cameras do not form one connected co-visibility graph. "
+            f"Status: {overlap.get('status', 'unavailable')}; groups: {component_summary}. "
+            "Add overlapping photographs between viewpoints before dense reconstruction."
+        )
+
+
 def _colmap_registration_summary(
     images_txt: Path,
     image_paths: list[Path],
@@ -315,11 +348,13 @@ class OpenMVSBackend:
             pose_text_dir / "points3D.txt",
         )
         registration_summary["camera_calibration"] = camera_mode
-        if registration_summary["registered_count"] < 2:
-            raise RuntimeError(
-                "COLMAP registered fewer than two uploaded photographs; "
-                "the camera solution is insufficient for 3D reconstruction."
+        with log_file.open("a", encoding="utf-8") as log:
+            log.write(
+                "\\nCOLMAP registration summary: "
+                + json.dumps(registration_summary, sort_keys=True)
+                + "\\n"
             )
+        _validate_sparse_model_for_dense(registration_summary, len(image_paths))
 
         self._run(
             [colmap, "image_undistorter", "--image_path", str(images_dir),
