@@ -155,6 +155,17 @@ def test_openmvs_camera_graph_connects_views_with_fifteen_shared_tracks(tmp_path
     assert overlap["warnings"] == []
 
 
+def test_colmap_cpu_thread_budget_is_bounded_for_standard_only():
+    from photo_reconstruction.openmvs_backend import _colmap_cpu_thread_budget
+
+    assert _colmap_cpu_thread_budget("fast") == 2
+    assert _colmap_cpu_thread_budget("standard") == 2
+    assert _colmap_cpu_thread_budget("draft") is None
+    assert _colmap_cpu_thread_budget("quick") is None
+    assert _colmap_cpu_thread_budget("high") is None
+    assert _colmap_cpu_thread_budget("maximum") is None
+
+
 def test_colmap_cli_uses_current_feature_extraction_option_groups():
     from photo_reconstruction.openmvs_backend import _colmap_feature_extraction_options
 
