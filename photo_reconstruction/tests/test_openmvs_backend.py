@@ -213,3 +213,73 @@ def test_quality_fusion_requires_three_supporting_views_but_draft_allows_two():
     assert _openmvs_fusion_minimum_views("maximum") == 3
     assert _openmvs_fusion_minimum_views("draft") == 2
     assert _openmvs_fusion_minimum_views("quick") == 2
+
+
+def test_sparse_quality_gate_accepts_sufficient_connected_camera_graph():
+    from photo_reconstruction.openmvs_backend import _validate_sparse_model_for_dense
+
+    _validate_sparse_model_for_dense(
+        {
+            "registered_count": 4,
+            "failed_images": ["photo_05.jpg", "photo_06.jpg"],
+            "camera_overlap": {
+                "available": True,
+                "status": "connected",
+                "components": [["photo_01.jpg", "photo_02.jpg", "photo_03.jpg", "photo_04.jpg"]],
+            },
+        },
+        uploaded_count=6,
+    )
+
+
+def test_sparse_quality_gate_blocks_low_registration_completeness():
+    from photo_reconstruction.openmvs_backend import _validate_sparse_model_for_dense
+
+    with pytest.raises(RuntimeError, match="too incomplete for dense MVS"):
+        _validate_sparse_model_for_dense(
+            {
+                "registered_count": 3,
+                "failed_images": ["photo_04.jpg", "photo_05.jpg", "photo_06.jpg"],
+                "camera_overlap": {
+                    "available": True,
+                    "status": "connected",
+                    "components": [["photo_01.jpg", "photo_02.jpg", "photo_03.jpg"]],
+                },
+            },
+            uploaded_count=6,
+        )
+
+
+def test_sparse_quality_gate_blocks_disconnected_registered_cameras():
+    from photo_reconstruction.openmvs_backend import _validate_sparse_model_for_dense
+
+    with pytest.raises(RuntimeError, match="connected co-visibility graph"):
+        _validate_sparse_model_for_dense(
+            {
+                "registered_count": 6,
+                "failed_images": [],
+                "camera_overlap": {
+                    "available": True,
+                    "status": "disconnected",
+                    "components": [
+                        ["photo_01.jpg", "photo_02.jpg", "photo_03.jpg"],
+                        ["photo_04.jpg", "photo_05.jpg", "photo_06.jpg"],
+                    ],
+                },
+            },
+            uploaded_count=6,
+        )
+
+
+def test_sparse_quality_gate_blocks_missing_track_overlap_evidence():
+    from photo_reconstruction.openmvs_backend import _validate_sparse_model_for_dense
+
+    with pytest.raises(RuntimeError, match="connected co-visibility graph"):
+        _validate_sparse_model_for_dense(
+            {
+                "registered_count": 6,
+                "failed_images": [],
+                "camera_overlap": {"available": False, "status": "unavailable"},
+            },
+            uploaded_count=6,
+        )
