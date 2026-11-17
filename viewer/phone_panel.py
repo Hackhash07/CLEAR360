@@ -443,7 +443,10 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
 
         self.combo_quality_preset = QtWidgets.QComboBox()
         self.combo_quality_preset.addItem(
-            "Standard — balanced detail (recommended start)", "standard"
+            "Fast Preview — geometry only, target under 15 min", "fast"
+        )
+        self.combo_quality_preset.addItem(
+            "Standard — full refinement and textured exports", "standard"
         )
         self.combo_quality_preset.addItem(
             "High — more detail, more processing time and memory", "high"
@@ -775,9 +778,13 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             return
         preset = self.combo_quality_preset.currentData()
         descriptions = {
+            "fast": (
+                "Fast Preview: 800 px inputs · 1500 SIFT features · low-res geometry only · "
+                "skips refinement and texturing. Under-15-minute target is not guaranteed."
+            ),
             "standard": (
                 "Quality: Standard · 1600 px feature images · 6000 SIFT features · "
-                "balanced first full run"
+                "full refinement and textured OBJ/GLB exports"
             ),
             "high": (
                 "Quality: High · 2400 px feature images · 8192 SIFT features · "
@@ -785,7 +792,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             ),
         }
         self.lbl_auto_quality.setText(
-            descriptions.get(preset, "Quality: Standard")
+            descriptions.get(preset, "Quality: Fast Preview")
         )
 
     def _on_start_clicked(self):
@@ -900,8 +907,11 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         mesh_path = str(res.get("mesh_viewer") or res.get("mesh_ply", ""))
         self.current_session_id = session_id
 
-        backend_label = "COLMAP + OpenMVS" if res.get("mesh_glb") else "CLEAR360 Python"
         result_report = res.get("report") or {}
+        backend_label = result_report.get("backend") or (
+            "COLMAP + OpenMVS" if res.get("mesh_glb") else "CLEAR360 Python"
+        )
+        preview_only = bool(result_report.get("preview_only", False))
         quality = result_report.get("mesh_quality", {})
         quality_status = quality.get("status", "not available")
         quality_score = quality.get("score")
@@ -938,16 +948,21 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             else:
                 overlap_status = "CONNECTED"
             quality_label += f" · Camera overlap: {overlap_status}"
-        status_prefix = (
-            "Reconstruction successful"
-            if quality_status == "healthy"
-            else "Reconstruction generated — QA review required"
-        )
+        if preview_only:
+            quality_label += " · GEOMETRY PREVIEW ONLY — no refinement or texture"
+            status_prefix = "Fast geometry preview generated — not a final textured asset"
+        else:
+            status_prefix = (
+                "Reconstruction successful"
+                if quality_status == "healthy"
+                else "Reconstruction generated — QA review required"
+            )
         self.lbl_status.setText(
             f"{status_prefix}. {backend_label} backend: {session_id}. {quality_label}."
         )
         status_color = (
-            "#22c55e" if quality_status == "healthy"
+            "#38bdf8" if preview_only
+            else "#22c55e" if quality_status == "healthy"
             else "#eab308" if quality_status == "review"
             else "#ef4444" if quality_status == "poor"
             else "#38bdf8"
@@ -958,7 +973,15 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         # Emit completion signal to open in 3D viewport
         self.reconstruction_completed.emit(session_id, mesh_path)
 
-        if quality_status == "healthy":
+        if preview_only:
+            dialog_title = "Fast Geometry Preview Ready"
+            dialog_message = (
+                f"Session: {session_id}\n\n"
+                "A low-resolution geometry-only preview was generated and loaded. "
+                "Mesh refinement and texture exports were intentionally skipped for speed. "
+                "Review the shape and camera coverage, then run Standard for the final textured asset."
+            )
+        elif quality_status == "healthy":
             dialog_title = "Photogrammetry Complete"
             dialog_message = (
                 f"3D reconstruction completed and passed mesh QA.\nSession: {session_id}\n\n"
