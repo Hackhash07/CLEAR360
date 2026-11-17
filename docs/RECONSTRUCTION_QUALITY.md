@@ -187,3 +187,22 @@ Every external command now records its elapsed wall time in
 `openmvs_pipeline.log` so the Fast Preview target can be evaluated stage by
 stage. A preview that exceeds 15 minutes is a benchmark failure to investigate,
 not a reason to silently lower quality or report a false time estimate.
+
+## Standard texture-export performance optimization
+
+Full-quality Standard/High runs preserve the existing COLMAP registration,
+depth estimation, fusion, mesh reconstruction, refinement, 2048-pixel texture
+atlas size, virtual face-image count, and seam-leveling settings. The expensive
+OpenMVS TextureMesh command is now invoked once to generate the textured OBJ,
+UVs, MTL and diffuse maps. GLB is then converted from that same OBJ/MTL package
+with trimesh and reopened to validate geometry and embedded diffuse textures.
+This avoids performing the OpenMVS view-to-texture and seam/patch calculation
+a second time solely to emit GLB. The OBJ remains the native desktop viewer
+asset, while the GLB remains available for external viewers and export.
+
+TextureMesh uses two CPU threads on the user's 8 GB Mac profile; dense stereo
+and mesh stages retain their conservative one-thread setting. The intention is
+to speed the texture stage without changing its atlas resolution, source mesh,
+UV layout, diffuse images, or seam-leveling options. Actual wall-time gains
+must be measured from per-stage timestamps on the target Mac; CI only validates
+that the OBJ-to-GLB conversion preserves and embeds textures.
