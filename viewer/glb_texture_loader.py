@@ -165,6 +165,7 @@ def load_textured_glb(glb_path: str | Path) -> TexturedGLB:
             raise ValueError("Combined GLB texture atlas exceeds the safe viewer size.")
         composite = Image.new("RGB", (total_width, max_height), (32, 32, 32))
         x_offset = 0
+        vertex_offset = 0
         for vertices, faces, uv, image in textured_parts:
             composite.paste(image, (x_offset, max_height - image.height))
             uv_wrapped = uv - np.floor(uv)
@@ -175,8 +176,9 @@ def load_textured_glb(glb_path: str | Path) -> TexturedGLB:
             )
             atlas_uv[:, 1] = uv_wrapped[:, 1] * (image.height / max_height)
             textured_vertices.append(vertices)
-            textured_faces.append(faces + sum(len(part) for part in textured_vertices[:-1]))
+            textured_faces.append(faces + vertex_offset)
             remapped_uvs.append(atlas_uv)
+            vertex_offset += len(vertices)
             x_offset += image.width
         texture = np.asarray(composite, dtype=np.uint8)
 
