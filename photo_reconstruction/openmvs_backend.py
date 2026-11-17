@@ -298,11 +298,17 @@ class OpenMVSBackend:
         if not colmap:
             raise FileNotFoundError("COLMAP executable not found. Activate its environment or set CLEAR360_COLMAP_BIN.")
 
+        preset = quality_preset.lower()
+        fast_preview = preset == "fast"
         densify = self._binary("DensifyPointCloud")
-        reconstruct = self._binary("ReconstructMesh")
-        refine = self._binary("RefineMesh")
-        texture = self._binary("TextureMesh")
         interface_colmap = self._binary("InterfaceCOLMAP")
+        if fast_preview:
+            # The dense point-cloud preview does not require mesh or texture tools.
+            reconstruct = refine = texture = None
+        else:
+            reconstruct = self._binary("ReconstructMesh")
+            refine = self._binary("RefineMesh")
+            texture = self._binary("TextureMesh")
 
         # Audit only after executable checks so dependency errors remain actionable;
         # no OpenMVS work/stage folders are created before this gate.
@@ -336,8 +342,6 @@ class OpenMVSBackend:
 
         camera_mode = resolve_colmap_camera_mode(photo_set_report)
 
-        preset = quality_preset.lower()
-        fast_preview = preset == "fast"
         if fast_preview:
             # Low-resolution geometry-only preview. Runtime target is a benchmark
             # objective, not a guaranteed deadline for every photo set.
