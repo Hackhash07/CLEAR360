@@ -254,15 +254,15 @@ class OpenMVSBackend:
              "--ImageReader.single_camera", camera_mode["single_camera"],
              "--ImageReader.single_camera_per_image", camera_mode["single_camera_per_image"],
              "--ImageReader.camera_model", "SIMPLE_RADIAL",
-             "--SiftExtraction.max_image_size", str(max_image_size),
+             "--FeatureExtraction.max_image_size", str(max_image_size),
              "--SiftExtraction.max_num_features", str(feature_size),
-             "--SiftExtraction.use_gpu", "0"],
+             "--FeatureExtraction.use_gpu", "0"],
             work, log_file, progress_cb, 8,
              f"Extracting image features (COLMAP; {camera_mode['strategy']})...",
         )
         self._run(
             [colmap, "exhaustive_matcher", "--database_path", str(db),
-             "--SiftMatching.use_gpu", "0"],
+             "--FeatureMatching.use_gpu", "0"],
             work, log_file, progress_cb, 20, "Matching overlapping photographs...",
         )
         self._run(
