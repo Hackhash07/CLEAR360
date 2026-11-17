@@ -41,17 +41,22 @@ ProgressCallback = Optional[Callable[[int, str], None]]
 
 
 def _colmap_feature_extraction_options(max_image_size: int, max_num_features: int) -> list[str]:
-    """Return CPU feature-extraction options accepted by current COLMAP releases."""
+    """Return quality-oriented CPU SIFT options accepted by current COLMAP."""
     return [
         "--FeatureExtraction.max_image_size", str(max_image_size),
         "--SiftExtraction.max_num_features", str(max_num_features),
+        "--SiftExtraction.estimate_affine_shape", "1",
+        "--SiftExtraction.domain_size_pooling", "1",
         "--FeatureExtraction.use_gpu", "0",
     ]
 
 
 def _colmap_feature_matching_options() -> list[str]:
-    """Return CPU feature-matching options accepted by current COLMAP releases."""
-    return ["--FeatureMatching.use_gpu", "0"]
+    """Return CPU matching options with geometry-guided correspondence recovery."""
+    return [
+        "--FeatureMatching.use_gpu", "0",
+        "--SiftMatching.guided_matching", "1",
+    ]
 
 
 
@@ -251,15 +256,16 @@ class OpenMVSBackend:
 
         preset = quality_preset.lower()
         if preset in {"draft", "quick"}:
-            feature_size, max_image_size, max_resolution, resolution_level = 1000, 1000, 800, 1
+            feature_size, max_image_size, max_resolution, resolution_level = 2500, 1000, 800, 1
         elif preset == "high":
-            feature_size, max_image_size, max_resolution, resolution_level = 6000, 2400, 2400, 0
+            feature_size, max_image_size, max_resolution, resolution_level = 8192, 2400, 2400, 0
         elif preset == "maximum":
-            feature_size, max_image_size, max_resolution, resolution_level = 8000, 3200, 3200, 0
+            feature_size, max_image_size, max_resolution, resolution_level = 12000, 3200, 3200, 0
         else:
-            # Standard keeps the full 1600px undistorted images for dense stereo.
-            # The previous level=1 reduced them to ~800px and discarded fine detail.
-            feature_size, max_image_size, max_resolution, resolution_level = 2500, 1600, 1600, 0
+            # Standard keeps full-resolution images and a larger SIFT budget;
+            # affine-shape and domain-size pooling improve robustness to scale
+            # and viewpoint changes in handheld object capture.
+            feature_size, max_image_size, max_resolution, resolution_level = 6000, 1600, 1600, 0
         threads = 1  # Keep laptop memory usage predictable.
 
         db = work / "database.db"
@@ -326,12 +332,15 @@ class OpenMVSBackend:
 
         scene_fuse = work / "scene_fuse.mvs"
         shutil.copy2(scene_mvs, scene_fuse)
+        # CPU confidence recalibration is expensive but quality-oriented. Keep
+        # the short-gap interpolation-only path for explicit draft/quick runs.
+        postprocess_dmaps = 2 if preset in {"draft", "quick"} else 10
         common = densify_common_options(
             resolution_level=resolution_level,
             max_resolution=max_resolution,
             max_threads=threads,
             number_views=5,
-            postprocess_dmaps=2,
+            postprocess_dmaps=postprocess_dmaps,
         )
         self._run(
             [densify, "-i", str(scene_mvs), "-w", str(work), *common, "--fusion-mode", "1"],
