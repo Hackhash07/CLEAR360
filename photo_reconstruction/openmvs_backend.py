@@ -615,7 +615,7 @@ class OpenMVSBackend:
                     else None
                 ),
                 "texture_virtual_face_images": 1 if apple_silicon_high else 3,
-                "texture_local_seam_leveling": 1,
+                "texture_local_seam_leveling": 0 if apple_silicon_high else 1,
                 "texture_global_seam_leveling": 0 if apple_silicon_high else 1,
                 "texturing_skipped": fast_preview,
             },
@@ -789,12 +789,15 @@ class OpenMVSBackend:
             # OBJ, then derive GLB from the exact same UV/material/image package.
             # Use the same memory-aware thread cap for the texture stage.
             if apple_silicon_high:
-                # OpenMVS 2.4.0 has a reported global seam-leveling black-texture
-                # regression. Keep local seam leveling and reduce virtual views.
+                # The affected OpenMVS 2.4.0 sampler bug corrupts local seam
+                # borders and can turn the full atlas black with global leveling.
+                # Disable both passes for this build; a fixed upstream binary
+                # can restore seam blending without this compatibility workaround.
                 texture_options = texture_mesh_options(
                     max_threads=threads,
                     max_texture_size=2048,
                     virtual_face_images=1,
+                    local_seam_leveling=False,
                     global_seam_leveling=False,
                 )
             else:
