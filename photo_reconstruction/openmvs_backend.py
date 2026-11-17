@@ -563,7 +563,7 @@ class OpenMVSBackend:
         pipeline_configuration = {
             "quality_preset": preset,
             "performance_profile": (
-                "apple_silicon_high_balanced"
+                "apple_silicon_high_runtime"
                 if apple_silicon_profile is not None
                 else "default"
             ),
