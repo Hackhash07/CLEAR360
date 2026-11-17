@@ -147,10 +147,14 @@ faster interpolation-only setting (2).
 The fusion pass requires at least three supporting views in Standard/High/
 Maximum to reduce points supported by only two images, a known completeness
 versus noise trade-off in OpenMVS. Draft/Quick retains two-view fusion for
-coverage-oriented previews. This threshold can remove weakly observed regions;
-it cannot infer surfaces that were never photographed. The exact COLMAP and
-OpenMVS settings are recorded in pipeline_configuration in the session report
-and in openmvs_pipeline.log.
+coverage-oriented previews. Quality presets then run OpenMVS's camera-visibility
+point-cloud filter (threshold -20) to remove points contradicted by registered
+camera rays. The original unfiltered MVS/PLY files are retained, and the mesh
+stage falls back to the unfiltered cloud if this optional filter fails. These
+filters can remove weakly observed regions; they cannot infer surfaces that
+were never photographed. The exact COLMAP and OpenMVS settings, plus whether
+the visibility filter was actually applied, are recorded in
+pipeline_configuration, visibility_filter and openmvs_pipeline.log.
 
 The desktop panel distinguishes the OpenMVS executable minimum of six
 photographs from a recommended 20–40+ well-overlapped capture sequence for
