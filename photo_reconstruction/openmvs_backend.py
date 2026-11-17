@@ -514,6 +514,11 @@ class OpenMVSBackend:
         dense_ply = dense_ply_unfiltered
         visibility_filter_threshold = _openmvs_point_cloud_filter_threshold(preset)
         dense_point_count_unfiltered = _ply_vertex_count(dense_ply_unfiltered)
+        if fast_preview and not dense_point_count_unfiltered:
+            raise RuntimeError(
+                "Fast Preview dense fusion produced no readable PLY vertices. "
+                "The point-cloud preview was not loaded; inspect OpenMVS depth and fusion logs."
+            )
         dense_point_count = dense_point_count_unfiltered
         visibility_filter_report = {
             "requested": visibility_filter_threshold is not None,
