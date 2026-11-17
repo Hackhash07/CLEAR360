@@ -15,7 +15,10 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from photo_reconstruction.openmvs_assets import copy_mtl_diffuse_maps
+from photo_reconstruction.openmvs_assets import (
+    copy_mtl_diffuse_maps,
+    export_obj_materials_to_glb,
+)
 from photo_reconstruction.openmvs_quality import (
     densify_common_options,
     densify_fusion_options,
@@ -467,6 +470,9 @@ class OpenMVSBackend:
                 "point_cloud_visibility_filter_threshold": _openmvs_point_cloud_filter_threshold(preset),
                 "cpu_confidence_recalibration": bool(postprocess_dmaps & 8),
                 "max_threads": threads,
+                "texture_threads": 2 if not fast_preview else 0,
+                "texture_mesh_passes": 1 if not fast_preview else 0,
+                "glb_export": "converted from the same OpenMVS-textured OBJ/MTL package",
                 "refine_max_views": 6,
                 "preview_only": fast_preview,
                 "meshing_skipped": fast_preview,
@@ -620,21 +626,19 @@ class OpenMVSBackend:
                  *refine_mesh_options(max_threads=threads, max_views=6)],
                 work, log_file, progress_cb, 86, "Refining mesh geometry...",
             )
-            texture_options = texture_mesh_options(max_threads=threads, max_texture_size=2048)
-            glb_work = work / "scene_textured.glb"
-            self._run(
-                [texture, "-i", str(refined_scene), "-o", str(glb_work),
-                 "--export-type", "glb", *texture_options],
-                work, log_file, progress_cb, 92, "Generating textured GLB export...",
+            # OpenMVS TextureMesh calculates view selection, seams and texture
+            # patches before exporting. Run that expensive calculation ONCE for
+            # OBJ, then derive GLB from the exact same UV/material/image package.
+            # Dense stereo stays at one thread; texturing gets two CPU threads.
+            texture_options = texture_mesh_options(
+                max_threads=2, max_texture_size=2048
             )
-
-            # Export a second copy as OBJ so the native VisPy viewer can consume
-            # its UV coordinates and atlas through TextureFilter.
             obj_work = work / "scene_textured.obj"
             self._run(
                 [texture, "-i", str(refined_scene), "-o", str(obj_work),
                  "--export-type", "obj", *texture_options],
-                work, log_file, progress_cb, 96, "Preparing textured OBJ and atlas for the desktop viewer...",
+                work, log_file, progress_cb, 92,
+                "Generating the texture atlas once (OpenMVS OBJ)...",
             )
 
             final_glb = mesh_dir / "scene_textured.glb"
@@ -643,22 +647,16 @@ class OpenMVSBackend:
             if not refined_ply.exists():
                 refined_ply = mesh_ply
             shutil.copy2(refined_ply, final_ply)
-            shutil.copy2(glb_work, final_glb)
 
             texture_mtl = work / "scene_textured.mtl"
-            atlas_files = sorted(work.glob("scene_textured_*.png"))
-            if not obj_work.exists():
-                raise RuntimeError("OpenMVS OBJ export did not create scene_textured.obj.")
-            if not atlas_files:
-                raise RuntimeError("OpenMVS OBJ export did not create its texture atlas PNG.")
+            if not obj_work.is_file():
+                raise RuntimeError("OpenMVS OBJ texturing did not create scene_textured.obj.")
+            if not texture_mtl.is_file():
+                raise RuntimeError("OpenMVS OBJ texturing did not create scene_textured.mtl.")
             shutil.copy2(obj_work, final_obj)
 
-            for index, atlas in enumerate(atlas_files):
-                target_name = "scene_mesh.png" if index == 0 else f"scene_mesh_{index}.png"
-                shutil.copy2(atlas, mesh_dir / target_name)
-
-            if not texture_mtl.exists():
-                raise RuntimeError("OpenMVS OBJ export did not create scene_textured.mtl.")
+            # Copy every map_Kd image and make MTL paths self-contained beside
+            # the final OBJ. The native viewer consumes this exact package.
             copy_mtl_diffuse_maps(
                 texture_mtl,
                 mesh_dir,
@@ -674,6 +672,26 @@ class OpenMVSBackend:
                     line = f"{indent}mtllib scene_mesh.mtl"
                 obj_lines.append(line)
             final_obj.write_text("\n".join(obj_lines) + "\n", encoding="utf-8")
+
+            conversion_started = time.perf_counter()
+            conversion_report = export_obj_materials_to_glb(final_obj, final_glb)
+            conversion_elapsed = time.perf_counter() - conversion_started
+            pipeline_configuration["openmvs"]["texture_mesh_passes"] = 1
+            pipeline_configuration["openmvs"]["texture_threads"] = 2
+            pipeline_configuration["exports"] = {
+                "glb_conversion": "trimesh from OpenMVS OBJ/MTL",
+                "glb_texture_source": "same diffuse maps used by the OBJ",
+                **conversion_report,
+            }
+            with log_file.open("a", encoding="utf-8") as log:
+                log.write(
+                    "\n[CLEAR360 stage timing] OBJ-to-GLB conversion: "
+                    f"{conversion_elapsed:.1f} seconds\n"
+                    "Single OpenMVS TextureMesh pass reused for OBJ and GLB.\n"
+                    "OBJ-to-GLB validation: "
+                    + json.dumps(conversion_report, sort_keys=True)
+                    + "\n"
+                )
 
             orientation = None
         estimated_up = None if fast_preview else estimate_world_up(images_txt)
