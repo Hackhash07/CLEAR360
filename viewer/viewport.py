@@ -637,6 +637,35 @@ class Clear360Viewport(QtWidgets.QWidget):
         """Render high-resolution frame image (RGBA uint8)."""
         return self.canvas.render()
 
+    def _set_photogrammetry_texture(
+        self,
+        *,
+        vertices: np.ndarray,
+        faces: np.ndarray,
+        uvs: np.ndarray,
+        texture: np.ndarray,
+    ) -> None:
+        """Attach an unlit, source-colour texture atlas to the external mesh visual."""
+        from vispy.visuals.filters import TextureFilter
+
+        self.visual_textured_mesh.set_data(
+            vertices=vertices,
+            faces=faces,
+            color="white",
+        )
+        # VisPy's texture upload uses a bottom-origin image array; OBJ/GLB UVs
+        # have already been normalized to the matching bottom-left convention.
+        texture_rgb = np.ascontiguousarray(np.flipud(texture))
+        if self.texture_filter is None:
+            self.texture_filter = TextureFilter(
+                texture=texture_rgb,
+                texcoords=uvs,
+            )
+            self.visual_textured_mesh.attach(self.texture_filter)
+        else:
+            self.texture_filter.texture = texture_rgb
+            self.texture_filter.texcoords = uvs
+
     def load_external_mesh(self, mesh_path: str) -> Optional[str]:
         """
         Load a photogrammetry artifact and return the mode actually loaded.
@@ -666,21 +695,16 @@ class Clear360Viewport(QtWidgets.QWidget):
                 verts = loaded_obj.vertices
                 faces = loaded_obj.faces
                 uvs = loaded_obj.uvs
-                texture_rgb = np.ascontiguousarray(np.flipud(loaded_obj.texture))
-
-                # MeshVisual.set_data has no vertex_normals argument;
-                # VisPy computes mesh normals from the indexed geometry.
-                self.visual_textured_mesh.set_data(
-                    vertices=verts, faces=faces, color="white"
+                # The photogrammetry atlas already contains scene illumination.
+                # This visual is unlit (shading=None); do not multiply it by normals.
+                self._set_photogrammetry_texture(
+                    vertices=verts,
+                    faces=faces,
+                    uvs=uvs,
+                    texture=loaded_obj.texture,
                 )
-                if self.texture_filter is None:
-                    self.texture_filter = TextureFilter(
-                        texture=texture_rgb, texcoords=uvs
-                    )
-                    self.visual_textured_mesh.attach(self.texture_filter)
-                else:
-                    self.texture_filter.texture = texture_rgb
-                    self.texture_filter.texcoords = uvs
+                from photo_reconstruction.texture_diagnostics import texture_color_statistics
+                atlas_stats = texture_color_statistics(loaded_obj.texture)
 
                 self._obj_untextured_triangle_count = loaded_obj.untextured_triangle_count
                 if loaded_obj.untextured_triangle_count:
@@ -709,13 +733,15 @@ class Clear360Viewport(QtWidgets.QWidget):
                     f"OBJ texture coverage: {loaded_obj.textured_triangle_count:,}/"
                     f"{loaded_obj.total_triangle_count:,} triangles "
                     f"({coverage_pct:.1f}%); "
-                    f"{loaded_obj.untextured_triangle_count:,} neutral fallback triangles"
+                    f"{loaded_obj.untextured_triangle_count:,} neutral fallback triangles; "
+                    f"near-black atlas texels: {atlas_stats['near_black_texel_percentage']:.1f}%"
                 )
                 self.canvas.native.setToolTip(status)
                 print(
                     "Loaded textured OBJ: "
                     f"{len(verts):,} expanded vertices, {len(faces):,} textured triangles; "
-                    f"{status}; atlas={loaded_obj.atlas_path.name}"
+                    f"{status}; atlas mean RGB={atlas_stats['mean_rgb']}; "
+                    f"file={loaded_obj.atlas_path.name}"
                 )
                 return "textured"
             except Exception as exc:
@@ -729,48 +755,81 @@ class Clear360Viewport(QtWidgets.QWidget):
             # The ordinary geometry fallback below reports its actual display mode.
         if path.suffix.lower() in {".glb", ".gltf"}:
             try:
-                import trimesh
-                loaded = trimesh.load(str(path), force="scene", process=False)
-                if isinstance(loaded, trimesh.Scene):
-                    # Flatten the scene graph so node transforms are applied before display.
-                    try:
-                        loaded = loaded.to_geometry()
-                    except Exception:
-                        geometries = []
-                        for node_name in loaded.graph.nodes_geometry:
-                            transform, geometry_name = loaded.graph.get(node_name)
-                            geometry = loaded.geometry[geometry_name].copy()
-                            geometry.apply_transform(transform)
-                            geometries.append(geometry)
-                        loaded = trimesh.util.concatenate(geometries)
-                mesh = loaded
-                if not hasattr(mesh, "vertices") or len(mesh.vertices) == 0:
-                    raise ValueError("GLB contains no mesh geometry.")
-                verts = np.asarray(mesh.vertices, dtype=np.float32)
-                faces = np.asarray(mesh.faces, dtype=np.uint32)
-                visual = getattr(mesh, "visual", None)
-                colors = None
-                if visual is not None and hasattr(visual, "vertex_colors"):
-                    vc = np.asarray(visual.vertex_colors)
-                    if len(vc) == len(verts):
-                        colors = vc.astype(np.float32) / (255.0 if vc.max(initial=0) > 1.0 else 1.0)
-                if colors is None or colors.shape[1] < 3:
-                    colors = np.ones((len(verts), 4), dtype=np.float32) * 0.78
-                elif colors.shape[1] == 3:
-                    colors = np.hstack([colors[:, :3], np.ones((len(colors), 1), dtype=np.float32)])
-                self.visual_surface_mesh.set_data(vertices=verts, faces=faces, vertex_colors=colors)
-                self.visual_surface_mesh.visible = True
-                self.visual_textured_mesh.visible = False
-                center = np.mean(verts, axis=0)
-                extent = float(np.max(np.linalg.norm(verts - center, axis=1)))
+                from viewer.glb_texture_loader import load_textured_glb
+                from photo_reconstruction.texture_diagnostics import texture_color_statistics
+
+                loaded_glb = load_textured_glb(path)
+                all_vertices = loaded_glb.all_vertices
+                if loaded_glb.texture is not None and len(loaded_glb.faces):
+                    self._set_photogrammetry_texture(
+                        vertices=loaded_glb.vertices,
+                        faces=loaded_glb.faces,
+                        uvs=loaded_glb.uvs,
+                        texture=loaded_glb.texture,
+                    )
+                    self._obj_untextured_triangle_count = len(loaded_glb.untextured_faces)
+                    if self._obj_untextured_triangle_count:
+                        self.visual_obj_untextured_mesh.set_data(
+                            vertices=loaded_glb.untextured_vertices,
+                            faces=loaded_glb.untextured_faces,
+                            vertex_colors=loaded_glb.untextured_vertex_colors,
+                        )
+                    self.visual_surface_mesh.visible = False
+                    display_mode = "textured"
+                elif len(loaded_glb.untextured_faces):
+                    # A textureless GLB is still displayable, but must not be
+                    # reported as textured. Preserve available vertex colours.
+                    self.visual_surface_mesh.set_data(
+                        vertices=loaded_glb.untextured_vertices,
+                        faces=loaded_glb.untextured_faces,
+                        vertex_colors=loaded_glb.untextured_vertex_colors,
+                    )
+                    self.visual_surface_mesh.shading = None
+                    self.visual_textured_mesh.visible = False
+                    display_mode = "mesh"
+                else:
+                    raise ValueError("GLB contains no renderable textured or untextured triangles.")
+
+                bounds_min, bounds_max = np.percentile(all_vertices, [1.0, 99.0], axis=0)
+                center = (bounds_min + bounds_max) * 0.5
+                extent = float(np.linalg.norm(bounds_max - bounds_min))
                 self.view.camera.center = tuple(center)
-                self.view.camera.distance = max(4.0, extent * 2.2)
-                self.view.camera.elevation = 25.0
+                self.view.camera.distance = max(3.0, extent * 1.8)
+                self.view.camera.elevation = 20.0
                 self.view.camera.azimuth = -45.0
                 self._hide_non_scene_overlays()
-                self.visual_surface_mesh.visible = True
+                self.visual_textured_mesh.visible = (display_mode == "textured")
+                self.visual_surface_mesh.visible = (display_mode == "mesh")
+                self.visual_obj_untextured_mesh.visible = (
+                    display_mode == "textured"
+                    and self._obj_untextured_triangle_count > 0
+                )
                 self.request_update()
-                return "mesh"
+
+                if display_mode == "textured":
+                    atlas_stats = texture_color_statistics(loaded_glb.texture)
+                    status = (
+                        f"GLB texture coverage: "
+                        f"{len(loaded_glb.faces):,}/"
+                        f"{len(loaded_glb.faces) + len(loaded_glb.untextured_faces):,} "
+                        f"triangles ({loaded_glb.texture_coverage * 100.0:.1f}%); "
+                        f"{self._obj_untextured_triangle_count:,} neutral fallback triangles; "
+                        f"near-black atlas texels: "
+                        f"{atlas_stats['near_black_texel_percentage']:.1f}%"
+                    )
+                    self.canvas.native.setToolTip(status)
+                    print(
+                        f"Loaded textured GLB: {loaded_glb.textured_geometry_count} textured "
+                        f"geometries, {len(loaded_glb.faces):,} textured triangles; {status}; "
+                        f"atlas mean RGB={atlas_stats['mean_rgb']}"
+                    )
+                else:
+                    self._obj_untextured_triangle_count = 0
+                    self.canvas.native.setToolTip(
+                        "GLB has no embedded photographic texture; showing its mesh colours."
+                    )
+                    print("Loaded GLB geometry without embedded photographic textures.")
+                return display_mode
             except Exception as exc:
                 print(f"Notice: GLB preview fallback: {exc}")
                 fallback_ply = path.with_suffix(".ply")
@@ -778,7 +837,7 @@ class Clear360Viewport(QtWidgets.QWidget):
                     path = fallback_ply
                 else:
                     self.canvas.native.setToolTip(
-                        "GLB preview requires trimesh. Install it with: pip install trimesh"
+                        f"GLB texture loading failed; no PLY fallback found: {exc}"
                     )
                     return None
 
