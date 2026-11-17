@@ -153,3 +153,23 @@ def test_openmvs_camera_graph_connects_views_with_fifteen_shared_tracks(tmp_path
     assert overlap["supported_pair_count"] == 1
     assert overlap["supported_pairs"][0]["shared_3d_tracks"] == 15
     assert overlap["warnings"] == []
+
+
+def test_colmap_cli_uses_current_feature_extraction_option_groups():
+    from photo_reconstruction.openmvs_backend import _colmap_feature_extraction_options
+
+    options = _colmap_feature_extraction_options(max_image_size=1600, max_num_features=2500)
+
+    assert options == [
+        "--FeatureExtraction.max_image_size", "1600",
+        "--SiftExtraction.max_num_features", "2500",
+        "--FeatureExtraction.use_gpu", "0",
+    ]
+    assert "--SiftExtraction.max_image_size" not in options
+    assert "--SiftExtraction.use_gpu" not in options
+
+
+def test_colmap_cli_uses_current_feature_matching_option_group():
+    from photo_reconstruction.openmvs_backend import _colmap_feature_matching_options
+
+    assert _colmap_feature_matching_options() == ["--FeatureMatching.use_gpu", "0"]
