@@ -17,14 +17,14 @@ def densify_common_options(
 ) -> list[str]:
     """Common CPU dense-stereo parameters verified against OpenMVS 2.4.0.
 
-    The profile keeps five source views, three PatchMatch iterations and two
-    geometric-consistency iterations. OpenMVS 2.4.0 defines postprocess-dmaps
-    as a bit mask: 1=remove small speckles, 2=interpolate short gaps,
-    4=confidence recalibration fused into CUDA estimation, and 8=force the
-    confidence-recalibration pass on CPU. The quality profile uses 10 (2+8):
-    interpolate short gaps and run CPU confidence recalibration so weak depth
-    estimates can be rejected before fusion. This costs an extra full-resolution
-    CPU pass, so callers may explicitly use 2 for a faster draft preview.
+    The defaults retain five source views, three PatchMatch iterations and
+    two geometric-consistency iterations for High/Maximum runs. OpenMVS 2.4.0
+    defines postprocess-dmaps as a bit mask: 1=remove small speckles,
+    2=interpolate short gaps, 4=confidence recalibration fused into CUDA
+    estimation, and 8=force the confidence-recalibration pass on CPU.
+    High/Maximum use 10 (2+8), including the extra full-resolution CPU pass.
+    Balanced Standard explicitly uses 2 to retain short-gap interpolation
+    without that additional CPU confidence-recalibration pass.
     """
     if (
         resolution_level < 0 or max_resolution <= 0 or max_threads < 1
