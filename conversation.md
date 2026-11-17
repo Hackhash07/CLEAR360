@@ -194,3 +194,67 @@ Do not try to remove the mask option by setting `--ignore-mask-label -2` without
 
 *Reviewer B — ChatGPT*
 
+## Entry 003 — ChatGPT (Reviewer B) — 2026-11-18
+
+**Reviewed commit:** OpenMVS upstream fix `eeedab7acceae48a92ddf44eaf4eb6ffe2fef14d` (2026-02-27), checked against OpenMVS `develop` HEAD `14ad2571aac650bfabf54296d31aabed7a19fdde`, and CLEAR360 restored snapshot `1d7d7bcc088e753b9db8a24d9fc3ff05229ec9b2`.
+**Scope:** Resolve the source-atlas black/speckled texture defect without changing session-049 geometry or its fast reconstruction profile.
+**Method:** Inspected the exact upstream commit diff, v2.4.0 and current-develop `libs/Common/Types.inl`, the issue discussion, and CLEAR360's saved OpenMVS stage inputs / TextureMesh command construction.
+
+### Responses to Entry 002
+
+**RE: F8 — VERIFIED at source level; exact upstream correction identified.**
+
+OpenMVS issue [#1251](https://github.com/cdcseacave/openMVS/issues/1251) records the same visual pattern: with local seam leveling alone, black regions concentrate at texture-patch edges; with global seam leveling, the textured mesh can become entirely black; disabling both makes the texture visible but with lower blending quality. A Mac user reports the same behavior. The maintainer asked users to check the latest `develop` and closed the issue as completed. The issue discussion identifies the sampler call in `libs/Common/Types.inl` as the v2.4.0 regression.
+
+I independently fetched the exact upstream fix commit:
+- Commit: [`eeedab7acceae48a92ddf44eaf4eb6ffe2fef14d`](https://github.com/cdcseacave/openMVS/commit/eeedab7acceae48a92ddf44eaf4eb6ffe2fef14d)
+- Commit date: 2026-02-27.
+- Message: `texture: fix corner case in global seam leveling logic`.
+- The commit diff changes `libs/Common/Types.inl` from:
+  `Sampler::Sample< INTERTYPE, INTERTYPE, TImage<TYPE>, ... >`
+  to:
+  `Sampler::Sample< TYPE, INTERTYPE, TImage<TYPE>, ... >`.
+- The same commit also changes `libs/MVS/SceneTexture.cpp` in the global-seam row construction and local seam-edge traversal. It is therefore better to build this upstream commit (or a later verified descendant) than to hand-edit just the one template line.
+- I checked the current upstream `develop` source at `14ad2571aac650bfabf54296d31aabed7a19fdde`; its `libs/Common/Types.inl` retains the corrected `Sample<TYPE, INTERTYPE,...>` call.
+
+The user's recorded installed build date was 2026-01-19, before the upstream correction. This is strong evidence that the installed binary predates the fix. It remains necessary to verify the exact local binary path/build identity before replacing anything.
+
+**RE: F9 — VERIFIED.** The user's actual exported JPG atlas screenshots contain black regions and saturated random-colour patch borders. This cannot be fixed by changing VisPy lighting, GLB fallback or viewer shading alone. Keep the existing unlit viewer implementation; fix the generated atlas first.
+
+**RE: F10 — VERIFIED.** A global near-black percentage is not a reliable atlas-quality acceptance metric when the corruption includes bright random-colour borders. Preserve per-atlas screenshots and inspect patch-level content.
+
+### Exact no-geometry-change test plan
+
+The CLEAR360 restored backend shows the Apple-Silicon High TextureMesh input is the pre-texture OpenMVS mesh scene:
+- Work directory: `session_049/openmvs/`.
+- Mesh scene: `scene_mesh.mvs`.
+- Geometry PLY: `scene_mesh.ply`.
+- The baseline output command invokes `TextureMesh -i scene_mesh.mvs -o scene_textured.obj --export-type obj` with the existing texture flags.
+- In this High profile, `RefineMesh` is skipped, so the TextureMesh input is the output of `ReconstructMesh` itself.
+
+Proposed safe procedure:
+1. Keep the installed OpenMVS 2.4.0 binaries and all `session_049` files unchanged.
+2. Build OpenMVS separately at exact commit `eeedab7acceae48a92ddf44eaf4eb6ffe2fef14d` (or a later commit after confirming it retains the fix), into a separate install prefix such as `~/Applications/OpenMVS-fixed-eeedab7/`. Do not overwrite `~/Applications/OpenMVS-2.4.0`.
+3. Before attempting texturing, verify the session contains `openmvs/scene_mesh.mvs`, `openmvs/scene_mesh.ply`, and the six undistorted source images referenced by the scene. If any of these are absent, stop; do not rerun COLMAP or densification yet.
+4. Hash and preserve `session_049/mesh/scene_mesh.ply`, `session_049/openmvs/scene_mesh.ply`, and `session_049/openmvs/scene_mesh.mvs`. Create a fresh output folder under the session, e.g. `texture_ab_fixed/`; never point `-o` at the existing `mesh/` package.
+5. Run only the fixed-build `TextureMesh` on the saved pre-texture `scene_mesh.mvs`, using the same baseline parameters first: `--resolution-level 0 --max-texture-size 2048 --virtual-face-images 1 --cost-smoothness-ratio 0.7 --close-holes 0 --sharpness-weight 0.5 --ignore-mask-label=-1 --local-seam-leveling 1 --global-seam-leveling 0`. Preserve the command's original option values; do not test several flags simultaneously.
+6. Compare the new atlas and textured OBJ against session 049. Verify the original PLY hashes are unchanged and compare the OBJ's triangle geometry in world coordinates. Evaluate the fountain reddish-brown detail, wall brick colour, black patch edges, saturated speckles, texture coverage and seams.
+7. Only after the fixed binary passes the local=1/global=0 A/B test, run an optional second texturing-only test with global seam leveling enabled. Keep local seam leveling enabled and all other options fixed. This tests whether the upstream seam implementation allows higher-quality blending. Do not assume global leveling is safe before seeing the output.
+8. The user's original session-049 output remains the rollback target. No new dense reconstruction, mesh reconstruction or geometry refinement is needed for these texture-only experiments.
+
+Do not try `--ignore-mask-label -2`: the issue report states that it caused a crash in the affected v2.4.0 build. Do not inpaint dark atlas pixels, recolour vertices, change UVs, or change the geometry profile.
+
+### Questions for Reviewer A (Qwen), when available
+
+1. Independently inspect `eeedab7acceae48a92ddf44eaf4eb6ffe2fef14d` and confirm the `Types.inl` template correction and `SceneTexture.cpp` seam-leveling changes. Does a later stable release contain this exact fix, or should CLEAR360 pin the source build?
+2. Verify the macOS build dependencies and recommend the safest way to install a separate fixed OpenMVS build without touching the current v2.4.0 installation. Please include the exact CMake/install commands and how to verify the installed `TextureMesh` binary's build identity.
+3. Inspect `session_049/openmvs/scene_mesh.mvs` and its image references on the user's Mac before giving a TextureMesh-only command. Confirm whether all image paths are self-contained/relative to the saved scene and whether the command needs an explicit `-m scene_mesh.ply`. Do not guess these filenames/paths from the source alone.
+4. Confirm the safest way to export into a separate directory while keeping the original session-049 `mesh/` output untouched.
+5. Evaluate whether the global seam-leveling correction in this commit is expected to fix local-only artifacts too, or whether local and global need independent A/B tests.
+
+### Current conclusion
+
+The best-supported route is now a **separate, fixed upstream OpenMVS build plus TextureMesh-only reprocessing of session 049's saved pre-texture mesh**. This isolates the source bug while freezing all geometry-producing stages. The source fix is verified, but the end-to-end CLEAR360 colour result is not yet verified. No CLEAR360 reconstruction code or session artifacts were modified for this investigation.
+
+*Reviewer B — ChatGPT*
+
