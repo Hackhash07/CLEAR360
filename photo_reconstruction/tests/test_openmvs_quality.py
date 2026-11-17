@@ -11,13 +11,13 @@ def _value(options: list[str], key: str) -> str:
     return options[options.index(key) + 1]
 
 
-def test_densify_profile_restores_cpu_defaults_and_safe_gap_interpolation():
+def test_densify_quality_profile_enables_cpu_depth_confidence_recalibration():
     options = densify_common_options()
     assert _value(options, "--number-views") == "5"
     assert _value(options, "--iters") == "3"
     assert _value(options, "--geometric-iters") == "2"
     assert "--number-views-fuse" not in options
-    assert _value(options, "--postprocess-dmaps") == "2"
+    assert _value(options, "--postprocess-dmaps") == "10"
     assert _value(options, "--resolution-level") == "0"
     assert _value(options, "--max-resolution") == "1600"
 
@@ -57,3 +57,16 @@ def test_fusion_options_define_minimum_views_exactly_once():
     assert _value(options, "--number-views-fuse") == "2"
     assert options.count("--fusion-mode") == 1
     assert _value(options, "--fusion-mode") == "0"
+
+
+
+def test_draft_densify_profile_can_keep_cpu_cost_lower():
+    options = densify_common_options(postprocess_dmaps=2)
+    assert _value(options, "--postprocess-dmaps") == "2"
+
+
+def test_densify_postprocess_bitmask_validation_rejects_out_of_range_values():
+    import pytest
+
+    with pytest.raises(ValueError, match="bit mask"):
+        densify_common_options(postprocess_dmaps=16)
