@@ -444,6 +444,8 @@ class OpenMVSBackend:
                 "max_threads": threads,
                 "refine_max_views": 6,
                 "preview_only": fast_preview,
+                "meshing_skipped": fast_preview,
+                "mesh_qa_skipped": fast_preview,
                 "refinement_skipped": fast_preview,
                 "texturing_skipped": fast_preview,
             },
@@ -549,15 +551,17 @@ class OpenMVSBackend:
                 + "\n"
             )
 
-        mesh_scene = work / "scene_mesh.mvs"
-        self._run(
-            [reconstruct, "-i", str(dense_scene_for_mesh), "-o", str(mesh_scene),
-             *reconstruct_mesh_options(max_threads=threads, remove_spurious=20)],
-            work, log_file, progress_cb, 80, "Reconstructing triangular surface mesh...",
-        )
-        mesh_ply = work / "scene_mesh.ply"
-        if not mesh_ply.exists():
-            raise RuntimeError("OpenMVS mesh reconstruction did not create scene_mesh.ply.")
+        mesh_ply: Path | None = None
+        if not fast_preview:
+            mesh_scene = work / "scene_mesh.mvs"
+            self._run(
+                [reconstruct, "-i", str(dense_scene_for_mesh), "-o", str(mesh_scene),
+                 *reconstruct_mesh_options(max_threads=threads, remove_spurious=20)],
+                work, log_file, progress_cb, 80, "Reconstructing triangular surface mesh...",
+            )
+            mesh_ply = work / "scene_mesh.ply"
+            if not mesh_ply.exists():
+                raise RuntimeError("OpenMVS mesh reconstruction did not create scene_mesh.ply.")
 
         mesh_dir = session_dir / "mesh"
         mesh_dir.mkdir(parents=True, exist_ok=True)
@@ -566,15 +570,19 @@ class OpenMVSBackend:
         final_obj: Path | None = None
 
         if fast_preview:
-            # Geometry-only output is intentionally quick and untextured.
-            # Skip full-resolution refinement and the two separate texture exports.
-            shutil.copy2(mesh_ply, final_ply)
+            # Stop at the dense point cloud. This avoids triangular meshing,
+            # full mesh QA, refinement, orientation and texture exports.
+            final_ply = mesh_dir / "scene_geometry_preview.ply"
+            shutil.copy2(dense_ply, final_ply)
             orientation = {
                 "method": "not applied",
-                "reason": "Fast geometry preview skips orientation and texture finishing.",
+                "reason": "Fast point-cloud preview skips meshing, refinement, orientation and texturing.",
             }
             with log_file.open("a", encoding="utf-8") as log:
-                log.write("\nFast preview: refinement and texturing intentionally skipped.\n")
+                log.write(
+                    "\nFast preview: point-cloud output only; triangular meshing, "
+                    "mesh QA, refinement and texturing intentionally skipped.\n"
+                )
         else:
             refined_scene = work / "scene_mesh_refined.mvs"
             self._run(
@@ -682,19 +690,35 @@ class OpenMVSBackend:
             with log_file.open("a", encoding="utf-8") as log:
                 log.write("\nScene orientation alignment skipped: " + orientation["reason"] + "\n")
 
-        # Run the same geometry/material QA used by the native backend.
-        from photo_reconstruction.reconstruction_qa import audit_reconstruction_outputs
+        if fast_preview:
+            mesh_quality = {
+                "status": "preview_only",
+                "score": None,
+                "geometry_status": "not_evaluated_point_cloud",
+                "geometry": {},
+                "warnings": [
+                    "Fast Preview is a dense point cloud, not a triangulated mesh.",
+                    "Mesh topology and texture QA are not evaluated.",
+                    "Run Standard or High for a final textured mesh.",
+                ],
+            }
+        else:
+            from photo_reconstruction.reconstruction_qa import audit_reconstruction_outputs
 
-        mesh_quality = audit_reconstruction_outputs(
-            final_ply,
-            obj_path=final_obj,
-            glb_path=final_glb,
-        )
+            mesh_quality = audit_reconstruction_outputs(
+                final_ply,
+                obj_path=final_obj,
+                glb_path=final_glb,
+            )
         qa_path = session_dir / "reconstruction_quality.json"
         qa_path.write_text(json.dumps(mesh_quality, indent=2), encoding="utf-8")
 
         if progress_cb:
-            progress_cb(100, "OpenMVS reconstruction and quality audit complete.")
+            progress_cb(
+                100,
+                "Fast point-cloud preview complete."
+                if fast_preview else "OpenMVS reconstruction and quality audit complete.",
+            )
         return {
             "success": True, "mesh_ply": final_ply, "mesh_obj": final_obj,
             "mesh_glb": final_glb, "dense_ply": dense_ply, "backend": "openmvs",
