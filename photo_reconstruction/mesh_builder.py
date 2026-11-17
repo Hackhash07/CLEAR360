@@ -54,6 +54,44 @@ class MeshBuilder:
         self.min_cluster_faces = int(min_cluster_faces)
         self.bpa_multipliers = bpa_radii_multipliers
 
+    @staticmethod
+    def _query_nearest_neighbors(
+        tree: Any,
+        query_points: np.ndarray,
+        *,
+        chunk_size: int = 200_000,
+        workers: int = 2,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Query a cKDTree in bounded batches instead of looping over vertices.
+
+        Chunking bounds temporary memory for high-detail Poisson meshes while
+        keeping the nearest-neighbour search inside SciPy's compiled backend.
+        """
+        from scipy.spatial import cKDTree
+
+        if not isinstance(tree, cKDTree):
+            raise TypeError("tree must be a scipy.spatial.cKDTree instance.")
+        if chunk_size < 1:
+            raise ValueError("chunk_size must be at least one.")
+        if workers < 1:
+            raise ValueError("workers must be at least one.")
+
+        queries = np.asarray(query_points, dtype=np.float64)
+        if queries.ndim != 2 or queries.shape[1] != 3:
+            raise ValueError("query_points must have shape (N, 3).")
+
+        distances = np.empty(len(queries), dtype=np.float64)
+        indices = np.empty(len(queries), dtype=np.intp)
+        for start in range(0, len(queries), chunk_size):
+            stop = min(start + chunk_size, len(queries))
+            batch_distances, batch_indices = tree.query(
+                queries[start:stop], k=1, workers=workers
+            )
+            distances[start:stop] = batch_distances
+            indices[start:stop] = batch_indices
+
+        return distances, indices
+
     def build_mesh(
         self,
         points: np.ndarray,
@@ -150,15 +188,16 @@ class MeshBuilder:
                     mesh.remove_vertices_by_mask(dens < thresh)
 
                 if len(mesh.vertices) > 0 and len(pcd.points) > 10:
-                    pcd_tree = o3d.geometry.KDTreeFlann(pcd)
-                    mesh_v = np.asarray(mesh.vertices)
+                    from scipy.spatial import cKDTree
+
+                    point_xyz = np.asarray(pcd.points, dtype=np.float64)
+                    point_tree = cKDTree(point_xyz)
+                    mesh_v = np.asarray(mesh.vertices, dtype=np.float64)
                     max_allowed_dist = max(0.08, avg_dist * 3.5)
-                    remove_phantom = np.zeros(len(mesh_v), dtype=bool)
-                    for i, v in enumerate(mesh_v):
-                        [k, idx, dist_sq] = pcd_tree.search_knn_vector_3d(v, 1)
-                        if k == 0 or np.sqrt(dist_sq[0]) > max_allowed_dist:
-                            remove_phantom[i] = True
-                    mesh.remove_vertices_by_mask(remove_phantom)
+                    nearest_distances, _ = self._query_nearest_neighbors(
+                        point_tree, mesh_v
+                    )
+                    mesh.remove_vertices_by_mask(nearest_distances > max_allowed_dist)
 
                 if self.taubin_iterations > 0 and len(mesh.vertices) > 100:
                     mesh = mesh.filter_smooth_taubin(number_of_iterations=self.taubin_iterations)
@@ -206,16 +245,17 @@ class MeshBuilder:
 
         # Transfer authentic photographic point colors
         if len(verts) > 0 and (len(mesh_cols) == 0 or len(mesh_cols) != len(verts) or np.all(mesh_cols == 0.7)):
-            if len(pcd.points) > 0 and len(pcd.colors) > 0:
-                pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+            if len(pcd.points) > 0 and len(pcd.colors) == len(pcd.points):
+                from scipy.spatial import cKDTree
+
+                point_xyz = np.asarray(pcd.points, dtype=np.float64)
+                if point_tree is None:
+                    point_tree = cKDTree(point_xyz)
                 pcd_colors = np.asarray(pcd.colors, dtype=np.float32)
-                mesh_cols = np.zeros((len(verts), 3), dtype=np.float32)
-                for i, v in enumerate(verts):
-                    [k, idx, _] = pcd_tree.search_knn_vector_3d(v.astype(np.float64), 1)
-                    if k > 0 and idx[0] < len(pcd_colors):
-                        mesh_cols[i] = pcd_colors[idx[0]]
-                    else:
-                        mesh_cols[i] = [0.7, 0.7, 0.7]
+                _, nearest_indices = self._query_nearest_neighbors(
+                    point_tree, verts
+                )
+                mesh_cols = pcd_colors[nearest_indices]
             else:
                 mesh_cols = np.ones((len(verts), 3), dtype=np.float32) * 0.7
 
