@@ -163,6 +163,8 @@ def test_colmap_cli_uses_current_feature_extraction_option_groups():
     assert options == [
         "--FeatureExtraction.max_image_size", "1600",
         "--SiftExtraction.max_num_features", "2500",
+        "--SiftExtraction.estimate_affine_shape", "1",
+        "--SiftExtraction.domain_size_pooling", "1",
         "--FeatureExtraction.use_gpu", "0",
     ]
     assert "--SiftExtraction.max_image_size" not in options
@@ -172,7 +174,10 @@ def test_colmap_cli_uses_current_feature_extraction_option_groups():
 def test_colmap_cli_uses_current_feature_matching_option_group():
     from photo_reconstruction.openmvs_backend import _colmap_feature_matching_options
 
-    assert _colmap_feature_matching_options() == ["--FeatureMatching.use_gpu", "0"]
+    assert _colmap_feature_matching_options() == [
+        "--FeatureMatching.use_gpu", "0",
+        "--FeatureMatching.guided_matching", "1",
+    ]
 
 
 
