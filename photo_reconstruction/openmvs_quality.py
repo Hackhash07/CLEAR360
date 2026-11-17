@@ -161,7 +161,7 @@ def apple_silicon_high_profile() -> dict[str, int]:
         "resolution_level": 0,
         "dense_views": 4,
         "dense_iterations": 1,
-        "geometric_iterations": 2,
+        "geometric_iterations": 1,
         "min_dense_resolution": 560,
         "sub_resolution_levels": 1,
         "postprocess_dmaps": 2,
