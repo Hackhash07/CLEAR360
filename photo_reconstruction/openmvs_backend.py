@@ -360,7 +360,7 @@ class OpenMVSBackend:
             "input_photo_count": len(image_paths),
         }
         with log_file.open("a", encoding="utf-8") as log:
-            log.write("\\nPipeline configuration: " + json.dumps(pipeline_configuration, sort_keys=True) + "\\n")
+            log.write("\nPipeline configuration: " + json.dumps(pipeline_configuration, sort_keys=True) + "\n")
         common = densify_common_options(
             resolution_level=resolution_level,
             max_resolution=max_resolution,
