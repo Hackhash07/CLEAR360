@@ -378,9 +378,9 @@ class ReconstructionWorker(QtCore.QThread):
                                 "a", encoding="utf-8"
                             ) as cleanup_log:
                                 cleanup_log.write(
-                                    "\\nStorage cleanup warning: "
+                                    "\nStorage cleanup warning: "
                                     + str(cleanup_error)
-                                    + "\\n"
+                                    + "\n"
                                 )
                         res["report"] = report
                         (session_dir / "report.json").write_text(
