@@ -197,4 +197,4 @@ def test_colmap_matching_uses_geometry_guided_sift_matching():
     pairs = dict(zip(options[0::2], options[1::2]))
 
     assert pairs["--FeatureMatching.use_gpu"] == "0"
-    assert pairs["--SiftMatching.guided_matching"] == "1"
+    assert pairs["--FeatureMatching.guided_matching"] == "1"
