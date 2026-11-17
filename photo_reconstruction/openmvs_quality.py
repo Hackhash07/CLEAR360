@@ -102,15 +102,13 @@ def texture_mesh_options(
     max_threads: int = 1,
     max_texture_size: int = 2048,
     virtual_face_images: int = 3,
-    local_seam_leveling: bool = True,
     global_seam_leveling: bool = True,
 ) -> list[str]:
     """Create OpenMVS texture patches with configurable seam handling.
 
     Defaults preserve the existing Standard/High/Maximum behavior. The
-    Apple-Silicon High workaround can disable both seam passes on affected
-    OpenMVS 2.4.0 builds, where local seam leveling leaves black patch edges
-    and global seam leveling can corrupt the full texture.
+    Apple-Silicon High profile uses fewer virtual face views and disables the
+    OpenMVS 2.4.0 global seam pass while retaining local seam leveling.
     """
     if (
         max_threads < 1
@@ -128,7 +126,7 @@ def texture_mesh_options(
         "--close-holes", "0",
         "--sharpness-weight", "0.5",
         "--ignore-mask-label=-1",
-        "--local-seam-leveling", "1" if local_seam_leveling else "0",
+        "--local-seam-leveling", "1",
         "--global-seam-leveling", "1" if global_seam_leveling else "0",
     ]
 
@@ -146,14 +144,16 @@ def densify_fusion_options(*, minimum_views: int = 2) -> list[str]:
 
 
 def apple_silicon_high_profile() -> dict[str, int]:
-    """Session-049 High profile for Apple-Silicon CPU-only OpenMVS runs.
+    """Runtime-oriented High profile for Apple Silicon CPU-only OpenMVS runs.
 
-    Preserve the measured fast geometry configuration: COLMAP SIFT at 2400 px
-    with 8192 features; dense MVS at 1920 px, four source views, one PatchMatch
-    and one geometric-consistency iteration, 560 px minimum resolution and
-    one sub-resolution level. RefineMesh stays skipped as in the good
-    session-049 result. The CPU confidence-recalibration pass remains off.
-    TextureMesh changes are configured separately from these geometry values.
+    COLMAP keeps the existing 2400 px / 8192-feature SIFT settings. Dense
+    stereo uses 1920 px, four source views, one PatchMatch iteration and
+    one geometric-consistency iteration (the OpenMVS default), and skips the
+    additional full-resolution CPU confidence-recalibration pass.
+    Surface meshing, texturing, orientation, exports and QA remain enabled,
+    while RefineMesh is skipped by the backend to reduce mesh and texture cost.
+    This is a deliberate geometry-detail/runtime trade-off; use Maximum for
+    the original full-quality dense solve and full mesh refinement.
     """
     return {
         "feature_size": 8192,

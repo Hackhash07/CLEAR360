@@ -149,10 +149,8 @@ def _openmvs_point_cloud_filter_threshold(quality_preset: str) -> int | None:
 def _should_run_mesh_refinement(
     quality_preset: str, *, apple_silicon: bool = False
 ) -> bool:
-    """Match the measured session-049 Apple-Silicon High mesh path."""
-    return not (
-        quality_preset.strip().lower() == "high" and apple_silicon
-    )
+    """Keep full refinement except for the balanced Apple-Silicon High profile."""
+    return not (quality_preset.strip().lower() == "high" and apple_silicon)
 
 def _openmvs_standard_profile() -> dict[str, int]:
     """Balanced Standard settings: reduce dense-MVS cost, retain final asset stages."""
@@ -613,11 +611,11 @@ class OpenMVSBackend:
                 ),
                 "refinement_skip_reason": (
                     "point_cloud_preview" if fast_preview
-                    else "session_049_apple_silicon_high_runtime" if apple_silicon_high
+                    else "apple_silicon_high_speed_profile" if apple_silicon_high
                     else None
                 ),
                 "texture_virtual_face_images": 1 if apple_silicon_high else 3,
-                "texture_local_seam_leveling": 0 if apple_silicon_high else 1,
+                "texture_local_seam_leveling": 1,
                 "texture_global_seam_leveling": 0 if apple_silicon_high else 1,
                 "texturing_skipped": fast_preview,
             },
@@ -791,15 +789,12 @@ class OpenMVSBackend:
             # OBJ, then derive GLB from the exact same UV/material/image package.
             # Use the same memory-aware thread cap for the texture stage.
             if apple_silicon_high:
-                # The affected OpenMVS 2.4.0 sampler bug corrupts local seam
-                # borders and can turn the full atlas black with global leveling.
-                # Disable both passes for this build; a fixed upstream binary
-                # can restore seam blending without this compatibility workaround.
+                # OpenMVS 2.4.0 has a reported global seam-leveling black-texture
+                # regression. Keep local seam leveling and reduce virtual views.
                 texture_options = texture_mesh_options(
                     max_threads=threads,
                     max_texture_size=2048,
                     virtual_face_images=1,
-                    local_seam_leveling=False,
                     global_seam_leveling=False,
                 )
             else:

@@ -269,3 +269,6 @@ def test_align_ground_upright():
     # Structure points should rise above ground (Z > 0)
     struct_z_aligned = aligned_pts[200:, 2]
     assert np.mean(struct_z_aligned) > 0.2
+
+
+
