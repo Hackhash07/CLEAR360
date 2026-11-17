@@ -160,3 +160,27 @@ The desktop panel distinguishes the OpenMVS executable minimum of six
 photographs from a recommended 20–40+ well-overlapped capture sequence for
 detailed object coverage. Passing image sharpness/uniqueness checks does not
 prove that the images contain adequate overlap or sufficient viewpoints.
+
+## Fast Preview mode and timing
+
+The desktop phone-photo panel offers a separate `Fast Preview` preset. It is a
+low-resolution, geometry-only diagnostic pass intended to target a sub-15-minute
+run on modest photo sets and hardware; that target is not guaranteed and must be
+benchmarked on each device and input set. The current OpenMVS preview profile
+uses an 800-pixel COLMAP feature/undistortion limit, 1,500 SIFT features,
+640-pixel maximum MVS resolution at resolution level 1, three source views,
+one PatchMatch iteration, one geometric-consistency iteration, interpolation-only
+depth-map post-processing, and two OpenMVS CPU threads.
+
+Fast Preview retains the sparse registration and camera-connectivity gates and
+uses two-view fusion. It skips CPU depth-confidence recalibration, visibility
+filtering, full-resolution mesh refinement, camera-up alignment and both
+TextureMesh exports. It saves and opens a coarse PLY geometry mesh only; there
+is no textured OBJ/GLB output. The session report is explicitly marked
+`PREVIEW_ONLY`, not `OPTIMAL` or final-quality. Use Standard or High for the
+refined, textured deliverable after reviewing the preview and camera coverage.
+
+Every external command now records its elapsed wall time in
+`openmvs_pipeline.log` so the Fast Preview target can be evaluated stage by
+stage. A preview that exceeds 15 minutes is a benchmark failure to investigate,
+not a reason to silently lower quality or report a false time estimate.
