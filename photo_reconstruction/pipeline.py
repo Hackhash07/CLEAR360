@@ -190,6 +190,9 @@ class PhoneReconstructionPipeline:
                     img_target_dir,
                     index=idx,
                 )
+                # Release the decoded full-resolution image before the next
+                # upload is decoded; the staged files are already on disk.
+                del rgb
             except Exception as exc:
                 photo_set_records.append({
                     "path": str(src),
