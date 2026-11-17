@@ -92,6 +92,15 @@ def _is_apple_silicon() -> bool:
     )
 
 
+def _macos_process_memory_profiling_enabled() -> bool:
+    """Enable per-command peak RSS reporting only when explicitly requested."""
+    return (
+        platform.system() == "Darwin"
+        and os.environ.get("CLEAR360_PROFILE_MEMORY", "").strip() == "1"
+        and Path("/usr/bin/time").is_file()
+    )
+
+
 def _colmap_feature_extraction_options(
     max_image_size: int,
     max_num_features: int,
@@ -302,11 +311,16 @@ class OpenMVSBackend:
             progress(percent, message)
         stage_started = time.perf_counter()
         tool_name = Path(command[0]).name
+        launch_command = command
+        if _macos_process_memory_profiling_enabled():
+            # /usr/bin/time -l reports the external command's peak resident set
+            # size on macOS; keep it opt-in to avoid changing normal log output.
+            launch_command = ["/usr/bin/time", "-l", *command]
         with log_file.open("a", encoding="utf-8") as log:
-            log.write("\n$ " + " ".join(command) + "\n")
+            log.write("\n$ " + " ".join(launch_command) + "\n")
             log.flush()
             proc = subprocess.Popen(
-                command, cwd=str(cwd), stdout=subprocess.PIPE,
+                launch_command, cwd=str(cwd), stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, bufsize=1,
             )
             assert proc.stdout is not None
@@ -541,6 +555,14 @@ class OpenMVSBackend:
                 if apple_silicon_profile is not None
                 else "default"
             ),
+            "resource_profiling": {
+                "per_stage_peak_rss_enabled": _macos_process_memory_profiling_enabled(),
+                "method": (
+                    "macOS /usr/bin/time -l"
+                    if _macos_process_memory_profiling_enabled()
+                    else "disabled"
+                ),
+            },
             "colmap": {
                 "feature_type": "SIFT",
                 "max_image_size": max_image_size,
