@@ -283,3 +283,13 @@ def test_sparse_quality_gate_blocks_missing_track_overlap_evidence():
             },
             uploaded_count=6,
         )
+
+
+def test_visibility_filter_is_enabled_for_quality_presets_and_skipped_for_drafts():
+    from photo_reconstruction.openmvs_backend import _openmvs_point_cloud_filter_threshold
+
+    assert _openmvs_point_cloud_filter_threshold("standard") == -20
+    assert _openmvs_point_cloud_filter_threshold("high") == -20
+    assert _openmvs_point_cloud_filter_threshold("maximum") == -20
+    assert _openmvs_point_cloud_filter_threshold("draft") is None
+    assert _openmvs_point_cloud_filter_threshold("quick") is None
