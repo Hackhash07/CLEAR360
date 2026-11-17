@@ -96,6 +96,9 @@ class ReconstructionWorker(QtCore.QThread):
                             working_dir,
                             index=index,
                         )
+                        # Do not keep the previous full-resolution RGB buffer
+                        # alive while decoding the next uploaded photograph.
+                        del rgb
                         copied.append(Path(staged["sfm_image_path"]))
                         input_manifest.append({
                             "original_filename": source.name,
