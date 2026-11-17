@@ -105,6 +105,22 @@ def _openmvs_point_cloud_filter_threshold(quality_preset: str) -> int | None:
 
 
 
+def _openmvs_standard_profile() -> dict[str, int]:
+    """Balanced Standard settings: reduce dense-MVS cost, retain final asset stages."""
+    return {
+        "feature_size": 6000,
+        "max_image_size": 1440,
+        "max_resolution": 1400,
+        "resolution_level": 0,
+        "dense_views": 4,
+        "dense_iterations": 2,
+        "geometric_iterations": 2,
+        "min_dense_resolution": 560,
+        "sub_resolution_levels": 1,
+        "postprocess_dmaps": 2,
+    }
+
+
 def _validate_sparse_model_for_dense(
     registration_summary: dict[str, Any],
     uploaded_count: int,
@@ -345,6 +361,7 @@ class OpenMVSBackend:
 
         camera_mode = resolve_colmap_camera_mode(photo_set_report)
 
+        standard_profile = None
         if fast_preview:
             # Low-resolution geometry-only preview. Runtime target is a benchmark
             # objective, not a guaranteed deadline for every photo set.
@@ -356,14 +373,34 @@ class OpenMVSBackend:
         elif preset == "maximum":
             feature_size, max_image_size, max_resolution, resolution_level = 12000, 3200, 3200, 0
         else:
-            # Standard keeps full-resolution images and a larger SIFT budget.
-            feature_size, max_image_size, max_resolution, resolution_level = 6000, 1600, 1600, 0
+            # Standard uses a balanced depth solve while retaining full mesh and texture stages.
+            standard_profile = _openmvs_standard_profile()
+            feature_size = standard_profile["feature_size"]
+            max_image_size = standard_profile["max_image_size"]
+            max_resolution = standard_profile["max_resolution"]
+            resolution_level = standard_profile["resolution_level"]
+
         threads = 2 if fast_preview else 1
-        dense_views = 3 if fast_preview else 5
-        dense_iterations = 1 if fast_preview else 3
-        geometric_iterations = 1 if fast_preview else 2
-        min_dense_resolution = 320 if fast_preview else 640
-        sub_resolution_levels = 1 if fast_preview else 2
+        if fast_preview:
+            dense_views = 3
+            dense_iterations = 1
+            geometric_iterations = 1
+            min_dense_resolution = 320
+            sub_resolution_levels = 1
+        elif standard_profile is not None:
+            dense_views = standard_profile["dense_views"]
+            dense_iterations = standard_profile["dense_iterations"]
+            geometric_iterations = standard_profile["geometric_iterations"]
+            min_dense_resolution = standard_profile["min_dense_resolution"]
+            sub_resolution_levels = standard_profile["sub_resolution_levels"]
+        else:
+            # Draft/Quick keeps the established conservative full-depth solve;
+            # High/Maximum retain the original maximum-quality settings.
+            dense_views = 5
+            dense_iterations = 3
+            geometric_iterations = 2
+            min_dense_resolution = 640
+            sub_resolution_levels = 2
 
         db = work / "database.db"
         sparse_out = sparse / "0"
@@ -444,9 +481,12 @@ class OpenMVSBackend:
 
         scene_fuse = work / "scene_fuse.mvs"
         shutil.copy2(scene_mvs, scene_fuse)
-        # CPU confidence recalibration is expensive but quality-oriented. Fast,
-        # Draft and Quick use the short-gap interpolation-only path.
-        postprocess_dmaps = 2 if preset in {"fast", "draft", "quick"} else 10
+        # Standard also uses short-gap interpolation only. This avoids the extra
+        # full-resolution CPU confidence pass; High/Maximum retain recalibration.
+        if standard_profile is not None:
+            postprocess_dmaps = standard_profile["postprocess_dmaps"]
+        else:
+            postprocess_dmaps = 2 if preset in {"fast", "draft", "quick"} else 10
         pipeline_configuration = {
             "quality_preset": preset,
             "colmap": {
