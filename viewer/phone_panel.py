@@ -377,7 +377,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.list_photos.currentRowChanged.connect(self._on_photo_selected)
         grp_up_layout.addWidget(self.list_photos)
 
-        self.lbl_photo_count = QtWidgets.QLabel("0 photographs selected (min 2, rec 4–40+)")
+        self.lbl_photo_count = QtWidgets.QLabel("0 photographs selected (min 2 native / 6 OpenMVS; 20–40+ recommended)")
         self.lbl_photo_count.setStyleSheet("font-size: 10px; color: #94a3b8;")
         grp_up_layout.addWidget(self.lbl_photo_count)
 
@@ -631,6 +631,11 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
                 else f"Visual overlap: {overlap.get('status', 'measured')}"
             ),
         ]
+        if len(self.selected_image_paths) < 20:
+            lines.append(
+                f"Coverage note: {len(self.selected_image_paths)} photos is only the OpenMVS minimum "
+                "of 6; use 20–40+ well-overlapped views for detailed object coverage."
+            )
         warnings = report.get("warnings", [])
         if warnings:
             lines.append("Review: " + " ".join(warnings[:2]))
@@ -649,7 +654,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.selected_image_paths.clear()
         self.image_metadata.clear()
         self.list_photos.clear()
-        self.lbl_photo_count.setText("0 photographs selected (min 2, rec 4–40+)")
+        self.lbl_photo_count.setText("0 photographs selected (min 2 native / 6 OpenMVS; 20–40+ recommended)")
         self._reset_meta_labels()
         self._refresh_photo_set_summary()
 
