@@ -15,6 +15,18 @@ from photo_reconstruction.image_loader import ensure_image_format_support
 SFM_NATIVE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 
 
+def session_relative_path(path: str | Path, session_dir: str | Path) -> str:
+    """Return a session-relative POSIX path after resolving macOS symlink aliases.
+
+    On macOS, TemporaryDirectory paths may be exposed as /var/... while a
+    resolved child path uses /private/var/.... Resolve both sides before
+    relative_to() so equivalent paths are treated as the same directory.
+    """
+    resolved_path = Path(path).expanduser().resolve()
+    resolved_session = Path(session_dir).expanduser().resolve()
+    return resolved_path.relative_to(resolved_session).as_posix()
+
+
 def _unique_path(directory: Path, filename: str, index: int) -> Path:
     candidate = directory / filename
     if not candidate.exists():
@@ -81,7 +93,7 @@ def stage_reconstruction_image(
         except Exception:
             exif_bytes = b""
 
-        image = Image.fromarray(rgb, mode="RGB")
+        image = Image.fromarray(rgb)
         save_options: dict[str, Any] = {
             "format": "JPEG",
             "quality": 95,
