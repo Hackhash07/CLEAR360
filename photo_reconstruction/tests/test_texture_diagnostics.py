@@ -17,7 +17,7 @@ def test_texture_statistics_report_mean_rgb_and_near_black_texel_fraction():
 
 def test_texture_statistics_do_not_flag_a_mostly_dark_but_non_black_atlas_as_void():
     image = np.zeros((10, 10, 3), dtype=np.uint8)
-    image[:, :2, :] = [2, 2, 2]  # dark, but above the explicit near-black threshold
+    image[:, :2, :] = [5, 5, 5]  # dark, but above the explicit near-black threshold
     image[:, 2:, :] = [40, 30, 20]
 
     report = texture_color_statistics(image)
