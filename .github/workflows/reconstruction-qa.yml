@@ -19,7 +19,12 @@ on:
       - "photo_reconstruction/reconstruction_qa.py"
       - "photo_reconstruction/openmvs_backend.py"
       - "photo_reconstruction/openmvs_quality.py"
-      - "photo_reconstruction/openmvs_quality.py"
+      - "photo_reconstruction/texture_arrays.py"
+      - "photo_reconstruction/texture_engine.py"
+      - "photo_reconstruction/depth_helper.py"
+      - "photo_reconstruction/dense_reconstruction.py"
+      - "photo_reconstruction/tests/test_texture_arrays.py"
+      - "photo_reconstruction/tests/test_depth_helper_memory.py"
       - "photo_reconstruction/openmvs_assets.py"
       - "photo_reconstruction/tests/test_openmvs_assets.py"
       - "viewer/app.py"
@@ -50,6 +55,12 @@ on:
       - "photo_reconstruction/tests/test_phone_reconstruction.py"
       - "photo_reconstruction/reconstruction_qa.py"
       - "photo_reconstruction/openmvs_backend.py"
+      - "photo_reconstruction/texture_arrays.py"
+      - "photo_reconstruction/texture_engine.py"
+      - "photo_reconstruction/depth_helper.py"
+      - "photo_reconstruction/dense_reconstruction.py"
+      - "photo_reconstruction/tests/test_texture_arrays.py"
+      - "photo_reconstruction/tests/test_depth_helper_memory.py"
       - "photo_reconstruction/openmvs_assets.py"
       - "photo_reconstruction/tests/test_openmvs_assets.py"
       - "viewer/app.py"
@@ -103,6 +114,10 @@ jobs:
             photo_reconstruction/pipeline.py \
             photo_reconstruction/openmvs_backend.py \
             photo_reconstruction/openmvs_quality.py \
+            photo_reconstruction/texture_arrays.py \
+            photo_reconstruction/texture_engine.py \
+            photo_reconstruction/depth_helper.py \
+            photo_reconstruction/dense_reconstruction.py \
             photo_reconstruction/openmvs_assets.py \
             photo_reconstruction/mesh_builder.py \
             photo_reconstruction/nearest_neighbors.py \
@@ -121,4 +136,6 @@ jobs:
             photo_reconstruction/tests/test_image_quality_normalization.py \
             photo_reconstruction/tests/test_image_preparation.py \
             photo_reconstruction/tests/test_camera_calibration.py \
-            photo_reconstruction/tests/test_mesh_builder_vectorized.py
+            photo_reconstruction/tests/test_mesh_builder_vectorized.py \
+            photo_reconstruction/tests/test_texture_arrays.py \
+            photo_reconstruction/tests/test_depth_helper_memory.py
