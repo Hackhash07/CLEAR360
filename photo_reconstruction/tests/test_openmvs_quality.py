@@ -106,7 +106,7 @@ def test_apple_silicon_high_profile_reduces_dense_cost_but_keeps_sfm_detail():
         "max_resolution": 1920,
         "resolution_level": 0,
         "dense_views": 4,
-        "dense_iterations": 2,
+        "dense_iterations": 1,
         "geometric_iterations": 2,
         "min_dense_resolution": 560,
         "sub_resolution_levels": 1,
@@ -177,3 +177,23 @@ def test_openmvs_thread_override_must_be_positive_integer():
             total_memory_bytes=8 * 1024 ** 3,
             override="many",
         )
+
+
+
+def test_texture_mesh_high_profile_can_disable_global_seams_without_changing_defaults():
+    default_options = texture_mesh_options()
+    fast_high_options = texture_mesh_options(
+        max_threads=2,
+        max_texture_size=2048,
+        virtual_face_images=1,
+        global_seam_leveling=False,
+    )
+
+    assert _value(default_options, "--virtual-face-images") == "3"
+    assert _value(default_options, "--local-seam-leveling") == "1"
+    assert _value(default_options, "--global-seam-leveling") == "1"
+
+    assert _value(fast_high_options, "--virtual-face-images") == "1"
+    assert _value(fast_high_options, "--local-seam-leveling") == "1"
+    assert _value(fast_high_options, "--global-seam-leveling") == "0"
+    assert _value(fast_high_options, "--max-texture-size") == "2048"
