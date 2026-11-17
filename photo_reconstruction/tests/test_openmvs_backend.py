@@ -155,6 +155,17 @@ def test_openmvs_camera_graph_connects_views_with_fifteen_shared_tracks(tmp_path
     assert overlap["warnings"] == []
 
 
+def test_colmap_cpu_thread_budget_is_bounded_for_standard_only():
+    from photo_reconstruction.openmvs_backend import _colmap_cpu_thread_budget
+
+    assert _colmap_cpu_thread_budget("fast") == 2
+    assert _colmap_cpu_thread_budget("standard") == 2
+    assert _colmap_cpu_thread_budget("draft") is None
+    assert _colmap_cpu_thread_budget("quick") is None
+    assert _colmap_cpu_thread_budget("high") is None
+    assert _colmap_cpu_thread_budget("maximum") is None
+
+
 def test_colmap_cli_uses_current_feature_extraction_option_groups():
     from photo_reconstruction.openmvs_backend import _colmap_feature_extraction_options
 
@@ -226,18 +237,29 @@ def test_standard_profile_reduces_dense_solve_cost_and_keeps_quality_gates():
     assert profile == {
         "feature_size": 6000,
         "max_image_size": 1440,
-        "max_resolution": 1400,
+        "max_resolution": 1200,
         "resolution_level": 0,
         "dense_views": 4,
         "dense_iterations": 2,
         "geometric_iterations": 2,
-        "min_dense_resolution": 560,
+        "min_dense_resolution": 480,
         "sub_resolution_levels": 1,
         "postprocess_dmaps": 2,
     }
     # Keep multi-view support and the camera-visibility cleanup in Standard.
     assert _openmvs_fusion_minimum_views("standard") == 3
     assert _openmvs_point_cloud_filter_threshold("standard") == -20
+
+
+def test_standard_thread_budget_is_bounded_for_laptop_memory():
+    from photo_reconstruction.openmvs_backend import _openmvs_standard_thread_budget
+
+    assert _openmvs_standard_thread_budget(6, cpu_count=8) == 2
+    assert _openmvs_standard_thread_budget(12, cpu_count=8) == 2
+    assert _openmvs_standard_thread_budget(13, cpu_count=8) == 1
+    assert _openmvs_standard_thread_budget(6, cpu_count=1) == 1
+    with pytest.raises(ValueError, match="image_count"):
+        _openmvs_standard_thread_budget(0, cpu_count=8)
 
 
 def test_sparse_quality_gate_accepts_sufficient_connected_camera_graph():
