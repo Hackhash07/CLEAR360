@@ -147,8 +147,9 @@ def apple_silicon_high_profile() -> dict[str, int]:
     """Runtime-oriented High profile for Apple Silicon CPU-only OpenMVS runs.
 
     COLMAP keeps the existing 2400 px / 8192-feature SIFT settings. Dense
-    stereo uses 1920 px, four source views and one PatchMatch iteration, and
-    skips the additional full-resolution CPU confidence-recalibration pass.
+    stereo uses 1920 px, four source views, one PatchMatch iteration and
+    one geometric-consistency iteration (the OpenMVS default), and skips the
+    additional full-resolution CPU confidence-recalibration pass.
     Surface meshing, texturing, orientation, exports and QA remain enabled,
     while RefineMesh is skipped by the backend to reduce mesh and texture cost.
     This is a deliberate geometry-detail/runtime trade-off; use Maximum for
