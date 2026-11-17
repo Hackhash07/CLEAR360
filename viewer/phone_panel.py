@@ -185,13 +185,19 @@ class ReconstructionWorker(QtCore.QThread):
                     camera_overlap=registration.get("camera_overlap", {}),
                     photo_set=actual_photo_set_report,
                 )
+                preview_only = bool(result.get("preview_only", False))
+                if preview_only:
+                    reconstruction_grade = "PREVIEW_ONLY"
+                backend_label = result.get("backend_label", "COLMAP + OpenMVS")
                 report = {
                     "session_id": session_dir.name,
                     "reconstruction_grade": reconstruction_grade,
+                    "preview_only": preview_only,
+                    "output_mode": "geometry_only" if preview_only else "textured_mesh",
                     "completeness_percentage": round(
                         100.0 * registered_count / max(1, len(self.image_paths)), 1
                     ),
-                    "backend": "COLMAP + OpenMVS",
+                    "backend": backend_label,
                     "uploaded_count": len(self.image_paths),
                     "registered_count": result.get("registered_count", 0),
                     "failed_images": failed_source_names,
@@ -235,10 +241,13 @@ class ReconstructionWorker(QtCore.QThread):
                             "No camera-overlap or mesh QA warnings were reported."
                         ),
                     },
-                    "notes": "COLMAP + OpenMVS reconstruction completed.",
+                    "notes": (
+                        "Fast geometry-only preview; refinement and texturing were skipped."
+                        if preview_only else "COLMAP + OpenMVS reconstruction completed."
+                    ),
                     "mesh_ply": str(result["mesh_ply"]),
-                    "mesh_obj": str(result.get("mesh_obj", "")),
-                    "mesh_glb": str(result["mesh_glb"]),
+                    "mesh_obj": str(result.get("mesh_obj") or ""),
+                    "mesh_glb": str(result.get("mesh_glb") or ""),
                     "dense_ply": str(result["dense_ply"]),
                     "log_file": str(result["log_file"]),
                     "mesh_quality_report": str(result.get("mesh_quality_report", "")),
@@ -254,7 +263,8 @@ class ReconstructionWorker(QtCore.QThread):
                     "session_dir": session_dir,
                     "mesh_ply": result["mesh_ply"],
                     "mesh_viewer": result.get("mesh_obj", result["mesh_ply"]),
-                    "mesh_glb": result["mesh_glb"],
+                    "mesh_glb": result.get("mesh_glb"),
+                    "preview_only": preview_only,
                     "dense_ply": result["dense_ply"],
                     "report": report,
                     "photo_set_report": actual_photo_set_report,
