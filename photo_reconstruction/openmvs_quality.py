@@ -23,6 +23,8 @@ def densify_common_options(
     2=interpolate short gaps, 4=confidence recalibration fused into CUDA
     estimation, and 8=force the confidence-recalibration pass on CPU.
     High/Maximum use 10 (2+8), including the extra full-resolution CPU pass.
+    The Apple-Silicon High profile opts for 2 to skip that CPU pass after
+    benchmarking trade-offs; Maximum keeps the original full-quality setting.
     Balanced Standard explicitly uses 2 to retain short-gap interpolation
     without that additional CPU confidence-recalibration pass.
     """
@@ -125,3 +127,72 @@ def densify_fusion_options(*, minimum_views: int = 2) -> list[str]:
         "--number-views-fuse", str(minimum_views),
         "--fusion-mode", "0",
     ]
+
+
+
+def apple_silicon_high_profile() -> dict[str, int]:
+    """Balanced High preset for Apple Silicon CPU-only OpenMVS runs.
+
+    COLMAP keeps the existing 2400 px / 8192-feature SIFT settings and the
+    final mesh, refinement, texturing, visibility filter and QA stages remain
+    enabled. Dense stereo is reduced moderately (1920 px, four source views,
+    two PatchMatch iterations) and skips the additional full-resolution CPU
+    confidence-recalibration pass. Fine depth detail can differ slightly from
+    the legacy High profile; use Maximum for the original full-quality solve.
+    """
+    return {
+        "feature_size": 8192,
+        "max_image_size": 2400,
+        "max_resolution": 1920,
+        "resolution_level": 0,
+        "dense_views": 4,
+        "dense_iterations": 2,
+        "geometric_iterations": 2,
+        "min_dense_resolution": 560,
+        "sub_resolution_levels": 1,
+        "postprocess_dmaps": 2,
+    }
+
+
+def resolve_openmvs_thread_count(
+    *,
+    platform_system: str,
+    platform_machine: str,
+    cpu_count: int,
+    total_memory_bytes: int | None,
+    override: str | None = None,
+) -> int:
+    """Choose a conservative OpenMVS thread limit for Apple Silicon memory.
+
+    CLEAR360_OPENMVS_THREADS can override the automatic choice. On Apple
+    Silicon, the default is 2 threads below 12 GiB, 3 below 24 GiB, and 4
+    above that. Other platforms retain the legacy one-thread default unless
+    explicitly overridden.
+    """
+    available_cpus = max(1, int(cpu_count or 1))
+    override_text = (override or "").strip()
+    if override_text:
+        try:
+            requested = int(override_text)
+        except ValueError as exc:
+            raise ValueError(
+                "CLEAR360_OPENMVS_THREADS must be a positive integer."
+            ) from exc
+        if requested < 1:
+            raise ValueError("CLEAR360_OPENMVS_THREADS must be a positive integer.")
+        return min(requested, available_cpus)
+
+    is_apple_silicon = (
+        platform_system == "Darwin"
+        and platform_machine.lower() in {"arm64", "aarch64"}
+    )
+    if not is_apple_silicon:
+        return 1
+
+    gib = 1024 ** 3
+    memory = int(total_memory_bytes or 0)
+    if memory <= 0 or memory < 12 * gib:
+        return min(2, available_cpus)
+    if memory < 24 * gib:
+        return min(3, available_cpus)
+    return min(4, available_cpus)
