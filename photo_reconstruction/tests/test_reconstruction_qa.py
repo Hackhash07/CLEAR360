@@ -379,6 +379,7 @@ def test_reconstruction_qa_flags_a_mostly_black_diffuse_atlas_without_recoloring
     assert report["textures"]["atlas_diagnostics"]["available"] is True
     assert report["textures"]["atlas_diagnostics"]["near_black_texel_percentage"] == 90.0
     assert report["checks"]["atlas_mostly_black"] is True
+    assert report["texture_status"] == "atlas_mostly_black"
     assert report["status"] == "review"
     assert any("diffuse-atlas texels are near-black" in warning for warning in report["warnings"])
     # QA is diagnostic only: the original atlas bytes are never edited.
@@ -404,4 +405,5 @@ def test_reconstruction_qa_does_not_flag_a_coloured_atlas(tmp_path: Path):
     report = audit_reconstruction_outputs(mesh_path, obj_path=obj_path)
 
     assert report["checks"]["atlas_mostly_black"] is False
+    assert report["texture_status"] == "available"
     assert report["status"] == "healthy"
