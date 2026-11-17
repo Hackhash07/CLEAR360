@@ -10,6 +10,10 @@ def densify_common_options(
     max_threads: int = 1,
     number_views: int = 5,
     postprocess_dmaps: int = 10,
+    iterations: int = 3,
+    geometric_iterations: int = 2,
+    min_resolution: int = 640,
+    sub_resolution_levels: int = 2,
 ) -> list[str]:
     """Common CPU dense-stereo parameters verified against OpenMVS 2.4.0.
 
@@ -22,7 +26,11 @@ def densify_common_options(
     estimates can be rejected before fusion. This costs an extra full-resolution
     CPU pass, so callers may explicitly use 2 for a faster draft preview.
     """
-    if resolution_level < 0 or max_resolution <= 0 or max_threads < 1:
+    if (
+        resolution_level < 0 or max_resolution <= 0 or max_threads < 1
+        or iterations < 1 or geometric_iterations < 0
+        or min_resolution <= 0 or sub_resolution_levels < 0
+    ):
         raise ValueError("Invalid dense reconstruction resource settings.")
     if number_views < 0 or not 0 <= postprocess_dmaps <= 15:
         raise ValueError("Invalid dense view or depth-map post-processing bit mask.")
@@ -31,11 +39,11 @@ def densify_common_options(
         "--max-threads", str(max_threads),
         "--resolution-level", str(resolution_level),
         "--max-resolution", str(max_resolution),
-        "--min-resolution", "640",
-        "--sub-resolution-levels", "2",
+        "--min-resolution", str(min_resolution),
+        "--sub-resolution-levels", str(sub_resolution_levels),
         "--number-views", str(number_views),
-        "--iters", "3",
-        "--geometric-iters", "2",
+        "--iters", str(iterations),
+        "--geometric-iters", str(geometric_iterations),
         "--postprocess-dmaps", str(postprocess_dmaps),
         "--tower-mode", "0",
     ]
