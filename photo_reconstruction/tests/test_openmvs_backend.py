@@ -173,3 +173,28 @@ def test_colmap_cli_uses_current_feature_matching_option_group():
     from photo_reconstruction.openmvs_backend import _colmap_feature_matching_options
 
     assert _colmap_feature_matching_options() == ["--FeatureMatching.use_gpu", "0"]
+
+
+
+def test_colmap_feature_extraction_uses_robust_sift_options():
+    from photo_reconstruction.openmvs_backend import _colmap_feature_extraction_options
+
+    options = _colmap_feature_extraction_options(max_image_size=1600, max_num_features=6000)
+    pairs = dict(zip(options[0::2], options[1::2]))
+
+    assert pairs["--FeatureExtraction.max_image_size"] == "1600"
+    assert pairs["--SiftExtraction.max_num_features"] == "6000"
+    assert pairs["--SiftExtraction.estimate_affine_shape"] == "1"
+    assert pairs["--SiftExtraction.domain_size_pooling"] == "1"
+    assert pairs["--FeatureExtraction.use_gpu"] == "0"
+    assert "--SiftExtraction.max_image_size" not in options
+
+
+def test_colmap_matching_uses_geometry_guided_sift_matching():
+    from photo_reconstruction.openmvs_backend import _colmap_feature_matching_options
+
+    options = _colmap_feature_matching_options()
+    pairs = dict(zip(options[0::2], options[1::2]))
+
+    assert pairs["--FeatureMatching.use_gpu"] == "0"
+    assert pairs["--SiftMatching.guided_matching"] == "1"
