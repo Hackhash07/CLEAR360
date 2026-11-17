@@ -87,3 +87,10 @@ def test_offscreen_rendering(viewport):
     # Frame must not be completely black/transparent
     assert np.any(img[:, :, :3] > 0)
 
+
+
+
+def test_photogrammetry_mesh_visuals_are_unlit(viewport):
+    # Source-image atlases should not be darkened by normal-dependent Phong shading.
+    assert viewport.visual_textured_mesh.shading is None
+    assert viewport.visual_obj_untextured_mesh.shading is None
