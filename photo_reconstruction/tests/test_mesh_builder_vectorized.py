@@ -3,7 +3,7 @@
 import numpy as np
 from scipy.spatial import cKDTree
 
-from photo_reconstruction.mesh_builder import MeshBuilder
+from photo_reconstruction.nearest_neighbors import query_nearest_neighbors
 
 
 def test_nearest_neighbor_queries_match_brute_force_across_chunks():
@@ -12,7 +12,7 @@ def test_nearest_neighbor_queries_match_brute_force_across_chunks():
     queries = rng.normal(size=(53, 3))
 
     tree = cKDTree(reference)
-    distances, indices = MeshBuilder._query_nearest_neighbors(
+    distances, indices = query_nearest_neighbors(
         tree, queries, chunk_size=7, workers=1
     )
 
@@ -33,7 +33,7 @@ def test_nearest_neighbor_queries_match_brute_force_across_chunks():
 
 def test_nearest_neighbor_queries_handle_empty_vertex_batches():
     tree = cKDTree(np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]))
-    distances, indices = MeshBuilder._query_nearest_neighbors(
+    distances, indices = query_nearest_neighbors(
         tree, np.empty((0, 3)), chunk_size=1, workers=1
     )
 
@@ -45,9 +45,9 @@ def test_nearest_neighbor_queries_validate_input():
     tree = cKDTree(np.array([[0.0, 0.0, 0.0]]))
 
     with np.testing.assert_raises(ValueError):
-        MeshBuilder._query_nearest_neighbors(tree, np.zeros((3, 2)))
+        query_nearest_neighbors(tree, np.zeros((3, 2)))
 
     with np.testing.assert_raises(ValueError):
-        MeshBuilder._query_nearest_neighbors(
+        query_nearest_neighbors(
             tree, np.zeros((1, 3)), chunk_size=0
         )
