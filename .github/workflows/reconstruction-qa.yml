@@ -18,6 +18,8 @@ on:
       - "photo_reconstruction/tests/test_image_preparation.py"
       - "photo_reconstruction/reconstruction_qa.py"
       - "photo_reconstruction/openmvs_backend.py"
+      - "photo_reconstruction/openmvs_quality.py"
+      - "photo_reconstruction/openmvs_quality.py"
       - "photo_reconstruction/openmvs_assets.py"
       - "photo_reconstruction/tests/test_openmvs_assets.py"
       - "viewer/app.py"
@@ -100,6 +102,7 @@ jobs:
             photo_reconstruction/quality_report.py \
             photo_reconstruction/pipeline.py \
             photo_reconstruction/openmvs_backend.py \
+            photo_reconstruction/openmvs_quality.py \
             photo_reconstruction/openmvs_assets.py \
             photo_reconstruction/mesh_builder.py \
             photo_reconstruction/nearest_neighbors.py \
