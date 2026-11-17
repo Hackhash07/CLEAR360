@@ -165,7 +165,10 @@ class SfMEngine:
 
         # 1. Feature Extraction
         extract_opts = pycolmap.FeatureExtractionOptions()
-        if self.quality_preset == "draft":
+        if self.quality_preset == "fast":
+            extract_opts.max_image_size = 800
+            extract_opts.sift.max_num_features = 1500
+        elif self.quality_preset == "draft":
             extract_opts.max_image_size = 800
             extract_opts.sift.max_num_features = 1000
         elif self.quality_preset == "quick":
@@ -427,6 +430,7 @@ class SfMEngine:
     ) -> Dict[str, Any]:
         """Fallback OpenCV-based Two-View / Multi-View SfM."""
         cv_features = {
+            "fast": 1500,
             "draft": 1000,
             "quick": 1500,
             "standard": 2500,
@@ -435,6 +439,7 @@ class SfMEngine:
         }.get(self.quality_preset, 2500)
         sift = cv2.SIFT_create(nfeatures=cv_features)
         max_size = {
+            "fast": 800,
             "draft": 800,
             "quick": 1000,
             "standard": 1600,
