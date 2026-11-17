@@ -413,3 +413,15 @@ def test_phone_panel_exposes_fast_standard_and_high_quality_presets(qapp, tmp_pa
         assert "higher RAM use" in panel.lbl_auto_quality.text()
     finally:
         panel.close()
+
+
+def test_fast_preview_output_selects_point_cloud_viewport_mode(tmp_path):
+    from viewer.phone_panel import reconstruction_display_mode
+
+    preview = tmp_path / "mesh" / "scene_geometry_preview.ply"
+    final_mesh = tmp_path / "mesh" / "scene_mesh.ply"
+    textured_obj = tmp_path / "mesh" / "scene_mesh.obj"
+
+    assert reconstruction_display_mode(preview) == "cloud"
+    assert reconstruction_display_mode(final_mesh) == "mesh"
+    assert reconstruction_display_mode(textured_obj) == "textured"
