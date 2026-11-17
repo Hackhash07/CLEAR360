@@ -98,23 +98,36 @@ def refine_mesh_options(
 
 
 def texture_mesh_options(
-    *, max_threads: int = 1, max_texture_size: int = 2048
+    *,
+    max_threads: int = 1,
+    max_texture_size: int = 2048,
+    virtual_face_images: int = 3,
+    global_seam_leveling: bool = True,
 ) -> list[str]:
-    """Create texture patches with OpenMVS seam-leveling enabled."""
-    if max_threads < 1 or max_texture_size < 256:
+    """Create OpenMVS texture patches with configurable seam handling.
+
+    Defaults preserve the existing Standard/High/Maximum behavior. The
+    Apple-Silicon High profile uses fewer virtual face views and disables the
+    OpenMVS 2.4.0 global seam pass while retaining local seam leveling.
+    """
+    if (
+        max_threads < 1
+        or max_texture_size < 256
+        or virtual_face_images < 1
+    ):
         raise ValueError("Invalid texture export settings.")
     return [
         "--max-threads", str(max_threads),
         "--resolution-level", "0",
         "--min-resolution", "640",
         "--max-texture-size", str(max_texture_size),
-        "--virtual-face-images", "3",
+        "--virtual-face-images", str(virtual_face_images),
         "--cost-smoothness-ratio", "0.7",
         "--close-holes", "0",
         "--sharpness-weight", "0.5",
         "--ignore-mask-label=-1",
         "--local-seam-leveling", "1",
-        "--global-seam-leveling", "1",
+        "--global-seam-leveling", "1" if global_seam_leveling else "0",
     ]
 
 
@@ -146,7 +159,7 @@ def apple_silicon_high_profile() -> dict[str, int]:
         "max_resolution": 1920,
         "resolution_level": 0,
         "dense_views": 4,
-        "dense_iterations": 2,
+        "dense_iterations": 1,
         "geometric_iterations": 2,
         "min_dense_resolution": 560,
         "sub_resolution_levels": 1,
