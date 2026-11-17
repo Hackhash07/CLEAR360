@@ -371,7 +371,7 @@ class ReconstructionWorker(QtCore.QThread):
                                     f"Could not compact input manifest: {manifest_error}"
                                 )
                         try:
-                            cleanup = self.pipeline.session_manager.cleanup_successful_session(
+                            cleanup = self.pipeline.session_manager.cleanup_session_intermediates(
                                 session_dir.name
                             )
                             report["storage_cleanup"] = cleanup
@@ -446,7 +446,7 @@ class ReconstructionWorker(QtCore.QThread):
                         json.dumps(failure_report, indent=2),
                         encoding="utf-8",
                     )
-                    self.pipeline.session_manager.cleanup_successful_session(
+                    self.pipeline.session_manager.cleanup_session_intermediates(
                         session_dir.name
                     )
                 except Exception as cleanup_error:
