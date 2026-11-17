@@ -771,6 +771,9 @@ class Clear360Viewport(QtWidgets.QWidget):
             self.view.camera.elevation = 25.0
             self.view.camera.azimuth = -45.0
             self._hide_non_scene_overlays()
+            # The generic helper hides automotive point-cloud overlays too;
+            # explicitly re-enable the photogrammetry cloud after cleanup.
+            self.visual_cloud.visible = True
             self.canvas.native.setToolTip(
                 f"Fast Preview point cloud: {len(points):,} points (not a textured mesh)"
             )
