@@ -361,7 +361,15 @@ class Clear360ViewerWindow(QtWidgets.QMainWindow):
         self.lbl_status_source.setText("Source: Smartphone Photogrammetry (SfM)")
         if hasattr(self.phone_panel, "set_display_mode"):
             from pathlib import Path
-            display_mode = "textured" if Path(mesh_path).suffix.lower() == ".obj" else "mesh"
+            output_path = Path(mesh_path)
+            if output_path.name == "scene_geometry_preview.ply":
+                # Fast Preview is a dense point cloud, not a triangle mesh.
+                # Keep its point-cloud visual enabled after switching to phone mode.
+                display_mode = "cloud"
+            elif output_path.suffix.lower() == ".obj":
+                display_mode = "textured"
+            else:
+                display_mode = "mesh"
             self.phone_panel.set_display_mode(display_mode)
 
     def _on_phone_session_requested(self, session_id: str):
