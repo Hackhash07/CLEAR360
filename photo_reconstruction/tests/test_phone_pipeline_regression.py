@@ -66,7 +66,7 @@ def test_1_gui_to_pipeline_api_compatibility():
 # -----------------------------------------------------------------------------
 def test_2_every_quality_preset():
     """Verify all 4 primary presets ('draft', 'standard', 'high', 'maximum') plus 'quick'."""
-    presets = ["draft", "quick", "standard", "high", "maximum"]
+    presets = ["fast", "draft", "quick", "standard", "high", "maximum"]
     for p in presets:
         val = validate_quality_preset(p)
         assert val in QUALITY_PRESETS
@@ -78,6 +78,7 @@ def test_2_every_quality_preset():
         assert "cv_sift_features" in cfg and cfg["cv_sift_features"] > 0
 
     # Verify Draft has lower density/size and Maximum has highest
+    assert QUALITY_PRESETS["fast"]["max_image_size"] <= QUALITY_PRESETS["draft"]["max_image_size"]
     assert QUALITY_PRESETS["draft"]["max_image_size"] < QUALITY_PRESETS["maximum"]["max_image_size"]
     assert QUALITY_PRESETS["draft"]["sift_max_features"] < QUALITY_PRESETS["maximum"]["sift_max_features"]
     assert QUALITY_PRESETS["draft"]["voxel_size"] > QUALITY_PRESETS["maximum"]["voxel_size"]
@@ -391,12 +392,18 @@ def test_openmvs_worker_writes_input_manifest_before_backend(
     assert "cannot access local variable 'json'" not in failures[0][0]
 
 
-def test_phone_panel_exposes_standard_and_high_quality_presets(qapp, tmp_path):
+def test_phone_panel_exposes_fast_standard_and_high_quality_presets(qapp, tmp_path):
     panel = PhoneReconstructionPanel(data_root=tmp_path)
     try:
-        assert panel.combo_quality_preset.count() == 2
-        assert panel.combo_quality_preset.currentData() == "standard"
-        assert "balanced first full run" in panel.lbl_auto_quality.text()
+        assert panel.combo_quality_preset.count() == 3
+        assert panel.combo_quality_preset.currentData() == "fast"
+        assert "geometry only" in panel.lbl_auto_quality.text()
+        assert "not guaranteed" in panel.lbl_auto_quality.text()
+
+        standard_index = panel.combo_quality_preset.findData("standard")
+        assert standard_index >= 0
+        panel.combo_quality_preset.setCurrentIndex(standard_index)
+        assert "full refinement" in panel.lbl_auto_quality.text()
 
         high_index = panel.combo_quality_preset.findData("high")
         assert high_index >= 0
