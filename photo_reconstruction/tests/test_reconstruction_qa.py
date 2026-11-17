@@ -352,3 +352,56 @@ def test_fragmented_surface_patches_reduce_mesh_quality_score(tmp_path: Path):
     assert report["geometry"]["boundary_edge_ratio"] > 0.10
     assert report["status"] != "healthy"
     assert any("disconnected components" in warning for warning in report["warnings"])
+
+
+
+def test_reconstruction_qa_flags_a_mostly_black_diffuse_atlas_without_recoloring(tmp_path: Path):
+    from PIL import Image
+    import numpy as np
+
+    mesh_path = tmp_path / "scene.ply"
+    obj_path = tmp_path / "scene.obj"
+    mtl_path = tmp_path / "scene.mtl"
+    atlas_path = tmp_path / "atlas.png"
+    _write_open_quad(mesh_path)
+
+    atlas = np.zeros((10, 10, 3), dtype=np.uint8)
+    atlas[:1, :, :] = [180, 80, 30]  # Keep 10% genuine coloured photo texels.
+    Image.fromarray(atlas).save(atlas_path)
+    obj_path.write_text("mtllib scene.mtl\n", encoding="utf-8")
+    mtl_path.write_text(
+        "newmtl body\nmap_Kd atlas.png\n",
+        encoding="utf-8",
+    )
+
+    report = audit_reconstruction_outputs(mesh_path, obj_path=obj_path)
+
+    assert report["textures"]["atlas_diagnostics"]["available"] is True
+    assert report["textures"]["atlas_diagnostics"]["near_black_texel_percentage"] == 90.0
+    assert report["checks"]["atlas_mostly_black"] is True
+    assert report["status"] == "review"
+    assert any("diffuse-atlas texels are near-black" in warning for warning in report["warnings"])
+    # QA is diagnostic only: the original atlas bytes are never edited.
+    with Image.open(atlas_path) as saved:
+        assert np.array_equal(np.asarray(saved.convert("RGB")), atlas)
+
+
+def test_reconstruction_qa_does_not_flag_a_coloured_atlas(tmp_path: Path):
+    from PIL import Image
+    import numpy as np
+
+    mesh_path = tmp_path / "scene.ply"
+    obj_path = tmp_path / "scene.obj"
+    _write_open_quad(mesh_path)
+    atlas_path = tmp_path / "atlas.png"
+    Image.fromarray(np.full((8, 8, 3), [145, 72, 38], dtype=np.uint8)).save(atlas_path)
+    (tmp_path / "scene.mtl").write_text(
+        "newmtl body\nmap_Kd atlas.png\n",
+        encoding="utf-8",
+    )
+    obj_path.write_text("mtllib scene.mtl\n", encoding="utf-8")
+
+    report = audit_reconstruction_outputs(mesh_path, obj_path=obj_path)
+
+    assert report["checks"]["atlas_mostly_black"] is False
+    assert report["status"] == "healthy"
