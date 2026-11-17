@@ -411,6 +411,61 @@ def audit_obj_materials(obj_path: str | Path) -> dict[str, Any]:
     return result
 
 
+def _audit_obj_texture_atlases(obj_materials: dict[str, Any]) -> dict[str, Any]:
+    """Inspect referenced diffuse maps without modifying their source pixels."""
+    from PIL import Image
+
+    from photo_reconstruction.texture_diagnostics import texture_color_statistics
+
+    summaries = []
+    for raw_path in dict.fromkeys(obj_materials.get("diffuse_maps", [])):
+        texture_path = Path(raw_path)
+        if not texture_path.is_file():
+            continue
+        try:
+            with Image.open(texture_path) as source:
+                source.thumbnail((1024, 1024))
+                pixels = np.asarray(source.convert("RGB"), dtype=np.uint8)
+            summaries.append(texture_color_statistics(pixels))
+        except Exception as exc:
+            summaries.append({"path": str(texture_path), "error": str(exc)})
+
+    valid = [item for item in summaries if "near_black_texel_percentage" in item]
+    if not valid:
+        return {
+            "available": False,
+            "map_count": len(summaries),
+            "error_count": sum("error" in item for item in summaries),
+        }
+
+    sampled_pixels = sum(int(item["sampled_pixels"]) for item in valid)
+    near_black = sum(
+        float(item["near_black_texel_percentage"]) * int(item["sampled_pixels"])
+        for item in valid
+    ) / max(1, sampled_pixels)
+    mean_rgb = [
+        sum(
+            float(item["mean_rgb"][channel]) * int(item["sampled_pixels"])
+            for item in valid
+        ) / max(1, sampled_pixels)
+        for channel in range(3)
+    ]
+    return {
+        "available": True,
+        "map_count": len(valid),
+        "near_black_texel_percentage": round(near_black, 2),
+        "mean_rgb": [round(value, 2) for value in mean_rgb],
+        "sampled_pixels": sampled_pixels,
+        "near_black_definition": "sum(R,G,B) < 12",
+        "review_threshold_percentage": 90.0,
+        "diagnostic_only": True,
+        "note": (
+            "Dark photographic pixels are not rewritten; this signal requests "
+            "inspection of the atlas, UVs and source images."
+        ),
+    }
+
+
 def _texture_report(path: Path | None) -> dict[str, Any] | None:
     if path is None or not path.is_file():
         return None
@@ -468,6 +523,20 @@ def audit_reconstruction_outputs(
         checks["obj_material_references_resolve"] = obj_materials["all_references_resolve"]
         if not obj_materials["all_references_resolve"]:
             warnings.append("OBJ material or diffuse-texture references are missing or unresolved.")
+
+        atlas_diagnostics = _audit_obj_texture_atlases(obj_materials)
+        textures["atlas_diagnostics"] = atlas_diagnostics
+        if atlas_diagnostics.get("available"):
+            atlas_mostly_black = (
+                atlas_diagnostics["near_black_texel_percentage"] >= 90.0
+            )
+            checks["atlas_mostly_black"] = atlas_mostly_black
+            if atlas_mostly_black:
+                warnings.append(
+                    "More than 90% of sampled diffuse-atlas texels are near-black. "
+                    "Inspect the source images, material assignment and UVs; dark photo pixels "
+                    "are not automatically recolored."
+                )
 
     if glb_path is not None:
         glb_file = Path(glb_path).expanduser().resolve()
@@ -593,6 +662,7 @@ def audit_reconstruction_outputs(
         export_review_required = (
             checks.get("obj_material_references_resolve") is False
             or checks.get("glb_loadable") is False
+            or checks.get("atlas_mostly_black") is True
             or (
                 checks.get("texture_coverage_percentage") is not None
                 and checks["texture_coverage_percentage"] < 70.0
