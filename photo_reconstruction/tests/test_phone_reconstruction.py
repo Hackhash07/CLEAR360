@@ -298,7 +298,7 @@ def test_successful_session_cleanup_removes_only_allowlisted_intermediates(tmp_p
     (session / "openmvs_pipeline.log").write_text("stage timings")
     (older_session / "keep.txt").write_text("older session must not be touched")
 
-    result = manager.cleanup_successful_session("session_001")
+    result = manager.cleanup_session_intermediates("session_001")
 
     assert result["enabled"] is True
     assert result["megabytes_removed"] > 0
@@ -321,6 +321,6 @@ def test_successful_session_cleanup_rejects_non_session_paths(tmp_path: Path):
     outside.mkdir()
     (outside / "keep.txt").write_text("safe")
     with pytest.raises(ValueError):
-        manager.cleanup_successful_session("../important")
+        manager.cleanup_session_intermediates("../important")
     assert (outside / "keep.txt").is_file()
 
