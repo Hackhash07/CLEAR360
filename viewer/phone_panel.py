@@ -203,6 +203,7 @@ class ReconstructionWorker(QtCore.QThread):
                     "registration": registration,
                     "camera_overlap": camera_overlap,
                     "camera_calibration": registration.get("camera_calibration", {}),
+                    "pipeline_configuration": result.get("pipeline_configuration", {}),
                     "input_manifest": input_manifest,
                     "staging_errors": staging_errors,
                     "photo_set": actual_photo_set_report,
@@ -902,8 +903,13 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             else:
                 overlap_status = "CONNECTED"
             quality_label += f" · Camera overlap: {overlap_status}"
+        status_prefix = (
+            "Reconstruction successful"
+            if quality_status == "healthy"
+            else "Reconstruction generated — QA review required"
+        )
         self.lbl_status.setText(
-            f"Reconstruction successful! {backend_label} backend: {session_id}. {quality_label}."
+            f"{status_prefix}. {backend_label} backend: {session_id}. {quality_label}."
         )
         status_color = (
             "#22c55e" if quality_status == "healthy"
@@ -917,12 +923,21 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         # Emit completion signal to open in 3D viewport
         self.reconstruction_completed.emit(session_id, mesh_path)
 
-        QtWidgets.QMessageBox.information(
-            self,
-            "Photogrammetry Complete",
-            f"3D reconstruction completed successfully!\nSession: {session_id}\n\n"
-            "The reconstructed scene has been loaded into the 3D viewer.",
-        )
+        if quality_status == "healthy":
+            dialog_title = "Photogrammetry Complete"
+            dialog_message = (
+                f"3D reconstruction completed and passed mesh QA.\nSession: {session_id}\n\n"
+                "The reconstructed scene has been loaded into the 3D viewer."
+            )
+        else:
+            dialog_title = "Photogrammetry Generated — Review Required"
+            dialog_message = (
+                f"Session: {session_id}\n\n"
+                f"Mesh QA status: {quality_status.upper()}. "
+                "The model is loaded for inspection, but it has not passed the healthy-quality gate. "
+                "Review reconstruction_quality.json and the pipeline diagnostics before treating it as complete."
+            )
+        QtWidgets.QMessageBox.information(self, dialog_title, dialog_message)
 
     @QtCore.Slot(str, str)
     def _on_reconstruction_failed(self, error_msg: str, tb_str: str):
