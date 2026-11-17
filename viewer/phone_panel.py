@@ -938,6 +938,8 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         preview_only = bool(result_report.get("preview_only", False))
         quality = result_report.get("mesh_quality", {})
         quality_status = quality.get("status", "not available")
+        texture_status = quality.get("texture_status", "not_checked")
+        texture_incomplete = texture_status == "atlas_mostly_black"
         quality_score = quality.get("score")
         quality_label = (
             f"Mesh QA: {quality_status.upper()} ({quality_score:.1f}/100)"
@@ -945,6 +947,8 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             else f"Mesh QA: {quality_status.upper()}"
         )
         photo_set = result_report.get("photo_set") or {}
+        if texture_incomplete:
+            quality_label += " · TEXTURE INCOMPLETE"
         if photo_set:
             quality_label += f" · Photo set: {str(photo_set.get('status', 'unknown')).upper()}"
         registration = result_report.get("registration") or {}
@@ -977,7 +981,9 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             status_prefix = "Fast geometry preview generated — not a final textured asset"
         else:
             status_prefix = (
-                "Reconstruction successful"
+                "Reconstruction generated — TEXTURE INCOMPLETE"
+                if texture_incomplete
+                else "Reconstruction successful"
                 if quality_status == "healthy"
                 else "Reconstruction generated — QA review required"
             )
@@ -1004,6 +1010,15 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
                 "A low-resolution geometry-only preview was generated and loaded. "
                 "Mesh refinement and texture exports were intentionally skipped for speed. "
                 "Review the shape and camera coverage, then run Standard for the final textured asset."
+            )
+        elif texture_incomplete:
+            dialog_title = "Photogrammetry Generated — Texture Incomplete"
+            dialog_message = (
+                f"Session: {session_id}\n\n"
+                "The geometry was reconstructed, but more than 90% of sampled diffuse-atlas "
+                "texels are near-black. The model is loaded for inspection, but its photographic "
+                "colour is incomplete. Review reconstruction_quality.json and the source photos; "
+                "CLEAR360 has not recolored the dark pixels."
             )
         elif quality_status == "healthy":
             dialog_title = "Photogrammetry Complete"
