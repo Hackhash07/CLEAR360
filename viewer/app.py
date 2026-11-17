@@ -20,7 +20,7 @@ from viewer.data_loader import ViewerDataLoader
 from viewer.viewport import Clear360Viewport
 from viewer.controls import ViewerControlPanel
 from viewer.info_panel import ViewerInfoPanel
-from viewer.phone_panel import PhoneReconstructionPanel
+from viewer.phone_panel import PhoneReconstructionPanel, reconstruction_display_mode
 
 
 DARK_AUTOMOTIVE_QSS = """
@@ -360,30 +360,25 @@ class Clear360ViewerWindow(QtWidgets.QMainWindow):
         self.lbl_status_frame.setText(f"Session: {session_id}")
         self.lbl_status_source.setText("Source: Smartphone Photogrammetry (SfM)")
         if hasattr(self.phone_panel, "set_display_mode"):
-            from pathlib import Path
-            output_path = Path(mesh_path)
-            if output_path.name == "scene_geometry_preview.ply":
-                # Fast Preview is a dense point cloud, not a triangle mesh.
-                # Keep its point-cloud visual enabled after switching to phone mode.
-                display_mode = "cloud"
-            elif output_path.suffix.lower() == ".obj":
-                display_mode = "textured"
-            else:
-                display_mode = "mesh"
-            self.phone_panel.set_display_mode(display_mode)
+            # Select point-cloud display for Fast Preview PLYs instead of hiding
+            # them behind the solid-mesh display mode.
+            self.phone_panel.set_display_mode(reconstruction_display_mode(mesh_path))
 
     def _on_phone_session_requested(self, session_id: str):
         """Load past photogrammetry session mesh."""
         sess_dir = self.data_loader.data_dir / "phone_reconstruction" / session_id
+        preview_ply = sess_dir / "mesh" / "scene_geometry_preview.ply"
         mesh_ply = sess_dir / "mesh" / "scene_mesh.ply"
         mesh_obj = sess_dir / "mesh" / "scene_mesh.obj"
         mesh_glb = sess_dir / "mesh" / "scene_textured.glb"
         if mesh_obj.exists():
             self._on_phone_mesh_loaded(session_id, str(mesh_obj))
-        elif mesh_ply.exists():
-            self._on_phone_mesh_loaded(session_id, str(mesh_ply))
         elif mesh_glb.exists():
             self._on_phone_mesh_loaded(session_id, str(mesh_glb))
+        elif preview_ply.exists():
+            self._on_phone_mesh_loaded(session_id, str(preview_ply))
+        elif mesh_ply.exists():
+            self._on_phone_mesh_loaded(session_id, str(mesh_ply))
         else:
             self.statusBar().showMessage(f"No mesh found in {session_id}", 4000)
 
