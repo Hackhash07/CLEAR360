@@ -102,9 +102,6 @@ def _openmvs_point_cloud_filter_threshold(quality_preset: str) -> int | None:
     """Apply camera-visibility cleanup only to full-quality reconstructions."""
     return None if quality_preset.lower() in {"fast", "draft", "quick"} else -20
 
-
-
-
 def _openmvs_standard_profile() -> dict[str, int]:
     """Balanced Standard settings: reduce dense-MVS cost, retain final asset stages."""
     return {
