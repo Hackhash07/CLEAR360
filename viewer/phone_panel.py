@@ -28,6 +28,16 @@ from photo_reconstruction.backend_selector import resolve_reconstruction_backend
 from photo_reconstruction.photo_set_auditor import PhotoSetQualityAuditor
 
 
+def reconstruction_display_mode(mesh_path: str | Path) -> str:
+    """Return the viewport mode required for a reconstruction output artifact."""
+    output_path = Path(mesh_path)
+    if output_path.name == "scene_geometry_preview.ply":
+        return "cloud"
+    if output_path.suffix.lower() == ".obj":
+        return "textured"
+    return "mesh"
+
+
 class ReconstructionWorker(QtCore.QThread):
     """
     Dedicated background worker thread for smartphone 3D photogrammetry.
