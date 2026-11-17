@@ -128,6 +128,7 @@ class MeshBuilder:
         avg_dist = float(np.mean(nn_dists)) if len(nn_dists) > 0 else 0.04
 
         mesh = None
+        point_tree = None
 
         # ---------------------------------------------------------------------
         # 1. Multi-Radius Ball-Pivoting Algorithm (BPA)
