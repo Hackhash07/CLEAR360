@@ -743,9 +743,42 @@ class Clear360Viewport(QtWidgets.QWidget):
                     return
 
         mesh = o3d.io.read_triangle_mesh(str(path))
-        if len(mesh.vertices) == 0:
+        if len(mesh.vertices) == 0 or len(mesh.triangles) == 0:
+            # Fast Preview exports a dense PLY point cloud, not a triangle mesh.
+            # Detect and display that explicitly rather than silently showing
+            # an empty surface visual.
+            point_cloud = o3d.io.read_point_cloud(str(path))
+            if len(point_cloud.points) == 0:
+                return
+            points = np.asarray(point_cloud.points, dtype=np.float32)
+            point_colors = np.asarray(point_cloud.colors, dtype=np.float32)
+            if len(point_colors) != len(points):
+                point_colors = np.ones((len(points), 3), dtype=np.float32) * 0.78
+            point_rgba = np.hstack([
+                point_colors[:, :3],
+                np.ones((len(point_colors), 1), dtype=np.float32),
+            ])
+            self.visual_cloud.set_data(
+                points, edge_color=point_rgba, face_color=point_rgba, size=1.8
+            )
+            self.visual_cloud.visible = True
+            self.visual_surface_mesh.visible = False
+            self.visual_textured_mesh.visible = False
+            center = np.median(points, axis=0)
+            extent = float(np.linalg.norm(np.percentile(points, 95, axis=0) - np.percentile(points, 5, axis=0)))
+            self.view.camera.center = tuple(center)
+            self.view.camera.distance = max(3.0, extent * 2.2)
+            self.view.camera.elevation = 25.0
+            self.view.camera.azimuth = -45.0
+            self._hide_non_scene_overlays()
+            self.canvas.native.setToolTip(
+                f"Fast Preview point cloud: {len(points):,} points (not a textured mesh)"
+            )
+            self.request_update()
+            print(f"Loaded Fast Preview point cloud: {len(points):,} points")
             return
 
+        self.visual_cloud.visible = False
         verts = np.asarray(mesh.vertices, dtype=np.float32)
         faces = np.asarray(mesh.triangles, dtype=np.uint32)
         cols = np.asarray(mesh.vertex_colors, dtype=np.float32)
