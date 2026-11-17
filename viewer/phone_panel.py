@@ -204,6 +204,8 @@ class ReconstructionWorker(QtCore.QThread):
                     "camera_overlap": camera_overlap,
                     "camera_calibration": registration.get("camera_calibration", {}),
                     "pipeline_configuration": result.get("pipeline_configuration", {}),
+                    "visibility_filter": result.get("visibility_filter", {}),
+                    "dense_ply_unfiltered": str(result.get("dense_ply_unfiltered", "")),
                     "input_manifest": input_manifest,
                     "staging_errors": staging_errors,
                     "photo_set": actual_photo_set_report,
