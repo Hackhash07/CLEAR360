@@ -54,33 +54,39 @@ def _ply_vertex_count(path: Path) -> int | None:
     return None
 
 
-def _colmap_feature_extraction_options(max_image_size: int, max_num_features: int) -> list[str]:
-    """Return quality-oriented CPU SIFT options accepted by current COLMAP."""
-    return [
+def _colmap_feature_extraction_options(
+    max_image_size: int, max_num_features: int, *, robust_sift: bool = True
+) -> list[str]:
+    """Return current COLMAP CPU SIFT options, with optional robust variants."""
+    options = [
         "--FeatureExtraction.max_image_size", str(max_image_size),
         "--SiftExtraction.max_num_features", str(max_num_features),
-        "--SiftExtraction.estimate_affine_shape", "1",
-        "--SiftExtraction.domain_size_pooling", "1",
         "--FeatureExtraction.use_gpu", "0",
     ]
+    if robust_sift:
+        options.extend([
+            "--SiftExtraction.estimate_affine_shape", "1",
+            "--SiftExtraction.domain_size_pooling", "1",
+        ])
+    return options
 
 
-def _colmap_feature_matching_options() -> list[str]:
-    """Return CPU matching options with geometry-guided correspondence recovery."""
-    return [
-        "--FeatureMatching.use_gpu", "0",
-        "--FeatureMatching.guided_matching", "1",
-    ]
+def _colmap_feature_matching_options(*, guided_matching: bool = True) -> list[str]:
+    """Return CPU matching options; guided matching is optional for fast previews."""
+    options = ["--FeatureMatching.use_gpu", "0"]
+    if guided_matching:
+        options.extend(["--FeatureMatching.guided_matching", "1"])
+    return options
 
 
 def _openmvs_fusion_minimum_views(quality_preset: str) -> int:
-    """Use stricter multi-view support for quality runs; allow 2-view draft coverage."""
-    return 2 if quality_preset.lower() in {"draft", "quick"} else 3
+    """Use strict evidence for full runs and two-view support for previews."""
+    return 2 if quality_preset.lower() in {"fast", "draft", "quick"} else 3
 
 
 def _openmvs_point_cloud_filter_threshold(quality_preset: str) -> int | None:
-    """Apply OpenMVS camera-visibility outlier filtering to quality-grade clouds."""
-    return None if quality_preset.lower() in {"draft", "quick"} else -20
+    """Apply camera-visibility cleanup only to full-quality reconstructions."""
+    return None if quality_preset.lower() in {"fast", "draft", "quick"} else -20
 
 
 
@@ -312,18 +318,26 @@ class OpenMVSBackend:
         camera_mode = resolve_colmap_camera_mode(photo_set_report)
 
         preset = quality_preset.lower()
-        if preset in {"draft", "quick"}:
+        fast_preview = preset == "fast"
+        if fast_preview:
+            # Low-resolution geometry-only preview. Runtime target is a benchmark
+            # objective, not a guaranteed deadline for every photo set.
+            feature_size, max_image_size, max_resolution, resolution_level = 1500, 800, 640, 1
+        elif preset in {"draft", "quick"}:
             feature_size, max_image_size, max_resolution, resolution_level = 2500, 1000, 800, 1
         elif preset == "high":
             feature_size, max_image_size, max_resolution, resolution_level = 8192, 2400, 2400, 0
         elif preset == "maximum":
             feature_size, max_image_size, max_resolution, resolution_level = 12000, 3200, 3200, 0
         else:
-            # Standard keeps full-resolution images and a larger SIFT budget;
-            # affine-shape and domain-size pooling improve robustness to scale
-            # and viewpoint changes in handheld object capture.
+            # Standard keeps full-resolution images and a larger SIFT budget.
             feature_size, max_image_size, max_resolution, resolution_level = 6000, 1600, 1600, 0
-        threads = 1  # Keep laptop memory usage predictable.
+        threads = 2 if fast_preview else 1
+        dense_views = 3 if fast_preview else 5
+        dense_iterations = 1 if fast_preview else 3
+        geometric_iterations = 1 if fast_preview else 2
+        min_dense_resolution = 320 if fast_preview else 640
+        sub_resolution_levels = 1 if fast_preview else 2
 
         db = work / "database.db"
         sparse_out = sparse / "0"
@@ -333,13 +347,15 @@ class OpenMVSBackend:
              "--ImageReader.single_camera", camera_mode["single_camera"],
              "--ImageReader.single_camera_per_image", camera_mode["single_camera_per_image"],
              "--ImageReader.camera_model", "SIMPLE_RADIAL",
-             *_colmap_feature_extraction_options(max_image_size, feature_size)],
+             *_colmap_feature_extraction_options(
+                 max_image_size, feature_size, robust_sift=not fast_preview
+             )],
             work, log_file, progress_cb, 8,
              f"Extracting image features (COLMAP; {camera_mode['strategy']})...",
         )
         self._run(
             [colmap, "exhaustive_matcher", "--database_path", str(db),
-             *_colmap_feature_matching_options()],
+             *_colmap_feature_matching_options(guided_matching=not fast_preview)],
             work, log_file, progress_cb, 20, "Matching overlapping photographs...",
         )
         self._run(
@@ -393,7 +409,7 @@ class OpenMVSBackend:
         shutil.copy2(scene_mvs, scene_fuse)
         # CPU confidence recalibration is expensive but quality-oriented. Keep
         # the short-gap interpolation-only path for explicit draft/quick runs.
-        postprocess_dmaps = 2 if preset in {"draft", "quick"} else 10
+        postprocess_dmaps = 2 if preset in {"fast", "draft", "quick"} else 10
         pipeline_configuration = {
             "quality_preset": preset,
             "colmap": {
@@ -409,13 +425,18 @@ class OpenMVSBackend:
             "openmvs": {
                 "max_resolution": max_resolution,
                 "resolution_level": resolution_level,
-                "number_views": 5,
+                "number_views": dense_views,
                 "minimum_views_fuse": _openmvs_fusion_minimum_views(preset),
+                "iterations": dense_iterations,
+                "geometric_iterations": geometric_iterations,
                 "postprocess_dmaps": postprocess_dmaps,
                 "point_cloud_visibility_filter_threshold": _openmvs_point_cloud_filter_threshold(preset),
                 "cpu_confidence_recalibration": bool(postprocess_dmaps & 8),
                 "max_threads": threads,
                 "refine_max_views": 6,
+                "preview_only": fast_preview,
+                "refinement_skipped": fast_preview,
+                "texturing_skipped": fast_preview,
             },
             "input_photo_count": len(image_paths),
         }
@@ -425,8 +446,12 @@ class OpenMVSBackend:
             resolution_level=resolution_level,
             max_resolution=max_resolution,
             max_threads=threads,
-            number_views=5,
+            number_views=dense_views,
             postprocess_dmaps=postprocess_dmaps,
+            iterations=dense_iterations,
+            geometric_iterations=geometric_iterations,
+            min_resolution=min_dense_resolution,
+            sub_resolution_levels=sub_resolution_levels,
         )
         self._run(
             [densify, "-i", str(scene_mvs), "-w", str(work), *common, "--fusion-mode", "1"],
@@ -525,79 +550,86 @@ class OpenMVSBackend:
         if not mesh_ply.exists():
             raise RuntimeError("OpenMVS mesh reconstruction did not create scene_mesh.ply.")
 
-        refined_scene = work / "scene_mesh_refined.mvs"
-        self._run(
-            [refine, "-i", str(mesh_scene), "-m", str(mesh_ply), "-o", str(refined_scene),
-             *refine_mesh_options(max_threads=threads, max_views=6)],
-            work, log_file, progress_cb, 86, "Refining mesh geometry...",
-        )
-        texture_options = texture_mesh_options(max_threads=threads, max_texture_size=2048)
-        glb_work = work / "scene_textured.glb"
-        self._run(
-            [texture, "-i", str(refined_scene), "-o", str(glb_work),
-             "--export-type", "glb", *texture_options],
-            work, log_file, progress_cb, 92, "Generating textured GLB export...",
-        )
-
-        # Export a second copy as OBJ so the native VisPy viewer can consume
-        # its UV coordinates and atlas through TextureFilter.
-        obj_work = work / "scene_textured.obj"
-        self._run(
-            [texture, "-i", str(refined_scene), "-o", str(obj_work),
-             "--export-type", "obj", *texture_options],
-            work, log_file, progress_cb, 96, "Preparing textured OBJ and atlas for the desktop viewer...",
-        )
-
         mesh_dir = session_dir / "mesh"
         mesh_dir.mkdir(parents=True, exist_ok=True)
         final_ply = mesh_dir / "scene_mesh.ply"
-        final_glb = mesh_dir / "scene_textured.glb"
-        final_obj = mesh_dir / "scene_mesh.obj"
-        refined_ply = work / "scene_mesh_refined.ply"
-        if not refined_ply.exists():
-            refined_ply = mesh_ply
-        shutil.copy2(refined_ply, final_ply)
-        shutil.copy2(glb_work, final_glb)
+        final_glb: Path | None = None
+        final_obj: Path | None = None
 
-        # The dedicated OBJ texturing pass exports the viewer's UV atlas.
-        texture_obj = obj_work
-        texture_mtl = work / "scene_textured.mtl"
-        atlas_files = sorted(work.glob("scene_textured_*.png"))
-        if not texture_obj.exists():
-            raise RuntimeError("OpenMVS OBJ export did not create scene_textured.obj.")
-        if not atlas_files:
-            raise RuntimeError("OpenMVS OBJ export did not create its texture atlas PNG.")
-        shutil.copy2(texture_obj, final_obj)
+        if fast_preview:
+            # Geometry-only output is intentionally quick and untextured.
+            # Skip full-resolution refinement and the two separate texture exports.
+            shutil.copy2(mesh_ply, final_ply)
+            orientation = {
+                "method": "not applied",
+                "reason": "Fast geometry preview skips orientation and texture finishing.",
+            }
+            with log_file.open("a", encoding="utf-8") as log:
+                log.write("\nFast preview: refinement and texturing intentionally skipped.\n")
+        else:
+            refined_scene = work / "scene_mesh_refined.mvs"
+            self._run(
+                [refine, "-i", str(mesh_scene), "-m", str(mesh_ply), "-o", str(refined_scene),
+                 *refine_mesh_options(max_threads=threads, max_views=6)],
+                work, log_file, progress_cb, 86, "Refining mesh geometry...",
+            )
+            texture_options = texture_mesh_options(max_threads=threads, max_texture_size=2048)
+            glb_work = work / "scene_textured.glb"
+            self._run(
+                [texture, "-i", str(refined_scene), "-o", str(glb_work),
+                 "--export-type", "glb", *texture_options],
+                work, log_file, progress_cb, 92, "Generating textured GLB export...",
+            )
 
-        for index, atlas in enumerate(atlas_files):
-            target_name = "scene_mesh.png" if index == 0 else f"scene_mesh_{index}.png"
-            shutil.copy2(atlas, mesh_dir / target_name)
+            # Export a second copy as OBJ so the native VisPy viewer can consume
+            # its UV coordinates and atlas through TextureFilter.
+            obj_work = work / "scene_textured.obj"
+            self._run(
+                [texture, "-i", str(refined_scene), "-o", str(obj_work),
+                 "--export-type", "obj", *texture_options],
+                work, log_file, progress_cb, 96, "Preparing textured OBJ and atlas for the desktop viewer...",
+            )
 
-        if not texture_mtl.exists():
-            raise RuntimeError("OpenMVS OBJ export did not create scene_textured.mtl.")
+            final_glb = mesh_dir / "scene_textured.glb"
+            final_obj = mesh_dir / "scene_mesh.obj"
+            refined_ply = work / "scene_mesh_refined.ply"
+            if not refined_ply.exists():
+                refined_ply = mesh_ply
+            shutil.copy2(refined_ply, final_ply)
+            shutil.copy2(glb_work, final_glb)
 
-        # OBJ export writes its own JPEG diffuse maps. The PNGs above belong to
-        # the separate GLB export and are not necessarily the maps referenced by
-        # the OBJ's MTL. Copy every map_Kd asset and rewrite it relative to MTL.
-        copy_mtl_diffuse_maps(
-            texture_mtl,
-            mesh_dir,
-            output_name="scene_mesh.mtl",
-        )
+            texture_mtl = work / "scene_textured.mtl"
+            atlas_files = sorted(work.glob("scene_textured_*.png"))
+            if not obj_work.exists():
+                raise RuntimeError("OpenMVS OBJ export did not create scene_textured.obj.")
+            if not atlas_files:
+                raise RuntimeError("OpenMVS OBJ export did not create its texture atlas PNG.")
+            shutil.copy2(obj_work, final_obj)
 
-        # Keep the copied OBJ linked to the material file copied beside it.
-        obj_lines = []
-        for line in final_obj.read_text(
-            encoding="utf-8", errors="replace"
-        ).splitlines():
-            if line.lstrip().lower().startswith("mtllib "):
-                indent = line[: len(line) - len(line.lstrip())]
-                line = f"{indent}mtllib scene_mesh.mtl"
-            obj_lines.append(line)
-        final_obj.write_text("\n".join(obj_lines) + "\n", encoding="utf-8")
+            for index, atlas in enumerate(atlas_files):
+                target_name = "scene_mesh.png" if index == 0 else f"scene_mesh_{index}.png"
+                shutil.copy2(atlas, mesh_dir / target_name)
 
-        orientation = None
-        estimated_up = estimate_world_up(images_txt)
+            if not texture_mtl.exists():
+                raise RuntimeError("OpenMVS OBJ export did not create scene_textured.mtl.")
+            copy_mtl_diffuse_maps(
+                texture_mtl,
+                mesh_dir,
+                output_name="scene_mesh.mtl",
+            )
+
+            obj_lines = []
+            for line in final_obj.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines():
+                if line.lstrip().lower().startswith("mtllib "):
+                    indent = line[: len(line) - len(line.lstrip())]
+                    line = f"{indent}mtllib scene_mesh.mtl"
+                obj_lines.append(line)
+            final_obj.write_text("\n".join(obj_lines) + "\n", encoding="utf-8")
+
+            orientation = None
+        estimated_up = None if fast_preview else estimate_world_up(images_txt)
         if estimated_up is not None:
             up_vector, consistency, pose_count = estimated_up
             alignment_rotation = rotation_from_to(
@@ -652,6 +684,8 @@ class OpenMVSBackend:
         return {
             "success": True, "mesh_ply": final_ply, "mesh_obj": final_obj,
             "mesh_glb": final_glb, "dense_ply": dense_ply, "backend": "openmvs",
+            "backend_label": "COLMAP + OpenMVS Fast Preview" if fast_preview else "COLMAP + OpenMVS",
+            "preview_only": fast_preview,
             "log_file": log_file, "quality_preset": preset,
             "pipeline_configuration": pipeline_configuration,
             "visibility_filter": visibility_filter_report,
