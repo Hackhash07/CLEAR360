@@ -4,7 +4,10 @@ import numpy as np
 from PIL import Image
 
 from photo_reconstruction.image_loader import ImageLoader
-from photo_reconstruction.image_preparation import stage_reconstruction_image
+from photo_reconstruction.image_preparation import (
+    session_relative_path,
+    stage_reconstruction_image,
+)
 
 
 def test_native_sfm_image_is_archived_and_copied_without_reencoding(tmp_path: Path):
@@ -108,3 +111,17 @@ def test_same_basenames_receive_distinct_sfm_and_archive_names(tmp_path: Path):
 def test_image_loader_accepts_every_advertised_phone_photo_extension():
     for suffix in (".jpg", ".jpeg", ".png", ".heic", ".heif", ".tif", ".tiff", ".bmp"):
         assert ImageLoader.is_supported(Path(f"sample{suffix}"))
+
+def test_session_relative_path_handles_symlinked_session_directory(tmp_path: Path):
+    real_session = tmp_path / "real_session"
+    archive = real_session / "source_uploads" / "000_photo.jpg"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"original")
+
+    # Simulate macOS exposing the same directory via two filesystem aliases.
+    session_alias = tmp_path / "session_alias"
+    session_alias.symlink_to(real_session, target_is_directory=True)
+
+    relative = session_relative_path(archive, session_alias)
+
+    assert relative == "source_uploads/000_photo.jpg"
