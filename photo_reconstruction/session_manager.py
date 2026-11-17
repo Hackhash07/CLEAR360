@@ -84,13 +84,13 @@ class SessionManager:
         with open(report_file, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    def cleanup_successful_session(self, session_id: str) -> Dict[str, Any]:
-        """Remove only known bulky intermediates from a completed OpenMVS session.
+    def cleanup_session_intermediates(self, session_id: str) -> Dict[str, Any]:
+        """Remove only known bulky intermediates after an OpenMVS session is finalized.
 
         Final mesh/texture assets, root-level reports, manifests and logs are
         deliberately retained so the session remains viewable and auditable.
-        Failed sessions are never passed here by the worker. Existing sessions
-        are never swept automatically.
+        The worker calls this only after persisting a success/failure report.
+        Existing sessions are never swept automatically.
         """
         if (
             not isinstance(session_id, str)
