@@ -341,13 +341,18 @@ def test_openmvs_worker_writes_input_manifest_before_backend(
     """The OpenMVS worker must serialize its input manifest before starting tools."""
     import json
 
+    import numpy as np
     from PIL import Image
     from photo_reconstruction import openmvs_backend
 
+    # Use high-texture, sharp images so this test exercises staging rather
+    # than being rejected by the real image-quality assessment.
+    rng = np.random.default_rng(20261117)
     image_paths = []
     for index in range(6):
+        pixels = rng.integers(0, 256, size=(480, 640, 3), dtype=np.uint8)
         path = tmp_path / f"openmvs_input_{index}.jpg"
-        Image.new("RGB", (48, 48), (index * 30, 80, 140)).save(path, format="JPEG")
+        Image.fromarray(pixels).save(path, format="JPEG", quality=95)
         image_paths.append(path)
 
     manifests = []
