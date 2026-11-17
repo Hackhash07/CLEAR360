@@ -293,3 +293,29 @@ def test_visibility_filter_is_enabled_for_quality_presets_and_skipped_for_drafts
     assert _openmvs_point_cloud_filter_threshold("maximum") == -20
     assert _openmvs_point_cloud_filter_threshold("draft") is None
     assert _openmvs_point_cloud_filter_threshold("quick") is None
+
+
+def test_ply_vertex_count_reads_header_without_loading_point_data(tmp_path: Path):
+    from photo_reconstruction.openmvs_backend import _ply_vertex_count
+
+    ply = tmp_path / "sample.ply"
+    ply.write_bytes(
+        b"ply\n"
+        b"format binary_little_endian 1.0\n"
+        b"element vertex 12345\n"
+        b"property float x\n"
+        b"property float y\n"
+        b"property float z\n"
+        b"end_header\n"
+    )
+
+    assert _ply_vertex_count(ply) == 12345
+
+
+def test_ply_vertex_count_returns_none_for_invalid_header(tmp_path: Path):
+    from photo_reconstruction.openmvs_backend import _ply_vertex_count
+
+    ply = tmp_path / "invalid.ply"
+    ply.write_text("not a PLY file\n", encoding="utf-8")
+
+    assert _ply_vertex_count(ply) is None
