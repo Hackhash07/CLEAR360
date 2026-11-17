@@ -149,8 +149,10 @@ def _openmvs_point_cloud_filter_threshold(quality_preset: str) -> int | None:
 def _should_run_mesh_refinement(
     quality_preset: str, *, apple_silicon: bool = False
 ) -> bool:
-    """Always refine a final mesh; High-mode speed is controlled upstream."""
-    return True
+    """Match the measured session-049 Apple-Silicon High mesh path."""
+    return not (
+        quality_preset.strip().lower() == "high" and apple_silicon
+    )
 
 def _openmvs_standard_profile() -> dict[str, int]:
     """Balanced Standard settings: reduce dense-MVS cost, retain final asset stages."""
@@ -563,7 +565,7 @@ class OpenMVSBackend:
         pipeline_configuration = {
             "quality_preset": preset,
             "performance_profile": (
-                "apple_silicon_high_balanced"
+                "apple_silicon_high_runtime"
                 if apple_silicon_profile is not None
                 else "default"
             ),
@@ -610,9 +612,11 @@ class OpenMVSBackend:
                     )
                 ),
                 "refinement_skip_reason": (
-                    "point_cloud_preview" if fast_preview else None
+                    "point_cloud_preview" if fast_preview
+                    else "session_049_apple_silicon_high_runtime" if apple_silicon_high
+                    else None
                 ),
-                "texture_virtual_face_images": 2 if apple_silicon_high else 3,
+                "texture_virtual_face_images": 1 if apple_silicon_high else 3,
                 "texture_local_seam_leveling": 0 if apple_silicon_high else 1,
                 "texture_global_seam_leveling": 0 if apple_silicon_high else 1,
                 "texturing_skipped": fast_preview,
@@ -794,7 +798,7 @@ class OpenMVSBackend:
                 texture_options = texture_mesh_options(
                     max_threads=threads,
                     max_texture_size=2048,
-                    virtual_face_images=2,
+                    virtual_face_images=1,
                     local_seam_leveling=False,
                     global_seam_leveling=False,
                 )
