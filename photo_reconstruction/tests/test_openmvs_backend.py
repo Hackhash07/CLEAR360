@@ -329,11 +329,21 @@ def test_fast_preview_disables_expensive_quality_only_stages():
         _openmvs_point_cloud_filter_threshold,
     )
 
-    fast_extract = _colmap_feature_extraction_options(800, 1500, robust_sift=False)
-    fast_match = _colmap_feature_matching_options(guided_matching=False)
+    fast_extract = _colmap_feature_extraction_options(
+        800, 1500, robust_sift=False, num_threads=2
+    )
+    fast_match = _colmap_feature_matching_options(
+        guided_matching=False, num_threads=2
+    )
 
+    extract_pairs = dict(zip(fast_extract[0::2], fast_extract[1::2]))
+    match_pairs = dict(zip(fast_match[0::2], fast_match[1::2]))
+    assert extract_pairs["--FeatureExtraction.max_image_size"] == "800"
+    assert extract_pairs["--SiftExtraction.max_num_features"] == "1500"
+    assert extract_pairs["--FeatureExtraction.num_threads"] == "2"
     assert "--SiftExtraction.estimate_affine_shape" not in fast_extract
     assert "--SiftExtraction.domain_size_pooling" not in fast_extract
+    assert match_pairs["--FeatureMatching.num_threads"] == "2"
     assert "--FeatureMatching.guided_matching" not in fast_match
     assert _openmvs_fusion_minimum_views("fast") == 2
     assert _openmvs_point_cloud_filter_threshold("fast") is None
