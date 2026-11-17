@@ -70,3 +70,26 @@ def test_densify_postprocess_bitmask_validation_rejects_out_of_range_values():
 
     with pytest.raises(ValueError, match="bit mask"):
         densify_common_options(postprocess_dmaps=16)
+
+
+def test_fast_preview_densify_profile_reduces_pixel_and_iteration_budget():
+    options = densify_common_options(
+        resolution_level=1,
+        max_resolution=640,
+        max_threads=2,
+        number_views=3,
+        postprocess_dmaps=2,
+        iterations=1,
+        geometric_iterations=1,
+        min_resolution=320,
+        sub_resolution_levels=1,
+    )
+    assert _value(options, "--resolution-level") == "1"
+    assert _value(options, "--max-resolution") == "640"
+    assert _value(options, "--max-threads") == "2"
+    assert _value(options, "--number-views") == "3"
+    assert _value(options, "--iters") == "1"
+    assert _value(options, "--geometric-iters") == "1"
+    assert _value(options, "--postprocess-dmaps") == "2"
+    assert _value(options, "--min-resolution") == "320"
+    assert _value(options, "--sub-resolution-levels") == "1"
