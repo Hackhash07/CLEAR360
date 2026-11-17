@@ -317,6 +317,89 @@ class ReconstructionWorker(QtCore.QThread):
                             json.dumps(report, indent=2),
                             encoding="utf-8",
                         )
+                # Successful OpenMVS runs only need the final mesh package and
+                # compact reports for later viewing. The dense depth maps and
+                # duplicated source photographs can consume several GB; retain
+                # them only when explicitly requested for debugging.
+                if self.backend == "openmvs":
+                    import os
+
+                    keep_value = os.environ.get(
+                        "CLEAR360_KEEP_INTERMEDIATES", ""
+                    ).strip().lower()
+                    keep_intermediates = keep_value in {"1", "true", "yes", "on"}
+                    session_dir = Path(res.get("session_dir") or "")
+                    if session_dir.is_dir() and not keep_intermediates:
+                        report = dict(res.get("report") or {})
+                        manifest_items = [
+                            {
+                                key: value
+                                for key, value in item.items()
+                                if key != "source_archive"
+                            }
+                            for item in report.get("input_manifest", [])
+                            if isinstance(item, dict)
+                        ]
+                        report["input_manifest"] = manifest_items
+                        # These files live inside the disposable OpenMVS
+                        # workspace and are not required by the final viewer.
+                        report["dense_ply"] = None
+                        report["dense_ply_unfiltered"] = None
+                        manifest_path = session_dir / "input_manifest.json"
+                        if manifest_path.is_file():
+                            try:
+                                manifest = json.loads(
+                                    manifest_path.read_text(encoding="utf-8")
+                                )
+                                manifest.pop("source_archive_directory", None)
+                                manifest["images"] = manifest_items
+                                manifest_path.write_text(
+                                    json.dumps(manifest, indent=2),
+                                    encoding="utf-8",
+                                )
+                            except (OSError, ValueError, TypeError) as manifest_error:
+                                report.setdefault("storage_cleanup_warnings", []).append(
+                                    f"Could not compact input manifest: {manifest_error}"
+                                )
+                        try:
+                            cleanup = self.pipeline.session_manager.cleanup_successful_session(
+                                session_dir.name
+                            )
+                            report["storage_cleanup"] = cleanup
+                            res["storage_cleanup"] = cleanup
+                            res["dense_ply"] = None
+                        except Exception as cleanup_error:
+                            report["storage_cleanup"] = {
+                                "enabled": True,
+                                "error": str(cleanup_error),
+                                "final_mesh_and_reports_retained": True,
+                            }
+                            with (session_dir / "openmvs_pipeline.log").open(
+                                "a", encoding="utf-8"
+                            ) as cleanup_log:
+                                cleanup_log.write(
+                                    "\\nStorage cleanup warning: "
+                                    + str(cleanup_error)
+                                    + "\\n"
+                                )
+                        res["report"] = report
+                        (session_dir / "report.json").write_text(
+                            json.dumps(report, indent=2),
+                            encoding="utf-8",
+                        )
+                    elif keep_intermediates:
+                        report = dict(res.get("report") or {})
+                        report["storage_cleanup"] = {
+                            "enabled": False,
+                            "reason": "CLEAR360_KEEP_INTERMEDIATES is enabled.",
+                            "final_mesh_and_reports_retained": True,
+                        }
+                        res["report"] = report
+                        (session_dir / "report.json").write_text(
+                            json.dumps(report, indent=2),
+                            encoding="utf-8",
+                        )
+
                 self.finished_success.emit(res)
             else:
                 report = res.get("report", {})
