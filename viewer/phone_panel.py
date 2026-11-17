@@ -13,6 +13,7 @@ Provides an upload-first desktop workflow for:
 
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+import json
 import os
 import threading
 
@@ -128,7 +129,6 @@ class ReconstructionWorker(QtCore.QThread):
                     progress_cb=progress_callback,
                     photo_set_report=self.photo_set_report,
                 )
-                import json
                 from datetime import datetime
                 from photo_reconstruction.quality_report import classify_reconstruction_grade
 
@@ -265,8 +265,6 @@ class ReconstructionWorker(QtCore.QThread):
 
             if res.get("success", False):
                 if self.photo_set_report:
-                    import json
-
                     report = dict(res.get("report") or {})
                     actual_photo_set_report = (
                         res.get("photo_set_report")
