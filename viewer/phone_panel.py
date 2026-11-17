@@ -68,7 +68,10 @@ class ReconstructionWorker(QtCore.QThread):
                 copied = []
                 source_dir = session_dir / "source_uploads"
                 working_dir = session_dir / "original_images"
-                from photo_reconstruction.image_preparation import stage_reconstruction_image
+                from photo_reconstruction.image_preparation import (
+                    session_relative_path,
+                    stage_reconstruction_image,
+                )
 
                 input_manifest = []
                 staging_errors = []
@@ -86,7 +89,9 @@ class ReconstructionWorker(QtCore.QThread):
                         input_manifest.append({
                             "original_filename": source.name,
                             "source_archive": str(
-                                Path(staged["source_archive_path"]).relative_to(session_dir)
+                                session_relative_path(
+                                    staged["source_archive_path"], session_dir
+                                )
                             ),
                             "sfm_filename": staged["sfm_filename"],
                             "working_format": staged["working_format"],
