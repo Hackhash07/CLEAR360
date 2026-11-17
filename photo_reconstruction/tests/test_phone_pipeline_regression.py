@@ -292,6 +292,7 @@ def test_9_button_reenabling(qapp, monkeypatch):
             "success": True,
             "session_id": "session_success_test",
             "mesh_ply": Path(tmp_dir) / "mesh.ply",
+            "report": {"mesh_quality": {"status": "healthy", "score": 95.0}},
         }
         panel._on_reconstruction_success(mock_success_res)
         assert panel.btn_start.isEnabled() is True
