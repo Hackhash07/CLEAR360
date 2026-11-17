@@ -84,13 +84,18 @@ def _colmap_feature_extraction_options(
 def _colmap_feature_matching_options(
     *, guided_matching: bool = True, num_threads: int | None = None
 ) -> list[str]:
-    """Return CPU matching options with optional thread limits for preview runs."""
+    """Return CPU matching options with optional thread limits."""
     options = ["--FeatureMatching.use_gpu", "0"]
     if num_threads is not None:
         options.extend(["--FeatureMatching.num_threads", str(num_threads)])
     if guided_matching:
         options.extend(["--FeatureMatching.guided_matching", "1"])
     return options
+
+
+def _colmap_cpu_thread_budget(quality_preset: str) -> int | None:
+    """Bound COLMAP's CPU worker count for laptop-oriented Fast and Standard runs."""
+    return 2 if quality_preset.lower() in {"fast", "standard"} else None
 
 
 def _openmvs_fusion_minimum_views(quality_preset: str) -> int:
@@ -403,6 +408,7 @@ class OpenMVSBackend:
             threads = _openmvs_standard_thread_budget(len(image_paths))
         else:
             threads = 1
+        colmap_threads = _colmap_cpu_thread_budget(preset)
         if fast_preview:
             dense_views = 3
             dense_iterations = 1
@@ -436,7 +442,7 @@ class OpenMVSBackend:
                  max_image_size,
                  feature_size,
                  robust_sift=not fast_preview,
-                 num_threads=2 if fast_preview else None,
+                 num_threads=colmap_threads,
              )],
             work, log_file, progress_cb, 8,
              f"Extracting image features (COLMAP; {camera_mode['strategy']})...",
@@ -445,7 +451,7 @@ class OpenMVSBackend:
             [colmap, "exhaustive_matcher", "--database_path", str(db),
              *_colmap_feature_matching_options(
                  guided_matching=not fast_preview,
-                 num_threads=2 if fast_preview else None,
+                 num_threads=colmap_threads,
              )],
             work, log_file, progress_cb, 20, "Matching overlapping photographs...",
         )
@@ -519,6 +525,7 @@ class OpenMVSBackend:
                 "domain_size_pooling": not fast_preview,
                 "guided_matching": not fast_preview,
                 "gpu_enabled": False,
+                "num_threads": colmap_threads,
                 "camera_calibration": camera_mode,
             },
             "openmvs": {
