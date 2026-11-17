@@ -404,6 +404,8 @@ def test_phone_panel_exposes_fast_standard_and_high_quality_presets(qapp, tmp_pa
         assert standard_index >= 0
         panel.combo_quality_preset.setCurrentIndex(standard_index)
         assert "full refinement" in panel.lbl_auto_quality.text()
+        assert "1440 px inputs" in panel.lbl_auto_quality.text()
+        assert "4-view / 2-iteration" in panel.lbl_auto_quality.text()
 
         high_index = panel.combo_quality_preset.findData("high")
         assert high_index >= 0
