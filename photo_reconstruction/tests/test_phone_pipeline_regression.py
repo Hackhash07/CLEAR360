@@ -329,3 +329,57 @@ def test_10_successful_reconstruction_completion():
         assert (session_dir / "report.json").exists()
         assert len(res["camera_poses"]) >= 2
         assert res["quality_preset"] == "draft"
+
+
+
+# -----------------------------------------------------------------------------
+# 11. OpenMVS Worker Input Manifest JSON Scope Regression
+# -----------------------------------------------------------------------------
+def test_openmvs_worker_writes_input_manifest_before_backend(
+    qapp, monkeypatch, tmp_path
+):
+    """The OpenMVS worker must serialize its input manifest before starting tools."""
+    import json
+
+    from PIL import Image
+    from photo_reconstruction import openmvs_backend
+
+    image_paths = []
+    for index in range(6):
+        path = tmp_path / f"openmvs_input_{index}.jpg"
+        Image.new("RGB", (48, 48), (index * 30, 80, 140)).save(path, format="JPEG")
+        image_paths.append(path)
+
+    manifests = []
+
+    class FakeOpenMVSBackend:
+        def __init__(self, **kwargs):
+            pass
+
+        def run(self, image_paths, session_dir, **kwargs):
+            manifest_path = Path(session_dir) / "input_manifest.json"
+            manifests.append(json.loads(manifest_path.read_text(encoding="utf-8")))
+            raise RuntimeError("Fake OpenMVS backend reached after manifest write")
+
+    monkeypatch.setattr(openmvs_backend, "OpenMVSBackend", FakeOpenMVSBackend)
+
+    pipeline = PhoneReconstructionPipeline(data_root=tmp_path)
+    worker = ReconstructionWorker(
+        pipeline=pipeline,
+        image_paths=image_paths,
+        quality_preset="standard",
+        reference_distance_m=None,
+        backend="openmvs",
+    )
+    failures = []
+    worker.failed.connect(lambda message, tb: failures.append((message, tb)))
+
+    worker.run()
+
+    assert len(manifests) == 1
+    assert manifests[0]["uploaded_count"] == 6
+    assert manifests[0]["sfm_ready_count"] == 6
+    assert len(manifests[0]["images"]) == 6
+    assert len(failures) == 1
+    assert "Fake OpenMVS backend reached" in failures[0][0]
+    assert "cannot access local variable 'json'" not in failures[0][0]
