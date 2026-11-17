@@ -52,8 +52,6 @@ def build_unwelded_uv_arrays(
     new_uvs[:, 0] = np.float32(neutral_u)
     new_uvs[:, 1] = np.float32(neutral_v)
 
-    inv_atlas_width = 1.0 / float(total_atlas_width)
-    inv_atlas_height = 1.0 / float(total_atlas_height)
     triangle_columns = np.arange(3, dtype=np.int64)
 
     for camera_index, (x_offset, y_offset, scale_x, scale_y) in camera_cell_offsets.items():
@@ -75,13 +73,13 @@ def build_unwelded_uv_arrays(
             check_bounds=False,
         )
 
-        u_atlas = (x_offset + projected[:, 0] * scale_x) * inv_atlas_width
-        v_atlas = (y_offset + projected[:, 1] * scale_y) * inv_atlas_height
+        u_atlas = (x_offset + projected[:, 0] * scale_x) / float(total_atlas_width)
+        v_atlas = (y_offset + projected[:, 1] * scale_y) / float(total_atlas_height)
 
-        u_min = x_offset * inv_atlas_width
-        u_max = (x_offset + cell_width) * inv_atlas_width
-        v_min = y_offset * inv_atlas_height
-        v_max = (y_offset + cell_height) * inv_atlas_height
+        u_min = x_offset / float(total_atlas_width)
+        u_max = (x_offset + cell_width) / float(total_atlas_width)
+        v_min = y_offset / float(total_atlas_height)
+        v_max = (y_offset + cell_height) / float(total_atlas_height)
 
         u_atlas = np.clip(u_atlas, u_min + 1e-4, u_max - 1e-4)
         v_atlas = np.clip(v_atlas, v_min + 1e-4, v_max - 1e-4)
