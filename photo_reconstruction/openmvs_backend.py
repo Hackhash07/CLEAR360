@@ -335,6 +335,32 @@ class OpenMVSBackend:
         # CPU confidence recalibration is expensive but quality-oriented. Keep
         # the short-gap interpolation-only path for explicit draft/quick runs.
         postprocess_dmaps = 2 if preset in {"draft", "quick"} else 10
+        pipeline_configuration = {
+            "quality_preset": preset,
+            "colmap": {
+                "feature_type": "SIFT",
+                "max_image_size": max_image_size,
+                "max_num_features": feature_size,
+                "affine_shape": True,
+                "domain_size_pooling": True,
+                "guided_matching": True,
+                "gpu_enabled": False,
+                "camera_calibration": camera_mode,
+            },
+            "openmvs": {
+                "max_resolution": max_resolution,
+                "resolution_level": resolution_level,
+                "number_views": 5,
+                "minimum_views_fuse": 2,
+                "postprocess_dmaps": postprocess_dmaps,
+                "cpu_confidence_recalibration": bool(postprocess_dmaps & 8),
+                "max_threads": threads,
+                "refine_max_views": 6,
+            },
+            "input_photo_count": len(image_paths),
+        }
+        with log_file.open("a", encoding="utf-8") as log:
+            log.write("\\nPipeline configuration: " + json.dumps(pipeline_configuration, sort_keys=True) + "\\n")
         common = densify_common_options(
             resolution_level=resolution_level,
             max_resolution=max_resolution,
@@ -496,6 +522,7 @@ class OpenMVSBackend:
             "success": True, "mesh_ply": final_ply, "mesh_obj": final_obj,
             "mesh_glb": final_glb, "dense_ply": dense_ply, "backend": "openmvs",
             "log_file": log_file, "quality_preset": preset,
+            "pipeline_configuration": pipeline_configuration,
             "orientation": orientation,
             "registration": registration_summary,
             "registered_count": registration_summary["registered_count"],
