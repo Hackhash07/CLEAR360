@@ -122,6 +122,11 @@ def _audit_geometry(mesh: trimesh.Trimesh) -> dict[str, Any]:
 
     is_watertight = bool(mesh.is_watertight)
     boundary_edge_count = boundary_edges
+    edge_count = max(
+        1, non_manifold_edges + boundary_edges + interior_edges
+    )
+    boundary_edge_ratio = float(boundary_edges / edge_count)
+    fragmentation_ratio = float(max(0.0, 1.0 - largest_component_ratio))
     surface_type = (
         "closed_volume"
         if boundary_edge_count == 0 and is_watertight
@@ -141,6 +146,8 @@ def _audit_geometry(mesh: trimesh.Trimesh) -> dict[str, Any]:
         "small_component_face_ratio": small_component_face_ratio,
         "non_manifold_edges": non_manifold_edges,
         "boundary_edges": boundary_edges,
+        "boundary_edge_ratio": boundary_edge_ratio,
+        "fragmentation_ratio": fragmentation_ratio,
         "manifold_interior_edges": interior_edges,
         "degenerate_faces": degenerate_faces,
         "sliver_faces": sliver_faces,
@@ -522,6 +529,15 @@ def audit_reconstruction_outputs(
                 min(10.0, 2.0 * np.log2(max(1, int(geometry["connected_components"]))))
                 if int(geometry["connected_components"]) > 1 else 0.0
             ),
+            # A coherent open surface has boundary edges too, so this is a
+            # conservative patch-fragmentation signal, not a watertightness test.
+            "excessive_boundary_edges": (
+                min(18.0, max(0.0, float(geometry["boundary_edge_ratio"]) - 0.10) * 25.0)
+                if face_count >= 200 else 0.0
+            ),
+            "fragmentation_ratio": min(
+                20.0, float(geometry["fragmentation_ratio"]) * 20.0
+            ),
             "small_component_faces": min(
                 15.0, float(geometry["small_component_face_ratio"]) * 100.0
             ),
@@ -548,6 +564,12 @@ def audit_reconstruction_outputs(
                 f"The mesh contains {geometry['connected_components']} disconnected components "
                 f"(largest component covers {geometry['largest_component_face_ratio'] * 100:.1f}% of faces). "
                 "This may be valid for multi-part scenes; inspect small floating fragments before cleanup."
+            )
+        if face_count >= 200 and float(geometry["boundary_edge_ratio"]) > 0.35:
+            warnings.append(
+                f"{geometry['boundary_edge_ratio'] * 100:.1f}% of unique mesh edges are boundaries. "
+                "This can indicate many small surface patches or incomplete depth fusion; "
+                "it is a review signal, not a requirement for a watertight mesh."
             )
         if geometry["small_component_face_ratio"] > 0.01:
             warnings.append(
@@ -596,6 +618,7 @@ def audit_reconstruction_outputs(
             "watertight_mesh_required": False,
             "automatic_component_deletion": False,
             "quality_score_is_heuristic": True,
+            "boundary_edge_ratio_is_a_fragmentation_signal_not_a_watertightness_requirement": True,
             "coordinate_units_require_scale_calibration": True,
         },
     }
