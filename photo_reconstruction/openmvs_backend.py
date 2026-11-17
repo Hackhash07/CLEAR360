@@ -64,6 +64,11 @@ def _openmvs_fusion_minimum_views(quality_preset: str) -> int:
     return 2 if quality_preset.lower() in {"draft", "quick"} else 3
 
 
+def _openmvs_point_cloud_filter_threshold(quality_preset: str) -> int | None:
+    """Apply OpenMVS camera-visibility outlier filtering to quality-grade clouds."""
+    return None if quality_preset.lower() in {"draft", "quick"} else -20
+
+
 
 
 def _validate_sparse_model_for_dense(
@@ -393,6 +398,7 @@ class OpenMVSBackend:
                 "number_views": 5,
                 "minimum_views_fuse": _openmvs_fusion_minimum_views(preset),
                 "postprocess_dmaps": postprocess_dmaps,
+                "point_cloud_visibility_filter_threshold": _openmvs_point_cloud_filter_threshold(preset),
                 "cpu_confidence_recalibration": bool(postprocess_dmaps & 8),
                 "max_threads": threads,
                 "refine_max_views": 6,
@@ -422,13 +428,70 @@ class OpenMVSBackend:
         )
 
         dense_scene = work / "scene_fuse_dense.mvs"
-        dense_ply = work / "scene_fuse_dense.ply"
-        if not dense_scene.exists() or not dense_ply.exists():
+        dense_ply_unfiltered = work / "scene_fuse_dense.ply"
+        if not dense_scene.exists() or not dense_ply_unfiltered.exists():
             raise RuntimeError("OpenMVS dense fusion did not produce its MVS and PLY outputs.")
+
+        # Visibility filtering uses the registered camera rays to remove points
+        # contradicted by camera-point intersections. Preserve the original cloud
+        # and fall back to it if this optional cleanup stage fails.
+        dense_scene_for_mesh = dense_scene
+        dense_ply = dense_ply_unfiltered
+        visibility_filter_threshold = _openmvs_point_cloud_filter_threshold(preset)
+        visibility_filter_report = {
+            "requested": visibility_filter_threshold is not None,
+            "threshold": visibility_filter_threshold,
+            "applied": False,
+            "unfiltered_scene": str(dense_scene),
+            "unfiltered_ply": str(dense_ply_unfiltered),
+        }
+        if visibility_filter_threshold is not None:
+            filtered_output_base = work / "scene_visibility_filter.mvs"
+            filtered_scene = work / "scene_visibility_filter_filtered.mvs"
+            filtered_ply = work / "scene_visibility_filter_filtered.ply"
+            try:
+                self._run(
+                    [
+                        densify, "-i", str(dense_scene), "-o", str(filtered_output_base),
+                        "-w", str(work), "--filter-point-cloud",
+                        str(visibility_filter_threshold),
+                    ],
+                    work, log_file, progress_cb, 76,
+                    "Removing dense points contradicted by camera visibility...",
+                )
+                if not filtered_scene.is_file() or not filtered_ply.is_file():
+                    raise RuntimeError(
+                        "OpenMVS visibility filtering did not create the expected filtered MVS and PLY files."
+                    )
+                dense_scene_for_mesh = filtered_scene
+                dense_ply = filtered_ply
+                visibility_filter_report["applied"] = True
+                visibility_filter_report["filtered_scene"] = str(filtered_scene)
+                visibility_filter_report["filtered_ply"] = str(filtered_ply)
+            except Exception as exc:
+                visibility_filter_report["error"] = str(exc)
+                with log_file.open("a", encoding="utf-8") as log:
+                    log.write(
+                        "\\nVisibility-filter fallback: " + str(exc)
+                        + "\\nUsing the preserved unfiltered dense point cloud.\\n"
+                    )
+
+        pipeline_configuration["openmvs"]["visibility_filter_applied"] = (
+            visibility_filter_report["applied"]
+        )
+        pipeline_configuration["openmvs"]["visibility_filter_error"] = (
+            visibility_filter_report.get("error")
+        )
+        with log_file.open("a", encoding="utf-8") as log:
+            log.write(
+                "\\nVisibility-filter result: "
+                + json.dumps(visibility_filter_report, sort_keys=True)
+                + "\\n"
+            )
 
         mesh_scene = work / "scene_mesh.mvs"
         self._run(
-            [reconstruct, "-i", str(dense_scene), "-o", str(mesh_scene),
+            [reconstruct, "-i", str(dense_scene_for_mesh), "-o", str(mesh_scene),
              *reconstruct_mesh_options(max_threads=threads, remove_spurious=20)],
             work, log_file, progress_cb, 80, "Reconstructing triangular surface mesh...",
         )
@@ -565,6 +628,8 @@ class OpenMVSBackend:
             "mesh_glb": final_glb, "dense_ply": dense_ply, "backend": "openmvs",
             "log_file": log_file, "quality_preset": preset,
             "pipeline_configuration": pipeline_configuration,
+            "visibility_filter": visibility_filter_report,
+            "dense_ply_unfiltered": dense_ply_unfiltered,
             "orientation": orientation,
             "registration": registration_summary,
             "registered_count": registration_summary["registered_count"],
