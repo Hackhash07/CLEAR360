@@ -24,6 +24,8 @@ import cv2
 import numpy as np
 import open3d as o3d
 
+from photo_reconstruction.nearest_neighbors import query_nearest_neighbors
+
 
 class MeshBuilder:
     """3D surface mesh reconstructor with multi-radius BPA and region-aware meshing."""
@@ -53,44 +55,6 @@ class MeshBuilder:
         self.taubin_iterations = int(taubin_iterations)
         self.min_cluster_faces = int(min_cluster_faces)
         self.bpa_multipliers = bpa_radii_multipliers
-
-    @staticmethod
-    def _query_nearest_neighbors(
-        tree: Any,
-        query_points: np.ndarray,
-        *,
-        chunk_size: int = 200_000,
-        workers: int = 2,
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        """Query a cKDTree in bounded batches instead of looping over vertices.
-
-        Chunking bounds temporary memory for high-detail Poisson meshes while
-        keeping the nearest-neighbour search inside SciPy's compiled backend.
-        """
-        from scipy.spatial import cKDTree
-
-        if not isinstance(tree, cKDTree):
-            raise TypeError("tree must be a scipy.spatial.cKDTree instance.")
-        if chunk_size < 1:
-            raise ValueError("chunk_size must be at least one.")
-        if workers < 1:
-            raise ValueError("workers must be at least one.")
-
-        queries = np.asarray(query_points, dtype=np.float64)
-        if queries.ndim != 2 or queries.shape[1] != 3:
-            raise ValueError("query_points must have shape (N, 3).")
-
-        distances = np.empty(len(queries), dtype=np.float64)
-        indices = np.empty(len(queries), dtype=np.intp)
-        for start in range(0, len(queries), chunk_size):
-            stop = min(start + chunk_size, len(queries))
-            batch_distances, batch_indices = tree.query(
-                queries[start:stop], k=1, workers=workers
-            )
-            distances[start:stop] = batch_distances
-            indices[start:stop] = batch_indices
-
-        return distances, indices
 
     def build_mesh(
         self,
@@ -195,7 +159,7 @@ class MeshBuilder:
                     point_tree = cKDTree(point_xyz)
                     mesh_v = np.asarray(mesh.vertices, dtype=np.float64)
                     max_allowed_dist = max(0.08, avg_dist * 3.5)
-                    nearest_distances, _ = self._query_nearest_neighbors(
+                    nearest_distances, _ = query_nearest_neighbors(
                         point_tree, mesh_v
                     )
                     mesh.remove_vertices_by_mask(nearest_distances > max_allowed_dist)
@@ -253,7 +217,7 @@ class MeshBuilder:
                 if point_tree is None:
                     point_tree = cKDTree(point_xyz)
                 pcd_colors = np.asarray(pcd.colors, dtype=np.float32)
-                _, nearest_indices = self._query_nearest_neighbors(
+                _, nearest_indices = query_nearest_neighbors(
                     point_tree, verts
                 )
                 mesh_cols = pcd_colors[nearest_indices]
