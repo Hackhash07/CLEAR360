@@ -307,3 +307,48 @@ def test_lightweight_qa_import_does_not_load_the_desktop_or_ml_runtime():
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_fragmented_surface_patches_reduce_mesh_quality_score(tmp_path: Path):
+    """Large disconnected debris patches must not receive a healthy mesh grade."""
+    grid_size = 32
+    vertices = [
+        [float(x), float(y), 0.0]
+        for y in range(grid_size)
+        for x in range(grid_size)
+    ]
+    faces = []
+    for y in range(grid_size - 1):
+        for x in range(grid_size - 1):
+            a = y * grid_size + x
+            b = a + 1
+            d = (y + 1) * grid_size + x
+            cc = d + 1
+            faces.extend([[a, b, cc], [a, cc, d]])
+
+    # Add many isolated one-triangle fragments far from the coherent main sheet.
+    for index in range(120):
+        x = 100.0 + index * 2.0
+        base = len(vertices)
+        vertices.extend([
+            [x, 0.0, 0.0],
+            [x + 0.5, 0.0, 0.0],
+            [x, 0.5, 0.0],
+        ])
+        faces.append([base, base + 1, base + 2])
+
+    mesh = trimesh.Trimesh(
+        vertices=np.asarray(vertices, dtype=np.float64),
+        faces=np.asarray(faces, dtype=np.int64),
+        process=False,
+    )
+    mesh_path = tmp_path / "fragmented.ply"
+    mesh.export(mesh_path)
+
+    report = audit_reconstruction_outputs(mesh_path)
+
+    assert report["geometry"]["connected_components"] == 121
+    assert report["geometry"]["fragmentation_ratio"] > 0.05
+    assert report["geometry"]["boundary_edge_ratio"] > 0.10
+    assert report["status"] != "healthy"
+    assert any("disconnected components" in warning for warning in report["warnings"])
