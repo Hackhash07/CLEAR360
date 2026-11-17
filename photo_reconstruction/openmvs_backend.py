@@ -612,7 +612,7 @@ class OpenMVSBackend:
                 "refinement_skip_reason": (
                     "point_cloud_preview" if fast_preview else None
                 ),
-                "texture_virtual_face_images": 1 if apple_silicon_high else 3,
+                "texture_virtual_face_images": 3,
                 "texture_local_seam_leveling": 0 if apple_silicon_high else 1,
                 "texture_global_seam_leveling": 0 if apple_silicon_high else 1,
                 "texturing_skipped": fast_preview,
@@ -794,7 +794,7 @@ class OpenMVSBackend:
                 texture_options = texture_mesh_options(
                     max_threads=threads,
                     max_texture_size=2048,
-                    virtual_face_images=1,
+                    virtual_face_images=3,
                     local_seam_leveling=False,
                     global_seam_leveling=False,
                 )
