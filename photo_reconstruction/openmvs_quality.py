@@ -146,26 +146,26 @@ def densify_fusion_options(*, minimum_views: int = 2) -> list[str]:
 
 
 def apple_silicon_high_profile() -> dict[str, int]:
-    """Runtime-oriented High profile for Apple Silicon CPU-only OpenMVS runs.
+    """Balanced High profile for Apple-Silicon CPU-only OpenMVS runs.
 
-    COLMAP keeps the existing 2400 px / 8192-feature SIFT settings. Dense
-    stereo uses the full High dense resolution, five source views, and two
-    PatchMatch plus two geometric-consistency iterations to avoid
-    under-supported surfaces.
-    The additional full-resolution CPU confidence-recalibration pass remains
-    disabled. The backend runs RefineMesh for High so thin/fragmented surfaces
-    receive the normal geometry-cleanup stage before texturing.
+    Keep COLMAP's 2400 px / 8192-feature SIFT settings. Dense MVS uses 2200 px,
+    four source views, two PatchMatch iterations and the OpenMVS-default one
+    geometric-consistency iteration. RefineMesh remains enabled for final
+    surface cleanup. The extra full-resolution CPU confidence-recalibration
+    pass and one optional pyramid level stay disabled to control runtime.
+    This intentionally balances the earlier 5.5-minute preview-like High run
+    against the slower full-resolution/full-view Maximum-quality settings.
     """
     return {
         "feature_size": 8192,
         "max_image_size": 2400,
-        "max_resolution": 2400,
+        "max_resolution": 2200,
         "resolution_level": 0,
-        "dense_views": 5,
+        "dense_views": 4,
         "dense_iterations": 2,
-        "geometric_iterations": 2,
+        "geometric_iterations": 1,
         "min_dense_resolution": 640,
-        "sub_resolution_levels": 2,
+        "sub_resolution_levels": 1,
         "postprocess_dmaps": 2,
     }
 
