@@ -372,3 +372,14 @@ def test_fast_preview_disables_expensive_quality_only_stages():
     assert "--FeatureMatching.guided_matching" not in fast_match
     assert _openmvs_fusion_minimum_views("fast") == 2
     assert _openmvs_point_cloud_filter_threshold("fast") is None
+
+
+
+def test_mesh_refinement_is_skipped_only_for_apple_silicon_high():
+    from photo_reconstruction.openmvs_backend import _should_run_mesh_refinement
+
+    assert _should_run_mesh_refinement("high", apple_silicon=True) is False
+    assert _should_run_mesh_refinement("high", apple_silicon=False) is True
+    assert _should_run_mesh_refinement("standard", apple_silicon=True) is True
+    assert _should_run_mesh_refinement("fast", apple_silicon=True) is True
+    assert _should_run_mesh_refinement("maximum", apple_silicon=True) is True
