@@ -40,6 +40,20 @@ from photo_reconstruction.scene_orientation import (
 ProgressCallback = Optional[Callable[[int, str], None]]
 
 
+def _ply_vertex_count(path: Path) -> int | None:
+    """Read the vertex count from a PLY header without loading the point data."""
+    try:
+        with Path(path).open("rb") as handle:
+            for line in handle:
+                if line.startswith(b"element vertex "):
+                    return int(line.split()[2])
+                if line.strip() == b"end_header":
+                    break
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
 def _colmap_feature_extraction_options(max_image_size: int, max_num_features: int) -> list[str]:
     """Return quality-oriented CPU SIFT options accepted by current COLMAP."""
     return [
@@ -438,12 +452,15 @@ class OpenMVSBackend:
         dense_scene_for_mesh = dense_scene
         dense_ply = dense_ply_unfiltered
         visibility_filter_threshold = _openmvs_point_cloud_filter_threshold(preset)
+        dense_point_count_unfiltered = _ply_vertex_count(dense_ply_unfiltered)
+        dense_point_count = dense_point_count_unfiltered
         visibility_filter_report = {
             "requested": visibility_filter_threshold is not None,
             "threshold": visibility_filter_threshold,
             "applied": False,
             "unfiltered_scene": str(dense_scene),
             "unfiltered_ply": str(dense_ply_unfiltered),
+            "unfiltered_point_count": dense_point_count_unfiltered,
         }
         if visibility_filter_threshold is not None:
             filtered_output_base = work / "scene_visibility_filter.mvs"
@@ -463,9 +480,18 @@ class OpenMVSBackend:
                     raise RuntimeError(
                         "OpenMVS visibility filtering did not create the expected filtered MVS and PLY files."
                     )
+                filtered_point_count = _ply_vertex_count(filtered_ply)
+                if filtered_point_count == 0:
+                    raise RuntimeError("OpenMVS visibility filtering produced an empty point cloud.")
                 dense_scene_for_mesh = filtered_scene
                 dense_ply = filtered_ply
+                dense_point_count = filtered_point_count
                 visibility_filter_report["applied"] = True
+                visibility_filter_report["filtered_point_count"] = filtered_point_count
+                visibility_filter_report["remaining_point_ratio"] = (
+                    round(filtered_point_count / dense_point_count_unfiltered, 4)
+                    if dense_point_count_unfiltered else None
+                )
                 visibility_filter_report["filtered_scene"] = str(filtered_scene)
                 visibility_filter_report["filtered_ply"] = str(filtered_ply)
             except Exception as exc:
@@ -630,6 +656,8 @@ class OpenMVSBackend:
             "pipeline_configuration": pipeline_configuration,
             "visibility_filter": visibility_filter_report,
             "dense_ply_unfiltered": dense_ply_unfiltered,
+            "dense_point_count": dense_point_count,
+            "dense_point_count_unfiltered": dense_point_count_unfiltered,
             "orientation": orientation,
             "registration": registration_summary,
             "registered_count": registration_summary["registered_count"],
