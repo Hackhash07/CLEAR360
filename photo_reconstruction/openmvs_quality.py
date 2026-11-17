@@ -102,13 +102,15 @@ def texture_mesh_options(
     max_threads: int = 1,
     max_texture_size: int = 2048,
     virtual_face_images: int = 3,
+    local_seam_leveling: bool = True,
     global_seam_leveling: bool = True,
 ) -> list[str]:
     """Create OpenMVS texture patches with configurable seam handling.
 
     Defaults preserve the existing Standard/High/Maximum behavior. The
-    Apple-Silicon High profile uses fewer virtual face views and disables the
-    OpenMVS 2.4.0 global seam pass while retaining local seam leveling.
+    Apple-Silicon High workaround can disable both seam passes on affected
+    OpenMVS 2.4.0 builds, where local seam leveling leaves black patch edges
+    and global seam leveling can corrupt the full texture.
     """
     if (
         max_threads < 1
@@ -126,7 +128,7 @@ def texture_mesh_options(
         "--close-holes", "0",
         "--sharpness-weight", "0.5",
         "--ignore-mask-label=-1",
-        "--local-seam-leveling", "1",
+        "--local-seam-leveling", "1" if local_seam_leveling else "0",
         "--global-seam-leveling", "1" if global_seam_leveling else "0",
     ]
 
