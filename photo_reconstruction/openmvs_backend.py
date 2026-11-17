@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import shutil
 import subprocess
 import time
@@ -25,6 +26,8 @@ from photo_reconstruction.openmvs_quality import (
     reconstruct_mesh_options,
     refine_mesh_options,
     texture_mesh_options,
+    apple_silicon_high_profile,
+    resolve_openmvs_thread_count,
 )
 from photo_reconstruction.camera_calibration import resolve_colmap_camera_mode
 from photo_reconstruction.openmvs_tools import (
@@ -56,6 +59,37 @@ def _ply_vertex_count(path: Path) -> int | None:
     except (OSError, ValueError, IndexError):
         return None
     return None
+
+
+
+def _physical_memory_bytes() -> int | None:
+    """Return installed physical RAM where sysconf exposes it."""
+    try:
+        pages = int(os.sysconf("SC_PHYS_PAGES"))
+        page_size = int(os.sysconf("SC_PAGE_SIZE"))
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+    total = pages * page_size
+    return total if total > 0 else None
+
+
+def _openmvs_thread_count() -> int:
+    """Resolve a memory-aware OpenMVS thread cap, honoring explicit user override."""
+    return resolve_openmvs_thread_count(
+        platform_system=platform.system(),
+        platform_machine=platform.machine(),
+        cpu_count=os.cpu_count() or 1,
+        total_memory_bytes=_physical_memory_bytes(),
+        override=os.environ.get("CLEAR360_OPENMVS_THREADS"),
+    )
+
+
+def _is_apple_silicon() -> bool:
+    """Detect native Apple Silicon execution (not Rosetta's x86_64 process)."""
+    return (
+        platform.system() == "Darwin"
+        and platform.machine().lower() in {"arm64", "aarch64"}
+    )
 
 
 def _colmap_feature_extraction_options(
@@ -359,12 +393,20 @@ class OpenMVSBackend:
         camera_mode = resolve_colmap_camera_mode(photo_set_report)
 
         standard_profile = None
+        apple_silicon_profile = None
         if fast_preview:
             # Low-resolution geometry-only preview. Runtime target is a benchmark
             # objective, not a guaranteed deadline for every photo set.
             feature_size, max_image_size, max_resolution, resolution_level = 1500, 800, 640, 1
         elif preset in {"draft", "quick"}:
             feature_size, max_image_size, max_resolution, resolution_level = 2500, 1000, 800, 1
+        elif preset == "high" and _is_apple_silicon():
+            # Keep COLMAP feature extraction unchanged; trim only dense MVS work.
+            apple_silicon_profile = apple_silicon_high_profile()
+            feature_size = apple_silicon_profile["feature_size"]
+            max_image_size = apple_silicon_profile["max_image_size"]
+            max_resolution = apple_silicon_profile["max_resolution"]
+            resolution_level = apple_silicon_profile["resolution_level"]
         elif preset == "high":
             feature_size, max_image_size, max_resolution, resolution_level = 8192, 2400, 2400, 0
         elif preset == "maximum":
@@ -377,7 +419,7 @@ class OpenMVSBackend:
             max_resolution = standard_profile["max_resolution"]
             resolution_level = standard_profile["resolution_level"]
 
-        threads = 2 if fast_preview else 1
+        threads = 2 if fast_preview else _openmvs_thread_count()
         if fast_preview:
             dense_views = 3
             dense_iterations = 1
@@ -390,6 +432,12 @@ class OpenMVSBackend:
             geometric_iterations = standard_profile["geometric_iterations"]
             min_dense_resolution = standard_profile["min_dense_resolution"]
             sub_resolution_levels = standard_profile["sub_resolution_levels"]
+        elif apple_silicon_profile is not None:
+            dense_views = apple_silicon_profile["dense_views"]
+            dense_iterations = apple_silicon_profile["dense_iterations"]
+            geometric_iterations = apple_silicon_profile["geometric_iterations"]
+            min_dense_resolution = apple_silicon_profile["min_dense_resolution"]
+            sub_resolution_levels = apple_silicon_profile["sub_resolution_levels"]
         else:
             # Draft/Quick keeps the established conservative full-depth solve;
             # High/Maximum retain the original maximum-quality settings.
@@ -478,14 +526,21 @@ class OpenMVSBackend:
 
         scene_fuse = work / "scene_fuse.mvs"
         shutil.copy2(scene_mvs, scene_fuse)
-        # Standard also uses short-gap interpolation only. This avoids the extra
-        # full-resolution CPU confidence pass; High/Maximum retain recalibration.
+        # Standard and Apple-Silicon High use short-gap interpolation only,
+        # avoiding the additional full-resolution CPU confidence pass.
         if standard_profile is not None:
             postprocess_dmaps = standard_profile["postprocess_dmaps"]
+        elif apple_silicon_profile is not None:
+            postprocess_dmaps = apple_silicon_profile["postprocess_dmaps"]
         else:
             postprocess_dmaps = 2 if preset in {"fast", "draft", "quick"} else 10
         pipeline_configuration = {
             "quality_preset": preset,
+            "performance_profile": (
+                "apple_silicon_high_balanced"
+                if apple_silicon_profile is not None
+                else "default"
+            ),
             "colmap": {
                 "feature_type": "SIFT",
                 "max_image_size": max_image_size,
@@ -507,7 +562,7 @@ class OpenMVSBackend:
                 "point_cloud_visibility_filter_threshold": _openmvs_point_cloud_filter_threshold(preset),
                 "cpu_confidence_recalibration": bool(postprocess_dmaps & 8),
                 "max_threads": threads,
-                "texture_threads": 2 if not fast_preview else 0,
+                "texture_threads": threads if not fast_preview else 0,
                 "texture_mesh_passes": 1 if not fast_preview else 0,
                 "glb_export": "converted from the same OpenMVS-textured OBJ/MTL package",
                 "refine_max_views": 6,
@@ -579,8 +634,8 @@ class OpenMVSBackend:
                 self._run(
                     [
                         densify, "-i", str(dense_scene), "-o", str(filtered_output_base),
-                        "-w", str(work), "--filter-point-cloud",
-                        str(visibility_filter_threshold),
+                        "-w", str(work), "--max-threads", str(threads),
+                        "--filter-point-cloud", str(visibility_filter_threshold),
                     ],
                     work, log_file, progress_cb, 76,
                     "Removing dense points contradicted by camera visibility...",
@@ -666,9 +721,9 @@ class OpenMVSBackend:
             # OpenMVS TextureMesh calculates view selection, seams and texture
             # patches before exporting. Run that expensive calculation ONCE for
             # OBJ, then derive GLB from the exact same UV/material/image package.
-            # Dense stereo stays at one thread; texturing gets two CPU threads.
+            # Use the same memory-aware thread cap for the texture stage.
             texture_options = texture_mesh_options(
-                max_threads=2, max_texture_size=2048
+                max_threads=threads, max_texture_size=2048
             )
             obj_work = work / "scene_textured.obj"
             self._run(
@@ -714,7 +769,7 @@ class OpenMVSBackend:
             conversion_report = export_obj_materials_to_glb(final_obj, final_glb)
             conversion_elapsed = time.perf_counter() - conversion_started
             pipeline_configuration["openmvs"]["texture_mesh_passes"] = 1
-            pipeline_configuration["openmvs"]["texture_threads"] = 2
+            pipeline_configuration["openmvs"]["texture_threads"] = threads
             pipeline_configuration["exports"] = {
                 "glb_conversion": "trimesh from OpenMVS OBJ/MTL",
                 "glb_texture_source": "same diffuse maps used by the OBJ",
