@@ -319,3 +319,21 @@ def test_ply_vertex_count_returns_none_for_invalid_header(tmp_path: Path):
     ply.write_text("not a PLY file\n", encoding="utf-8")
 
     assert _ply_vertex_count(ply) is None
+
+
+def test_fast_preview_disables_expensive_quality_only_stages():
+    from photo_reconstruction.openmvs_backend import (
+        _colmap_feature_extraction_options,
+        _colmap_feature_matching_options,
+        _openmvs_fusion_minimum_views,
+        _openmvs_point_cloud_filter_threshold,
+    )
+
+    fast_extract = _colmap_feature_extraction_options(800, 1500, robust_sift=False)
+    fast_match = _colmap_feature_matching_options(guided_matching=False)
+
+    assert "--SiftExtraction.estimate_affine_shape" not in fast_extract
+    assert "--SiftExtraction.domain_size_pooling" not in fast_extract
+    assert "--FeatureMatching.guided_matching" not in fast_match
+    assert _openmvs_fusion_minimum_views("fast") == 2
+    assert _openmvs_point_cloud_filter_threshold("fast") is None
