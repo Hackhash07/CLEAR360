@@ -215,6 +215,31 @@ def test_quality_fusion_requires_three_supporting_views_but_draft_allows_two():
     assert _openmvs_fusion_minimum_views("quick") == 2
 
 
+def test_standard_profile_reduces_dense_solve_cost_and_keeps_quality_gates():
+    from photo_reconstruction.openmvs_backend import (
+        _openmvs_fusion_minimum_views,
+        _openmvs_point_cloud_filter_threshold,
+        _openmvs_standard_profile,
+    )
+
+    profile = _openmvs_standard_profile()
+    assert profile == {
+        "feature_size": 6000,
+        "max_image_size": 1440,
+        "max_resolution": 1400,
+        "resolution_level": 0,
+        "dense_views": 4,
+        "dense_iterations": 2,
+        "geometric_iterations": 2,
+        "min_dense_resolution": 560,
+        "sub_resolution_levels": 1,
+        "postprocess_dmaps": 2,
+    }
+    # Keep multi-view support and the camera-visibility cleanup in Standard.
+    assert _openmvs_fusion_minimum_views("standard") == 3
+    assert _openmvs_point_cloud_filter_threshold("standard") == -20
+
+
 def test_sparse_quality_gate_accepts_sufficient_connected_camera_graph():
     from photo_reconstruction.openmvs_backend import _validate_sparse_model_for_dense
 
