@@ -103,12 +103,12 @@ def test_apple_silicon_high_profile_reduces_dense_cost_but_keeps_sfm_detail():
     assert profile == {
         "feature_size": 8192,
         "max_image_size": 2400,
-        "max_resolution": 2200,
+        "max_resolution": 1920,
         "resolution_level": 0,
         "dense_views": 4,
-        "dense_iterations": 2,
+        "dense_iterations": 1,
         "geometric_iterations": 1,
-        "min_dense_resolution": 640,
+        "min_dense_resolution": 560,
         "sub_resolution_levels": 1,
         "postprocess_dmaps": 2,
     }
@@ -185,7 +185,7 @@ def test_texture_mesh_high_profile_disables_both_affected_seam_passes_without_ch
     fast_high_options = texture_mesh_options(
         max_threads=2,
         max_texture_size=2048,
-        virtual_face_images=2,
+        virtual_face_images=1,
         local_seam_leveling=False,
         global_seam_leveling=False,
     )
@@ -194,7 +194,7 @@ def test_texture_mesh_high_profile_disables_both_affected_seam_passes_without_ch
     assert _value(default_options, "--local-seam-leveling") == "1"
     assert _value(default_options, "--global-seam-leveling") == "1"
 
-    assert _value(fast_high_options, "--virtual-face-images") == "2"
+    assert _value(fast_high_options, "--virtual-face-images") == "1"
     assert _value(fast_high_options, "--local-seam-leveling") == "0"
     assert _value(fast_high_options, "--global-seam-leveling") == "0"
     assert _value(fast_high_options, "--max-texture-size") == "2048"
