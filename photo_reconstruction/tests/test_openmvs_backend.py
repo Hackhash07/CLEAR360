@@ -203,3 +203,13 @@ def test_colmap_matching_uses_geometry_guided_sift_matching():
 
     assert pairs["--FeatureMatching.use_gpu"] == "0"
     assert pairs["--FeatureMatching.guided_matching"] == "1"
+
+
+def test_quality_fusion_requires_three_supporting_views_but_draft_allows_two():
+    from photo_reconstruction.openmvs_backend import _openmvs_fusion_minimum_views
+
+    assert _openmvs_fusion_minimum_views("standard") == 3
+    assert _openmvs_fusion_minimum_views("high") == 3
+    assert _openmvs_fusion_minimum_views("maximum") == 3
+    assert _openmvs_fusion_minimum_views("draft") == 2
+    assert _openmvs_fusion_minimum_views("quick") == 2
