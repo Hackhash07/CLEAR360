@@ -55,7 +55,7 @@ def _colmap_feature_matching_options() -> list[str]:
     """Return CPU matching options with geometry-guided correspondence recovery."""
     return [
         "--FeatureMatching.use_gpu", "0",
-        "--SiftMatching.guided_matching", "1",
+        "--FeatureMatching.guided_matching", "1",
     ]
 
 
