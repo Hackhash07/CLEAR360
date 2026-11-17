@@ -93,3 +93,87 @@ def test_fast_preview_densify_profile_reduces_pixel_and_iteration_budget():
     assert _value(options, "--postprocess-dmaps") == "2"
     assert _value(options, "--min-resolution") == "320"
     assert _value(options, "--sub-resolution-levels") == "1"
+
+
+
+def test_apple_silicon_high_profile_reduces_dense_cost_but_keeps_sfm_detail():
+    from photo_reconstruction.openmvs_quality import apple_silicon_high_profile
+
+    profile = apple_silicon_high_profile()
+    assert profile == {
+        "feature_size": 8192,
+        "max_image_size": 2400,
+        "max_resolution": 1920,
+        "resolution_level": 0,
+        "dense_views": 4,
+        "dense_iterations": 2,
+        "geometric_iterations": 2,
+        "min_dense_resolution": 560,
+        "sub_resolution_levels": 1,
+        "postprocess_dmaps": 2,
+    }
+
+
+def test_openmvs_threads_are_memory_aware_on_apple_silicon():
+    from photo_reconstruction.openmvs_quality import resolve_openmvs_thread_count
+
+    gib = 1024 ** 3
+    assert resolve_openmvs_thread_count(
+        platform_system="Darwin",
+        platform_machine="arm64",
+        cpu_count=8,
+        total_memory_bytes=8 * gib,
+    ) == 2
+    assert resolve_openmvs_thread_count(
+        platform_system="Darwin",
+        platform_machine="arm64",
+        cpu_count=8,
+        total_memory_bytes=16 * gib,
+    ) == 3
+    assert resolve_openmvs_thread_count(
+        platform_system="Darwin",
+        platform_machine="arm64",
+        cpu_count=8,
+        total_memory_bytes=32 * gib,
+    ) == 4
+
+
+def test_openmvs_thread_override_is_respected_and_cpu_capped():
+    from photo_reconstruction.openmvs_quality import resolve_openmvs_thread_count
+
+    assert resolve_openmvs_thread_count(
+        platform_system="Darwin",
+        platform_machine="arm64",
+        cpu_count=8,
+        total_memory_bytes=8 * 1024 ** 3,
+        override="4",
+    ) == 4
+    assert resolve_openmvs_thread_count(
+        platform_system="Darwin",
+        platform_machine="arm64",
+        cpu_count=2,
+        total_memory_bytes=32 * 1024 ** 3,
+        override="6",
+    ) == 2
+
+
+def test_openmvs_thread_override_must_be_positive_integer():
+    import pytest
+    from photo_reconstruction.openmvs_quality import resolve_openmvs_thread_count
+
+    with pytest.raises(ValueError, match="positive integer"):
+        resolve_openmvs_thread_count(
+            platform_system="Darwin",
+            platform_machine="arm64",
+            cpu_count=8,
+            total_memory_bytes=8 * 1024 ** 3,
+            override="0",
+        )
+    with pytest.raises(ValueError, match="positive integer"):
+        resolve_openmvs_thread_count(
+            platform_system="Darwin",
+            platform_machine="arm64",
+            cpu_count=8,
+            total_memory_bytes=8 * 1024 ** 3,
+            override="many",
+        )
