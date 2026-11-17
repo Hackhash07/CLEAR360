@@ -506,6 +506,7 @@ def audit_reconstruction_outputs(
     checks: dict[str, Any] = {}
     textures: dict[str, Any] = {}
     geometry: dict[str, Any] | None = None
+    texture_status = "not_checked"
 
     try:
         mesh = _load_triangle_mesh(mesh_file)
@@ -531,12 +532,15 @@ def audit_reconstruction_outputs(
                 atlas_diagnostics["near_black_texel_percentage"] >= 90.0
             )
             checks["atlas_mostly_black"] = atlas_mostly_black
+            texture_status = "atlas_mostly_black" if atlas_mostly_black else "available"
             if atlas_mostly_black:
                 warnings.append(
                     "More than 90% of sampled diffuse-atlas texels are near-black. "
                     "Inspect the source images, material assignment and UVs; dark photo pixels "
                     "are not automatically recolored."
                 )
+        elif obj_materials["all_references_resolve"]:
+            texture_status = "unavailable"
 
     if glb_path is not None:
         glb_file = Path(glb_path).expanduser().resolve()
@@ -678,6 +682,7 @@ def audit_reconstruction_outputs(
         "schema_version": 1,
         "status": status,
         "geometry_status": geometry_status,
+        "texture_status": texture_status,
         "score": round(float(score), 1),
         "mesh_path": str(mesh_file),
         "geometry": geometry,
