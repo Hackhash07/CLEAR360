@@ -430,18 +430,29 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         grp_set_layout.setSpacing(6)
 
         self.lbl_auto_engine = QtWidgets.QLabel(
-            "No settings required. CLEAR360 detects the available 3D engine "
-            "and selects a laptop-safe reconstruction quality automatically."
+            "CLEAR360 detects the available 3D engine automatically. "
+            "Choose the reconstruction quality below before starting."
         )
         self.lbl_auto_engine.setWordWrap(True)
         self.lbl_auto_engine.setStyleSheet("font-size: 11px; color: #cbd5e1;")
         grp_set_layout.addWidget(self.lbl_auto_engine)
 
-        self.lbl_auto_quality = QtWidgets.QLabel(
-            "Quality: Automatic (balanced detail and memory use)"
-        )
+        self.lbl_auto_quality = QtWidgets.QLabel()
         self.lbl_auto_quality.setStyleSheet("font-size: 10px; color: #38bdf8;")
         grp_set_layout.addWidget(self.lbl_auto_quality)
+
+        self.combo_quality_preset = QtWidgets.QComboBox()
+        self.combo_quality_preset.addItem(
+            "Standard — balanced detail (recommended start)", "standard"
+        )
+        self.combo_quality_preset.addItem(
+            "High — more detail, more processing time and memory", "high"
+        )
+        self.combo_quality_preset.currentIndexChanged.connect(
+            self._on_quality_preset_changed
+        )
+        grp_set_layout.addWidget(self.combo_quality_preset)
+        self._on_quality_preset_changed(self.combo_quality_preset.currentIndex())
 
         layout.addWidget(grp_settings)
 
@@ -758,6 +769,25 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.lbl_meta_quality.setText("Quality Rating: --")
         self.lbl_meta_quality.setStyleSheet("font-weight: bold; color: #94a3b8;")
 
+    def _on_quality_preset_changed(self, index: int = -1):
+        """Explain the resource/detail trade-off for the selected preset."""
+        if not hasattr(self, "combo_quality_preset"):
+            return
+        preset = self.combo_quality_preset.currentData()
+        descriptions = {
+            "standard": (
+                "Quality: Standard · 1600 px feature images · 6000 SIFT features · "
+                "balanced first full run"
+            ),
+            "high": (
+                "Quality: High · 2400 px feature images · 8192 SIFT features · "
+                "higher RAM use and longer CPU processing"
+            ),
+        }
+        self.lbl_auto_quality.setText(
+            descriptions.get(preset, "Quality: Standard")
+        )
+
     def _on_start_clicked(self):
         """Run the best installed reconstruction engine with automatic settings."""
         if len(self.selected_image_paths) < 2:
@@ -815,9 +845,10 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.lbl_status.setText("Preparing automatic 3D reconstruction...")
         self.lbl_status.setStyleSheet("font-size: 10px; color: #38bdf8;")
 
-        # A balanced preset is selected automatically to avoid the excessive
-        # runtime and memory use of Maximum on an 8 GB laptop.
-        preset = "standard"
+        preset = str(self.combo_quality_preset.currentData() or "standard")
+        self.lbl_auto_quality.setText(
+            self.lbl_auto_quality.text() + f" · selected for this run: {preset.upper()}"
+        )
         reference_distance = None
 
         import time
