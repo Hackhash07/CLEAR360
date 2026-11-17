@@ -18,6 +18,9 @@ on:
       - "photo_reconstruction/tests/test_image_preparation.py"
       - "photo_reconstruction/reconstruction_qa.py"
       - "photo_reconstruction/openmvs_backend.py"
+      - "photo_reconstruction/openmvs_assets.py"
+      - "photo_reconstruction/tests/test_openmvs_assets.py"
+      - "viewer/app.py"
       - "photo_reconstruction/quality_report.py"
       - "photo_reconstruction/pipeline.py"
       - "viewer/phone_panel.py"
@@ -42,6 +45,9 @@ on:
       - "photo_reconstruction/tests/test_phone_reconstruction.py"
       - "photo_reconstruction/reconstruction_qa.py"
       - "photo_reconstruction/openmvs_backend.py"
+      - "photo_reconstruction/openmvs_assets.py"
+      - "photo_reconstruction/tests/test_openmvs_assets.py"
+      - "viewer/app.py"
       - "photo_reconstruction/quality_report.py"
       - "photo_reconstruction/pipeline.py"
       - "viewer/phone_panel.py"
@@ -88,6 +94,8 @@ jobs:
             photo_reconstruction/quality_report.py \
             photo_reconstruction/pipeline.py \
             photo_reconstruction/openmvs_backend.py \
+            photo_reconstruction/openmvs_assets.py \
+            viewer/app.py \
             viewer/phone_panel.py
 
       - name: Run reconstruction QA and OpenMVS contract tests
@@ -95,6 +103,7 @@ jobs:
           python -m pytest -q \
             photo_reconstruction/tests/test_reconstruction_qa.py \
             photo_reconstruction/tests/test_openmvs_backend.py \
+            photo_reconstruction/tests/test_openmvs_assets.py \
             photo_reconstruction/tests/test_openmvs_quality.py \
             photo_reconstruction/tests/test_coverage_diagnostics.py \
             photo_reconstruction/tests/test_photo_set_auditor.py \
