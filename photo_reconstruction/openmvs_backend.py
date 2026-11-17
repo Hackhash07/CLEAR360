@@ -563,7 +563,7 @@ class OpenMVSBackend:
         pipeline_configuration = {
             "quality_preset": preset,
             "performance_profile": (
-                "apple_silicon_high_runtime"
+                "apple_silicon_high_balanced"
                 if apple_silicon_profile is not None
                 else "default"
             ),
@@ -612,7 +612,7 @@ class OpenMVSBackend:
                 "refinement_skip_reason": (
                     "point_cloud_preview" if fast_preview else None
                 ),
-                "texture_virtual_face_images": 3,
+                "texture_virtual_face_images": 2 if apple_silicon_high else 3,
                 "texture_local_seam_leveling": 0 if apple_silicon_high else 1,
                 "texture_global_seam_leveling": 0 if apple_silicon_high else 1,
                 "texturing_skipped": fast_preview,
@@ -794,7 +794,7 @@ class OpenMVSBackend:
                 texture_options = texture_mesh_options(
                     max_threads=threads,
                     max_texture_size=2048,
-                    virtual_face_images=3,
+                    virtual_face_images=2,
                     local_seam_leveling=False,
                     global_seam_leveling=False,
                 )
