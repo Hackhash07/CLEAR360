@@ -138,18 +138,25 @@ and geometry-guided matching. These are COLMAP's documented options for
 increasing robust feature matches; the command-line option namespaces are
 version-specific and are covered by tests.
 
-For the default Standard/High/Maximum profile, the OpenMVS depth-map pass
-enables CPU confidence recalibration (postprocess-dmaps = 10, combining
-short-gap interpolation with the CPU confidence pass). This adds a full-resolution
-CPU pass but rejects weak depth estimates before fusion. Draft/Quick keeps the
-faster interpolation-only setting (2).
+The balanced Standard profile uses 1,440-pixel COLMAP inputs and a
+1,400-pixel OpenMVS depth limit, four source views, two PatchMatch iterations,
+two geometric-consistency iterations, and one sub-resolution level. It keeps
+the default full-resolution scale (resolution level 0) and the 6,000-feature
+SIFT budget. Standard uses postprocess-dmaps = 2 (short-gap interpolation),
+avoiding the additional full-resolution CPU confidence-recalibration pass.
+This is the main speed/quality trade-off: weak depth estimates receive less
+confidence-based rejection, so inspect the dense cloud and mesh diagnostics.
 
-The fusion pass requires at least three supporting views in Standard/High/
-Maximum to reduce points supported by only two images, a known completeness
-versus noise trade-off in OpenMVS. Draft/Quick retains two-view fusion for
-coverage-oriented previews. Quality presets then run OpenMVS's camera-visibility
-point-cloud filter (threshold -20) to remove points contradicted by registered
-camera rays. The original unfiltered MVS/PLY files are retained, and the mesh
+High/Maximum retain the original five-view, three-iteration depth solve and
+postprocess-dmaps = 10 (short-gap interpolation plus CPU confidence
+recalibration). Draft/Quick keep their existing interpolation-only setting.
+
+The fusion pass still requires at least three supporting views in
+Standard/High/Maximum to reduce points supported by only two images, a known
+completeness-versus-noise trade-off in OpenMVS. Draft/Quick retains two-view
+fusion for coverage-oriented previews. Standard/High/Maximum still run OpenMVS's
+camera-visibility point-cloud filter (threshold -20) to remove points
+contradicted by registered camera rays. The original unfiltered MVS/PLY files are retained, and the mesh
 stage falls back to the unfiltered cloud if this optional filter fails. These
 filters can remove weakly observed regions; they cannot infer surfaces that
 were never photographed. The exact COLMAP and OpenMVS settings, plus whether
@@ -190,9 +197,10 @@ not a reason to silently lower quality or report a false time estimate.
 
 ## Standard texture-export performance optimization
 
-Full-quality Standard/High runs preserve the existing COLMAP registration,
-depth estimation, fusion, mesh reconstruction, refinement, 2048-pixel texture
-atlas size, virtual face-image count, and seam-leveling settings. The expensive
+Standard now uses the balanced dense-depth budget described above, but
+keeps triangular mesh reconstruction, full-resolution mesh refinement, the
+2048-pixel texture atlas, virtual face-image count, and local/global seam
+leveling. High/Maximum retain the original dense-depth settings. The expensive
 OpenMVS TextureMesh command is now invoked once to generate the textured OBJ,
 UVs, MTL and diffuse maps. GLB is then converted from that same OBJ/MTL package
 with trimesh and reopened to validate geometry and embedded diffuse textures.
