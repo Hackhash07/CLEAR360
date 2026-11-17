@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -239,6 +240,8 @@ class OpenMVSBackend:
              progress: ProgressCallback, percent: int, message: str) -> None:
         if progress:
             progress(percent, message)
+        stage_started = time.perf_counter()
+        tool_name = Path(command[0]).name
         with log_file.open("a", encoding="utf-8") as log:
             log.write("\n$ " + " ".join(command) + "\n")
             log.flush()
@@ -251,9 +254,15 @@ class OpenMVSBackend:
                 log.write(line)
                 log.flush()
             code = proc.wait()
+            elapsed = time.perf_counter() - stage_started
+            log.write(
+                f"\n[CLEAR360 stage timing] {tool_name}: {elapsed:.1f} seconds; "
+                f"exit_code={code}\n"
+            )
+            log.flush()
         if code != 0:
             raise RuntimeError(
-                f"{Path(command[0]).name} exited with code {code}. See {log_file}."
+                f"{tool_name} exited with code {code}. See {log_file}."
             )
 
     def run(self, image_paths: list[Path], session_dir: Path,
