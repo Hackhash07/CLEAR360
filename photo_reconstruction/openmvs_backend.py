@@ -56,14 +56,20 @@ def _ply_vertex_count(path: Path) -> int | None:
 
 
 def _colmap_feature_extraction_options(
-    max_image_size: int, max_num_features: int, *, robust_sift: bool = True
+    max_image_size: int,
+    max_num_features: int,
+    *,
+    robust_sift: bool = True,
+    num_threads: int | None = None,
 ) -> list[str]:
-    """Return current COLMAP CPU SIFT options, with optional robust variants."""
+    """Return current COLMAP CPU SIFT options, with optional preview thread limits."""
     options = [
         "--FeatureExtraction.max_image_size", str(max_image_size),
         "--SiftExtraction.max_num_features", str(max_num_features),
         "--FeatureExtraction.use_gpu", "0",
     ]
+    if num_threads is not None:
+        options.extend(["--FeatureExtraction.num_threads", str(num_threads)])
     if robust_sift:
         options.extend([
             "--SiftExtraction.estimate_affine_shape", "1",
@@ -72,9 +78,13 @@ def _colmap_feature_extraction_options(
     return options
 
 
-def _colmap_feature_matching_options(*, guided_matching: bool = True) -> list[str]:
-    """Return CPU matching options; guided matching is optional for fast previews."""
+def _colmap_feature_matching_options(
+    *, guided_matching: bool = True, num_threads: int | None = None
+) -> list[str]:
+    """Return CPU matching options with optional thread limits for preview runs."""
     options = ["--FeatureMatching.use_gpu", "0"]
+    if num_threads is not None:
+        options.extend(["--FeatureMatching.num_threads", str(num_threads)])
     if guided_matching:
         options.extend(["--FeatureMatching.guided_matching", "1"])
     return options
@@ -357,19 +367,30 @@ class OpenMVSBackend:
              "--ImageReader.single_camera_per_image", camera_mode["single_camera_per_image"],
              "--ImageReader.camera_model", "SIMPLE_RADIAL",
              *_colmap_feature_extraction_options(
-                 max_image_size, feature_size, robust_sift=not fast_preview
+                 max_image_size,
+                 feature_size,
+                 robust_sift=not fast_preview,
+                 num_threads=2 if fast_preview else None,
              )],
             work, log_file, progress_cb, 8,
              f"Extracting image features (COLMAP; {camera_mode['strategy']})...",
         )
         self._run(
             [colmap, "exhaustive_matcher", "--database_path", str(db),
-             *_colmap_feature_matching_options(guided_matching=not fast_preview)],
+             *_colmap_feature_matching_options(
+                 guided_matching=not fast_preview,
+                 num_threads=2 if fast_preview else None,
+             )],
             work, log_file, progress_cb, 20, "Matching overlapping photographs...",
         )
+        mapper_command = [
+            colmap, "mapper", "--database_path", str(db),
+            "--image_path", str(images_dir), "--output_path", str(sparse),
+        ]
+        if fast_preview:
+            mapper_command.extend(["--Mapper.num_threads", "2"])
         self._run(
-            [colmap, "mapper", "--database_path", str(db), "--image_path", str(images_dir),
-             "--output_path", str(sparse)],
+            mapper_command,
             work, log_file, progress_cb, 34, "Estimating camera poses and sparse 3D structure...",
         )
         if not sparse_out.exists() or not any(sparse_out.iterdir()):
