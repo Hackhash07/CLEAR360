@@ -107,7 +107,7 @@ def test_apple_silicon_high_profile_reduces_dense_cost_but_keeps_sfm_detail():
         "resolution_level": 0,
         "dense_views": 4,
         "dense_iterations": 1,
-        "geometric_iterations": 2,
+        "geometric_iterations": 1,
         "min_dense_resolution": 560,
         "sub_resolution_levels": 1,
         "postprocess_dmaps": 2,
