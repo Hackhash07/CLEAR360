@@ -23,8 +23,11 @@ Each completed session may contain:
 - `warnings`: specific conditions that should be inspected.
 
 The geometry score considers degenerate faces, sliver triangles, non-manifold
-edges, inconsistent face winding, disconnected component count, and the face
-share held by components smaller than 0.1% of the complete mesh.
+edges, inconsistent face winding, disconnected component count, the face
+share held by components smaller than 0.1% of the complete mesh, the fraction
+of faces outside the largest connected component, and excessive boundary-edge
+density on larger meshes. Boundary-edge density is a fragmentation signal,
+not a watertightness test; small meshes are not penalized for being open.
 
 The geometry-only thresholds are:
 
@@ -62,8 +65,12 @@ COLMAP `points3D.txt` tracks. A pair of registered cameras is connected when
 they share at least 15 reconstructed 3D tracks, matching the threshold used by
 the repository's M7.3.7 pose-graph audit. The report includes connected
 components, isolated cameras, supported/possible pair counts and per-camera
-track support. Disconnected camera groups are warnings for review; they do not
-automatically invalidate or delete a reconstruction.
+track support. Before OpenMVS dense reconstruction, CLEAR360 now requires at
+least 60% of uploaded images (and never fewer than three) to register, plus one
+connected camera co-visibility graph. If this gate fails, dense MVS stops with
+the failed image names and disconnected camera groups instead of creating a
+misleading fragmented mesh. The registration diagnostics and sparse model are
+preserved for investigation.
 
 ## Photo-set preflight
 
@@ -122,3 +129,30 @@ set consumed by SfM and dense reconstruction:
 Session reports use original filenames for user-facing diagnostics. Internal
 camera-pose and working-image paths continue to use the normalized filenames
 so every downstream stage references the same pixels.
+
+## COLMAP and OpenMVS quality profile
+
+The OpenMVS path uses the installed COLMAP CPU executable. The current feature
+profile uses SIFT with affine-shape estimation, domain size pooling (DSP-SIFT),
+and geometry-guided matching. These are COLMAP's documented options for
+increasing robust feature matches; the command-line option namespaces are
+version-specific and are covered by tests.
+
+For the default Standard/High/Maximum profile, the OpenMVS depth-map pass
+enables CPU confidence recalibration (postprocess-dmaps = 10, combining
+short-gap interpolation with the CPU confidence pass). This adds a full-resolution
+CPU pass but rejects weak depth estimates before fusion. Draft/Quick keeps the
+faster interpolation-only setting (2).
+
+The fusion pass requires at least three supporting views in Standard/High/
+Maximum to reduce points supported by only two images, a known completeness
+versus noise trade-off in OpenMVS. Draft/Quick retains two-view fusion for
+coverage-oriented previews. This threshold can remove weakly observed regions;
+it cannot infer surfaces that were never photographed. The exact COLMAP and
+OpenMVS settings are recorded in pipeline_configuration in the session report
+and in openmvs_pipeline.log.
+
+The desktop panel distinguishes the OpenMVS executable minimum of six
+photographs from a recommended 20–40+ well-overlapped capture sequence for
+detailed object coverage. Passing image sharpness/uniqueness checks does not
+prove that the images contain adequate overlap or sufficient viewpoints.
