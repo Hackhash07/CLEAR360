@@ -103,13 +103,13 @@ def test_apple_silicon_high_profile_reduces_dense_cost_but_keeps_sfm_detail():
     assert profile == {
         "feature_size": 8192,
         "max_image_size": 2400,
-        "max_resolution": 1920,
+        "max_resolution": 2400,
         "resolution_level": 0,
-        "dense_views": 4,
+        "dense_views": 5,
         "dense_iterations": 2,
         "geometric_iterations": 2,
-        "min_dense_resolution": 560,
-        "sub_resolution_levels": 1,
+        "min_dense_resolution": 640,
+        "sub_resolution_levels": 2,
         "postprocess_dmaps": 2,
     }
 
