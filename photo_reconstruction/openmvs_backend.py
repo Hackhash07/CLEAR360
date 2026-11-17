@@ -407,8 +407,8 @@ class OpenMVSBackend:
 
         scene_fuse = work / "scene_fuse.mvs"
         shutil.copy2(scene_mvs, scene_fuse)
-        # CPU confidence recalibration is expensive but quality-oriented. Keep
-        # the short-gap interpolation-only path for explicit draft/quick runs.
+        # CPU confidence recalibration is expensive but quality-oriented. Fast,
+        # Draft and Quick use the short-gap interpolation-only path.
         postprocess_dmaps = 2 if preset in {"fast", "draft", "quick"} else 10
         pipeline_configuration = {
             "quality_preset": preset,
@@ -416,9 +416,9 @@ class OpenMVSBackend:
                 "feature_type": "SIFT",
                 "max_image_size": max_image_size,
                 "max_num_features": feature_size,
-                "affine_shape": True,
-                "domain_size_pooling": True,
-                "guided_matching": True,
+                "affine_shape": not fast_preview,
+                "domain_size_pooling": not fast_preview,
+                "guided_matching": not fast_preview,
                 "gpu_enabled": False,
                 "camera_calibration": camera_mode,
             },
@@ -630,7 +630,12 @@ class OpenMVSBackend:
 
             orientation = None
         estimated_up = None if fast_preview else estimate_world_up(images_txt)
-        if estimated_up is not None:
+        if fast_preview:
+            orientation = {
+                "method": "not applied",
+                "reason": "Fast geometry preview skips orientation and texture finishing.",
+            }
+        elif estimated_up is not None:
             up_vector, consistency, pose_count = estimated_up
             alignment_rotation = rotation_from_to(
                 up_vector, np.array([0.0, 0.0, 1.0], dtype=np.float64)
