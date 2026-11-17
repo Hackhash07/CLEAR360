@@ -5,6 +5,9 @@ on:
     branches:
       - feature/universal-reconstruction-qa
     paths:
+      - "photo_reconstruction/benchmark_report.py"
+      - "photo_reconstruction/tests/test_benchmark_report.py"
+      - "scripts/summarize_openmvs_benchmark.py"
       - "pyproject.toml"
       - "requirements.txt"
       - "photo_reconstruction/__init__.py"
@@ -46,6 +49,9 @@ on:
       - ".github/workflows/reconstruction-qa.yml"
   pull_request:
     paths:
+      - "photo_reconstruction/benchmark_report.py"
+      - "photo_reconstruction/tests/test_benchmark_report.py"
+      - "scripts/summarize_openmvs_benchmark.py"
       - "pyproject.toml"
       - "requirements.txt"
       - "photo_reconstruction/__init__.py"
@@ -113,6 +119,8 @@ jobs:
             photo_reconstruction/quality_report.py \
             photo_reconstruction/pipeline.py \
             photo_reconstruction/openmvs_backend.py \
+            photo_reconstruction/benchmark_report.py \
+            scripts/summarize_openmvs_benchmark.py \
             photo_reconstruction/openmvs_quality.py \
             photo_reconstruction/texture_arrays.py \
             photo_reconstruction/texture_engine.py \
@@ -138,4 +146,5 @@ jobs:
             photo_reconstruction/tests/test_camera_calibration.py \
             photo_reconstruction/tests/test_mesh_builder_vectorized.py \
             photo_reconstruction/tests/test_texture_arrays.py \
-            photo_reconstruction/tests/test_depth_helper_memory.py
+            photo_reconstruction/tests/test_depth_helper_memory.py \
+            photo_reconstruction/tests/test_benchmark_report.py
