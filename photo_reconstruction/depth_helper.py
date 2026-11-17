@@ -97,7 +97,14 @@ print("ISOLATED_DEPTH_SUCCESS")
             name = item["name"]
             npy_path = c_dir / f"{Path(name).stem}_depth.npy"
             if npy_path.exists():
-                results[name] = np.load(str(npy_path))
+                # Memory-map cached depth maps: downstream stages access
+                # them per view, so eagerly loading every full-resolution map
+                # would unnecessarily duplicate the on-disk cache in RAM.
+                results[name] = np.load(
+                    str(npy_path),
+                    mmap_mode="r",
+                    allow_pickle=False,
+                )
 
         return results
 
