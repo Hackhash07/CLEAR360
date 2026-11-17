@@ -28,6 +28,14 @@ from photo_reconstruction.session_manager import SessionManager
 
 
 QUALITY_PRESETS: Dict[str, Dict[str, Any]] = {
+    "fast": {
+        "max_image_size": 800,
+        "sift_max_features": 1500,
+        "voxel_size": 0.06,
+        "poisson_depth": 7,
+        "cv_sift_features": 1500,
+        "use_mvs_verification": False,
+    },
     "draft": {
         "max_image_size": 800,
         "sift_max_features": 1000,
@@ -636,7 +644,7 @@ def main():
     parser.add_argument(
         "--preset",
         "-p",
-        choices=["draft", "quick", "standard", "high", "maximum"],
+        choices=["fast", "draft", "quick", "standard", "high", "maximum"],
         default="standard",
         help="Quality preset (default: standard).",
     )
