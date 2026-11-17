@@ -9,25 +9,23 @@ def densify_common_options(
     max_resolution: int = 1600,
     max_threads: int = 1,
     number_views: int = 5,
-    postprocess_dmaps: int = 2,
+    postprocess_dmaps: int = 10,
 ) -> list[str]:
     """Common CPU dense-stereo parameters verified against OpenMVS 2.4.0.
 
-    On the user's CPU-only 2.4.0 build, defaults are five source views and
-    three PatchMatch iterations; geometric consistency defaults to two.
-    Keep at least two agreeing views during fusion to avoid noisy one-view
-    geometry. OpenMVS 2.4.0 defines postprocess-dmaps as a bit mask:
-    1=remove small speckles, 2=interpolate short gaps, 4=adjust confidence.
-    The CPU build normally skips confidence recalibration because it requires
-    an extra full-resolution pass; bit 8 forces that confidence pass on CPU.
-    This profile defaults to bit 2 only: conservative short-gap interpolation.
-    Bit 8 is intentionally left off until the Mac session's memory/runtime
-    behaviour is measured.
+    The profile keeps five source views, three PatchMatch iterations and two
+    geometric-consistency iterations. OpenMVS 2.4.0 defines postprocess-dmaps
+    as a bit mask: 1=remove small speckles, 2=interpolate short gaps,
+    4=confidence recalibration fused into CUDA estimation, and 8=force the
+    confidence-recalibration pass on CPU. The quality profile uses 10 (2+8):
+    interpolate short gaps and run CPU confidence recalibration so weak depth
+    estimates can be rejected before fusion. This costs an extra full-resolution
+    CPU pass, so callers may explicitly use 2 for a faster draft preview.
     """
     if resolution_level < 0 or max_resolution <= 0 or max_threads < 1:
         raise ValueError("Invalid dense reconstruction resource settings.")
-    if number_views < 0 or postprocess_dmaps not in (0, 1, 2, 3, 4, 5, 6, 7):
-        raise ValueError("Invalid dense view or depth-map post-processing setting.")
+    if number_views < 0 or not 0 <= postprocess_dmaps <= 15:
+        raise ValueError("Invalid dense view or depth-map post-processing bit mask.")
     return [
         "--archive-type", "2",
         "--max-threads", str(max_threads),
