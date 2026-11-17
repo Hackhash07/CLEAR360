@@ -803,8 +803,9 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
                 "skips refinement and texturing. Under-15-minute target is not guaranteed."
             ),
             "standard": (
-                "Quality: Standard · 1600 px feature images · 6000 SIFT features · "
-                "full refinement and textured OBJ/GLB exports"
+                "Quality: Standard · 1440 px inputs / 1400 px MVS · 6000 SIFT features · "
+                "balanced 4-view / 2-iteration depth matching · full refinement and "
+                "2048 px textured OBJ/GLB exports"
             ),
             "high": (
                 "Quality: High · 2400 px feature images · 8192 SIFT features · "
