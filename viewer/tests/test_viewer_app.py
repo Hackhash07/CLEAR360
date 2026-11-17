@@ -79,3 +79,31 @@ def test_window_grab_screenshot(viewer_window, qapp):
     assert not pixmap.isNull()
     assert pixmap.width() >= 1280
     assert pixmap.height() >= 800
+
+
+@pytest.mark.parametrize(
+    ("loaded_mode", "mesh_path"),
+    [
+        ("textured", "scene_mesh.obj"),
+        ("mesh", "scene_mesh.obj"),
+        ("cloud", "scene_geometry_preview.ply"),
+    ],
+)
+def test_phone_mesh_loaded_uses_actual_viewport_mode(
+    viewer_window, monkeypatch, loaded_mode, mesh_path
+):
+    selected_modes = []
+    monkeypatch.setattr(
+        viewer_window.viewport,
+        "load_external_mesh",
+        lambda _path: loaded_mode,
+    )
+    monkeypatch.setattr(
+        viewer_window.phone_panel,
+        "set_display_mode",
+        selected_modes.append,
+    )
+
+    viewer_window._on_phone_mesh_loaded("session-test", mesh_path)
+
+    assert selected_modes == [loaded_mode]

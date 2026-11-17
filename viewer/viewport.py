@@ -130,14 +130,27 @@ class Clear360Viewport(QtWidgets.QWidget):
         self.view.add(self.visual_surface_mesh)
 
         # 4c. Photorealistic Textured 3D Mesh with UV Atlas (M7.2 Driver View)
+        # Photogrammetry atlases already contain source-image lighting.
+        # Disable Phong shading so mesh normals cannot turn texture patches black.
         self.visual_textured_mesh = visuals.Mesh(
             vertices=dummy_v,
             faces=dummy_f,
             color="white",
-            shading="smooth",
+            shading=None,
         )
         self.visual_textured_mesh.visible = False
         self.view.add(self.visual_textured_mesh)
+
+        # Faces without UVs remain visible as neutral, unlit geometry.
+        self.visual_obj_untextured_mesh = visuals.Mesh(
+            vertices=dummy_v,
+            faces=dummy_f,
+            color=(0.58, 0.60, 0.64, 1.0),
+            shading=None,
+        )
+        self.visual_obj_untextured_mesh.visible = False
+        self._obj_untextured_triangle_count = 0
+        self.view.add(self.visual_obj_untextured_mesh)
 
         # 5. Point Cloud (RGB / Semantic)
         self.visual_cloud = visuals.Markers()
@@ -624,30 +637,38 @@ class Clear360Viewport(QtWidgets.QWidget):
         """Render high-resolution frame image (RGBA uint8)."""
         return self.canvas.render()
 
-    def load_external_mesh(self, mesh_path: str):
+    def load_external_mesh(self, mesh_path: str) -> Optional[str]:
         """
-        Load an external photogrammetry mesh from PLY or a textured GLB.
-        The GLB path is preferred for OpenMVS outputs because it embeds its atlas.
+        Load a photogrammetry artifact and return the mode actually loaded.
+
+        Returns "textured", "mesh", or "cloud" according to successful content
+        loading, not merely the artifact filename extension.
         """
         from pathlib import Path
         import open3d as o3d
 
         path = Path(mesh_path)
+        self.visual_textured_mesh.visible = False
+        self.visual_surface_mesh.visible = False
+        self.visual_obj_untextured_mesh.visible = False
+        self.visual_cloud.visible = False
+        self._obj_untextured_triangle_count = 0
         if not path.exists():
             self.canvas.native.setToolTip(f"Reconstruction output not found: {path}")
             return
 
         if path.suffix.lower() == ".obj":
-            # Parse face-corner (v/vt/vn) indices together. OBJ permits
-            # independent position and UV indices, especially at texture seams.
             try:
                 from vispy.visuals.filters import TextureFilter
                 from viewer.obj_texture_loader import load_textured_obj
 
-                verts, faces, normals, uvs, texture_rgb, atlas_path = load_textured_obj(path)
-                # OBJ texture coordinates use a bottom-left origin. VisPy's
-                # image texture array is row-major from the top, so flip once.
-                texture_rgb = np.ascontiguousarray(np.flipud(texture_rgb))
+                loaded_obj = load_textured_obj(path)
+                verts = loaded_obj.vertices
+                faces = loaded_obj.faces
+                normals = loaded_obj.normals
+                uvs = loaded_obj.uvs
+                texture_rgb = np.ascontiguousarray(np.flipud(loaded_obj.texture))
+
                 mesh_kwargs = {
                     "vertices": verts,
                     "faces": faces,
@@ -665,7 +686,13 @@ class Clear360Viewport(QtWidgets.QWidget):
                     self.texture_filter.texture = texture_rgb
                     self.texture_filter.texcoords = uvs
 
-                self.visual_textured_mesh.visible = True
+                self._obj_untextured_triangle_count = loaded_obj.untextured_triangle_count
+                if loaded_obj.untextured_triangle_count:
+                    self.visual_obj_untextured_mesh.set_data(
+                        vertices=loaded_obj.untextured_vertices,
+                        faces=loaded_obj.untextured_faces,
+                        color=(0.58, 0.60, 0.64, 1.0),
+                    )
                 self.visual_surface_mesh.visible = False
                 bounds_min, bounds_max = np.percentile(verts, [1.0, 99.0], axis=0)
                 center = (bounds_min + bounds_max) * 0.5
@@ -675,19 +702,35 @@ class Clear360Viewport(QtWidgets.QWidget):
                 self.view.camera.elevation = 20.0
                 self.view.camera.azimuth = -45.0
                 self._hide_non_scene_overlays()
-                self.request_update()
-                print(
-                    "Loaded textured OBJ with independent UV indices: "
-                    f"{len(verts):,} expanded vertices, {len(faces):,} triangles, "
-                    f"atlas={atlas_path.name}"
+                self.visual_textured_mesh.visible = True
+                self.visual_obj_untextured_mesh.visible = (
+                    loaded_obj.untextured_triangle_count > 0
                 )
-                return
+                self.request_update()
+
+                coverage_pct = 100.0 * loaded_obj.texture_coverage
+                status = (
+                    f"OBJ texture coverage: {loaded_obj.textured_triangle_count:,}/"
+                    f"{loaded_obj.total_triangle_count:,} triangles "
+                    f"({coverage_pct:.1f}%); "
+                    f"{loaded_obj.untextured_triangle_count:,} neutral fallback triangles"
+                )
+                self.canvas.native.setToolTip(status)
+                print(
+                    "Loaded textured OBJ: "
+                    f"{len(verts):,} expanded vertices, {len(faces):,} textured triangles; "
+                    f"{status}; atlas={loaded_obj.atlas_path.name}"
+                )
+                return "textured"
             except Exception as exc:
                 print(f"Notice: OBJ texture loading failed; using geometry fallback: {exc}")
                 self.canvas.native.setToolTip(
-                    f"Texture atlas could not be loaded: {exc}"
+                    f"OBJ texture loading failed; showing geometry fallback: {exc}"
                 )
-            # If the material/UV package is invalid, still show the geometry.
+                self.visual_textured_mesh.visible = False
+                self.visual_obj_untextured_mesh.visible = False
+                self._obj_untextured_triangle_count = 0
+            # The ordinary geometry fallback below reports its actual display mode.
         if path.suffix.lower() in {".glb", ".gltf"}:
             try:
                 import trimesh
@@ -729,8 +772,9 @@ class Clear360Viewport(QtWidgets.QWidget):
                 self.view.camera.elevation = 25.0
                 self.view.camera.azimuth = -45.0
                 self._hide_non_scene_overlays()
+                self.visual_surface_mesh.visible = True
                 self.request_update()
-                return
+                return "mesh"
             except Exception as exc:
                 print(f"Notice: GLB preview fallback: {exc}")
                 fallback_ply = path.with_suffix(".ply")
@@ -740,7 +784,7 @@ class Clear360Viewport(QtWidgets.QWidget):
                     self.canvas.native.setToolTip(
                         "GLB preview requires trimesh. Install it with: pip install trimesh"
                     )
-                    return
+                    return None
 
         mesh = o3d.io.read_triangle_mesh(str(path))
         if len(mesh.vertices) == 0 or len(mesh.triangles) == 0:
@@ -749,7 +793,7 @@ class Clear360Viewport(QtWidgets.QWidget):
             # an empty surface visual.
             point_cloud = o3d.io.read_point_cloud(str(path))
             if len(point_cloud.points) == 0:
-                return
+                return None
             points = np.asarray(point_cloud.points, dtype=np.float32)
             point_colors = np.asarray(point_cloud.colors, dtype=np.float32)
             if len(point_colors) != len(points):
@@ -779,7 +823,7 @@ class Clear360Viewport(QtWidgets.QWidget):
             )
             self.request_update()
             print(f"Loaded Fast Preview point cloud: {len(points):,} points")
-            return
+            return "cloud"
 
         self.visual_cloud.visible = False
         verts = np.asarray(mesh.vertices, dtype=np.float32)
@@ -793,7 +837,9 @@ class Clear360Viewport(QtWidgets.QWidget):
         self.visual_surface_mesh.set_data(vertices=verts, faces=faces, vertex_colors=cols)
         self.visual_surface_mesh.visible = True
         self.visual_textured_mesh.visible = False
+        self.visual_obj_untextured_mesh.visible = False
         self.visual_vehicle.visible = False
+        display_mode = "mesh"
 
         # Preserve the native CLEAR360 Python backend's textured OBJ/PNG output.
         session_dir = path.parent.parent
@@ -833,6 +879,7 @@ class Clear360Viewport(QtWidgets.QWidget):
                             self.texture_filter.texcoords = t_uvs
                         self.visual_textured_mesh.visible = True
                         self.visual_surface_mesh.visible = False
+                        display_mode = "textured"
             except Exception as exc:
                 print(f"Notice: Native texture loading fallback to vertex colors: {exc}")
 
@@ -856,12 +903,16 @@ class Clear360Viewport(QtWidgets.QWidget):
         self.view.camera.elevation = 25.0
         self.view.camera.azimuth = -45.0
         self._hide_non_scene_overlays()
+        self.visual_textured_mesh.visible = (display_mode == "textured")
+        self.visual_surface_mesh.visible = (display_mode == "mesh")
         self.request_update()
+        return display_mode
 
     def _hide_non_scene_overlays(self):
         """Hide automotive overlays while inspecting an independent photogrammetry scene."""
         self.visual_vehicle.visible = False
         self.visual_cloud.visible = False
+        self.visual_obj_untextured_mesh.visible = False
         self.visual_occ_occupied.visible = False
         self.visual_occ_free.visible = False
         self.visual_occ_unknown.visible = False

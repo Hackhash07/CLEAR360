@@ -31,6 +31,10 @@ on:
       - "photo_reconstruction/openmvs_assets.py"
       - "photo_reconstruction/tests/test_openmvs_assets.py"
       - "viewer/app.py"
+      - "viewer/obj_texture_loader.py"
+      - "viewer/viewport.py"
+      - "viewer/tests/test_obj_texture_loader.py"
+      - "viewer/tests/test_viewer_app.py"
       - "photo_reconstruction/quality_report.py"
       - "photo_reconstruction/pipeline.py"
       - "viewer/phone_panel.py"
@@ -70,6 +74,10 @@ on:
       - "photo_reconstruction/openmvs_assets.py"
       - "photo_reconstruction/tests/test_openmvs_assets.py"
       - "viewer/app.py"
+      - "viewer/obj_texture_loader.py"
+      - "viewer/viewport.py"
+      - "viewer/tests/test_obj_texture_loader.py"
+      - "viewer/tests/test_viewer_app.py"
       - "photo_reconstruction/quality_report.py"
       - "photo_reconstruction/pipeline.py"
       - "viewer/phone_panel.py"
@@ -130,7 +138,9 @@ jobs:
             photo_reconstruction/mesh_builder.py \
             photo_reconstruction/nearest_neighbors.py \
             viewer/app.py \
-            viewer/phone_panel.py
+            viewer/phone_panel.py \
+            viewer/viewport.py \
+            viewer/obj_texture_loader.py
 
       - name: Run reconstruction QA and OpenMVS contract tests
         run: |
@@ -147,4 +157,5 @@ jobs:
             photo_reconstruction/tests/test_mesh_builder_vectorized.py \
             photo_reconstruction/tests/test_texture_arrays.py \
             photo_reconstruction/tests/test_depth_helper_memory.py \
-            photo_reconstruction/tests/test_benchmark_report.py
+            photo_reconstruction/tests/test_benchmark_report.py \
+            viewer/tests/test_obj_texture_loader.py

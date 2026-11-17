@@ -79,3 +79,96 @@ def test_loader_combines_multiple_material_atlases(tmp_path: Path):
     assert atlas.name in {"red.png", "blue.png"}
     assert uvs.min() >= 0.0
     assert uvs.max() <= 1.0
+
+
+def _write_textured_fixture(tmp_path: Path, obj_body: str) -> Path:
+    Image.new("RGB", (8, 8), (200, 40, 20)).save(tmp_path / "atlas.png")
+    (tmp_path / "scene.mtl").write_text(
+        "newmtl surface\nmap_Kd atlas.png\n",
+        encoding="utf-8",
+    )
+    obj = tmp_path / "scene.obj"
+    obj.write_text(
+        "mtllib scene.mtl\n" + obj_body,
+        encoding="utf-8",
+    )
+    return obj
+
+
+def test_loader_keeps_faces_without_uvs_as_separate_geometry(tmp_path: Path):
+    obj = _write_textured_fixture(
+        tmp_path,
+        "v 0 0 0\n"
+        "v 1 0 0\n"
+        "v 1 1 0\n"
+        "v 0 1 0\n"
+        "vt 0 0\n"
+        "vt 1 0\n"
+        "vt 1 1\n"
+        "vt 0 1\n"
+        "vn 0 0 1\n"
+        "usemtl surface\n"
+        "f 1/1/1 2//1 3/3/1\n"
+        "f 1/1/1 3/3/1 4/4/1\n",
+    )
+
+    loaded = load_textured_obj(obj)
+
+    assert loaded.textured_triangle_count == 1
+    assert loaded.untextured_triangle_count == 1
+    assert loaded.total_triangle_count == 2
+    assert loaded.texture_coverage == 0.5
+    assert loaded.faces.shape == (1, 3)
+    assert loaded.uvs.shape == (3, 2)
+    assert loaded.untextured_faces.shape == (1, 3)
+    assert loaded.untextured_vertices.shape == (3, 3)
+    # Legacy six-value unpacking remains supported.
+    vertices, faces, normals, uvs, texture, atlas = loaded
+    assert vertices is loaded.vertices
+    assert faces is loaded.faces
+    assert atlas.name == "atlas.png"
+
+
+def test_loader_accepts_v_and_v_double_slash_vn_corners(tmp_path: Path):
+    obj = _write_textured_fixture(
+        tmp_path,
+        "v 0 0 0\n"
+        "v 1 0 0\n"
+        "v 1 1 0\n"
+        "v 0 1 0\n"
+        "v 0 0 1\n"
+        "vt 0 0\n"
+        "vt 1 0\n"
+        "vt 1 1\n"
+        "vn 0 0 1\n"
+        "f 1//1 2//1 3//1\n"
+        "f 1 3 4\n"
+        "f 1/1 4/2 5/3\n",
+    )
+
+    loaded = load_textured_obj(obj)
+
+    assert loaded.textured_triangle_count == 1
+    assert loaded.untextured_triangle_count == 2
+    assert loaded.faces.shape == (1, 3)
+    assert loaded.untextured_faces.shape == (2, 3)
+
+
+def test_loader_resolves_negative_vertex_and_uv_indices(tmp_path: Path):
+    obj = _write_textured_fixture(
+        tmp_path,
+        "v 0 0 0\n"
+        "v 1 0 0\n"
+        "v 0 1 0\n"
+        "vt 0 0\n"
+        "vt 1 0\n"
+        "vt 0 1\n"
+        "f -3/-3 -2/-2 -1/-1\n",
+    )
+
+    loaded = load_textured_obj(obj)
+
+    assert loaded.faces.shape == (1, 3)
+    assert np.allclose(loaded.vertices, [[0, 0, 0], [1, 0, 0], [0, 1, 0]])
+    assert loaded.textured_triangle_count == 1
+    assert loaded.untextured_triangle_count == 0
