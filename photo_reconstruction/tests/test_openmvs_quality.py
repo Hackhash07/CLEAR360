@@ -180,12 +180,13 @@ def test_openmvs_thread_override_must_be_positive_integer():
 
 
 
-def test_texture_mesh_high_profile_can_disable_global_seams_without_changing_defaults():
+def test_texture_mesh_high_profile_disables_both_affected_seam_passes_without_changing_defaults():
     default_options = texture_mesh_options()
     fast_high_options = texture_mesh_options(
         max_threads=2,
         max_texture_size=2048,
         virtual_face_images=1,
+        local_seam_leveling=False,
         global_seam_leveling=False,
     )
 
@@ -194,6 +195,6 @@ def test_texture_mesh_high_profile_can_disable_global_seams_without_changing_def
     assert _value(default_options, "--global-seam-leveling") == "1"
 
     assert _value(fast_high_options, "--virtual-face-images") == "1"
-    assert _value(fast_high_options, "--local-seam-leveling") == "1"
+    assert _value(fast_high_options, "--local-seam-leveling") == "0"
     assert _value(fast_high_options, "--global-seam-leveling") == "0"
     assert _value(fast_high_options, "--max-texture-size") == "2048"
