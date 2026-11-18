@@ -110,12 +110,12 @@ def _colmap_feature_extraction_options(
 ) -> list[str]:
     """Return current COLMAP CPU SIFT options, with optional preview thread limits."""
     options = [
-        "--FeatureExtraction.max_image_size", str(max_image_size),
+        "--SiftExtraction.max_image_size", str(max_image_size),
         "--SiftExtraction.max_num_features", str(max_num_features),
-        "--FeatureExtraction.use_gpu", "0",
+        "--SiftExtraction.use_gpu", "0",
     ]
     if num_threads is not None:
-        options.extend(["--FeatureExtraction.num_threads", str(num_threads)])
+        options.extend(["--SiftExtraction.num_threads", str(num_threads)])
     if robust_sift:
         options.extend([
             "--SiftExtraction.estimate_affine_shape", "1",
@@ -128,11 +128,11 @@ def _colmap_feature_matching_options(
     *, guided_matching: bool = True, num_threads: int | None = None
 ) -> list[str]:
     """Return CPU matching options with optional thread limits for preview runs."""
-    options = ["--FeatureMatching.use_gpu", "0"]
+    options = ["--SiftMatching.use_gpu", "0"]
     if num_threads is not None:
-        options.extend(["--FeatureMatching.num_threads", str(num_threads)])
+        options.extend(["--SiftMatching.num_threads", str(num_threads)])
     if guided_matching:
-        options.extend(["--FeatureMatching.guided_matching", "1"])
+        options.extend(["--SiftMatching.guided_matching", "1"])
     return options
 
 
