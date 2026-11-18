@@ -40,7 +40,7 @@ The build is limited to two parallel jobs by default for the MacBook Air. Set `O
 The helper prints the exact binary path and writes `TextureMesh.build.json` next to it. Discover the path and verify the metadata before the dry-run:
 
 ```bash
-TEXTURE_MESH="$(find "$HOME/Applications/OpenMVS-texture-fix-eeedab7/source/build" -type f -name TextureMesh -perm -111 -print -quit)"
+TEXTURE_MESH="$(find "$HOME/Applications/OpenMVS-texture-fix-eeedab7/build" -type f -name TextureMesh -perm -111 -print -quit)"
 "$TEXTURE_MESH" --help | head -40
 ls -l "$(dirname "$TEXTURE_MESH")/TextureMesh.build.json"
 ```
@@ -62,7 +62,7 @@ The utility also fingerprints every file in the existing `session_049/mesh/` pac
 From the CLEAR360 repository root:
 
 ```bash
-TEXTURE_MESH="$(find "$HOME/Applications/OpenMVS-texture-fix-eeedab7/source/build" -type f -name TextureMesh -perm -111 -print -quit)"
+TEXTURE_MESH="$(find "$HOME/Applications/OpenMVS-texture-fix-eeedab7/build" -type f -name TextureMesh -perm -111 -print -quit)"
 
 python scripts/retexture_openmvs_session.py \\
   --session data/phone_reconstruction/session_049 \\
