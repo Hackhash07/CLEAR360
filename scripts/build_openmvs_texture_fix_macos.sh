@@ -16,7 +16,7 @@ if [[ "$(uname -m)" != "arm64" ]]; then
   echo "ERROR: expected native Apple-Silicon arm64 shell; got $(uname -m)." >&2
   exit 2
 fi
-for tool in git cmake clang++ python3; do
+for tool in git cmake clang++ python3 lipo grep; do
   command -v "$tool" >/dev/null 2>&1 || {
     echo "ERROR: required tool not found: $tool" >&2
     exit 2
@@ -77,10 +77,29 @@ if [[ -z "$TEXTURE_MESH" ]]; then
   exit 4
 fi
 
-# Different builds may return either 0 or 1 for --help; preserve its output.
-"$TEXTURE_MESH" --help > "$(dirname "$TEXTURE_MESH")/TextureMesh.help.txt" 2>&1 || true
+ARCHS="$(lipo -archs "$TEXTURE_MESH" 2>/dev/null)" || {
+  echo "ERROR: could not inspect the built TextureMesh architecture." >&2
+  exit 5
+}
+if [[ " $ARCHS " != *" arm64 "* ]]; then
+  echo "ERROR: TextureMesh does not contain an arm64 slice: $ARCHS" >&2
+  exit 5
+fi
 
-python3 - "$TEXTURE_MESH" "$SOURCE_DIR" "$FIX_COMMIT" "$FIX_URL" "$BUILD_JOBS" <<'PY'
+# Help may return a non-zero status, but it must execute and print real options.
+HELP_LOG="$(dirname "$TEXTURE_MESH")/TextureMesh.help.txt"
+set +e
+"$TEXTURE_MESH" --help > "$HELP_LOG" 2>&1
+HELP_STATUS=$?
+set -e
+if ! grep -Eiq 'Texture options:|Generic options:|input-file' "$HELP_LOG"; then
+  echo "ERROR: TextureMesh did not launch cleanly or did not produce its help text." >&2
+  echo "Exit status: $HELP_STATUS; output follows:" >&2
+  cat "$HELP_LOG" >&2
+  exit 6
+fi
+
+python3 - "$TEXTURE_MESH" "$SOURCE_DIR" "$FIX_COMMIT" "$FIX_URL" "$BUILD_JOBS" "$ARCHS" <<'PY'
 import hashlib
 import json
 import os
@@ -95,6 +114,7 @@ source = Path(sys.argv[2]).resolve()
 commit = sys.argv[3]
 fix_url = sys.argv[4]
 jobs = int(sys.argv[5])
+archs = sys.argv[6]
 digest = hashlib.sha256(binary.read_bytes()).hexdigest()
 metadata = {
     "source_repository": "https://github.com/cdcseacave/openMVS",
@@ -107,6 +127,7 @@ metadata = {
     "binary_sha256": digest,
     "platform": platform.platform(),
     "machine": platform.machine(),
+    "binary_architectures": archs,
     "build_type": "Release",
     "build_jobs": jobs,
     "vcpkg_root": os.environ.get("VCPKG_ROOT") or None,
