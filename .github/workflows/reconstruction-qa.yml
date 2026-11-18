@@ -8,6 +8,14 @@ on:
       - "photo_reconstruction/benchmark_report.py"
       - "photo_reconstruction/tests/test_benchmark_report.py"
       - "scripts/summarize_openmvs_benchmark.py"
+      - "scripts/retexture_openmvs_session.py"
+      - "scripts/build_openmvs_texture_fix_macos.sh"
+      - "photo_reconstruction/tests/test_openmvs_retexture.py"
+      - "docs/OPENMVS_TEXTURE_FIX.md"
+      - "scripts/retexture_openmvs_session.py"
+      - "scripts/build_openmvs_texture_fix_macos.sh"
+      - "photo_reconstruction/tests/test_openmvs_retexture.py"
+      - "docs/OPENMVS_TEXTURE_FIX.md"
       - "pyproject.toml"
       - "requirements.txt"
       - "photo_reconstruction/__init__.py"
@@ -141,6 +149,7 @@ jobs:
             photo_reconstruction/openmvs_backend.py \
             photo_reconstruction/benchmark_report.py \
             scripts/summarize_openmvs_benchmark.py \
+            scripts/retexture_openmvs_session.py \
             photo_reconstruction/openmvs_quality.py \
             photo_reconstruction/texture_arrays.py \
             photo_reconstruction/texture_engine.py \
@@ -156,6 +165,9 @@ jobs:
             viewer/__init__.py \
             viewer/viewport.py \
             viewer/obj_texture_loader.py
+
+      - name: Check macOS OpenMVS build helper syntax
+        run: bash -n scripts/build_openmvs_texture_fix_macos.sh
 
       - name: Run reconstruction QA and OpenMVS contract tests
         run: |
@@ -174,5 +186,6 @@ jobs:
             photo_reconstruction/tests/test_texture_diagnostics.py \
             photo_reconstruction/tests/test_depth_helper_memory.py \
             photo_reconstruction/tests/test_benchmark_report.py \
+            photo_reconstruction/tests/test_openmvs_retexture.py \
             viewer/tests/test_obj_texture_loader.py \
             viewer/tests/test_glb_texture_loader.py
