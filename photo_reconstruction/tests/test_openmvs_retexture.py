@@ -149,3 +149,64 @@ def test_texture_only_run_refuses_existing_output(tmp_path: Path):
     output.mkdir()
     with pytest.raises(TextureRetextureError, match="already exists"):
         run_texture_only(inputs, exe, output)
+
+
+@pytest.mark.parametrize("unexpected_folder", ["images", "mesh"])
+def test_texture_only_detects_new_files_in_protected_directories(
+    tmp_path: Path, monkeypatch, unexpected_folder: str
+):
+    inputs = inspect_session(make_session(tmp_path))
+    exe = make_fixed_executable(tmp_path)
+    output = inputs.session_dir / "texture_ab_fixed"
+
+    class Completed:
+        returncode = 0
+        stdout = "TextureMesh completed"
+
+    def fake_run(command, **kwargs):
+        (output / "scene_textured.obj").write_text("v 0 0 0\\nf 1 1 1\\n", encoding="utf-8")
+        (output / "scene_textured.mtl").write_text(
+            "newmtl material_0\\nmap_Kd atlas.jpg\\n", encoding="utf-8"
+        )
+        (output / "atlas.jpg").write_bytes(b"new atlas")
+        protected_dir = (
+            inputs.image_dir if unexpected_folder == "images"
+            else inputs.session_dir / "mesh"
+        )
+        (protected_dir / "unexpected-added-file.bin").write_bytes(b"unexpected")
+        return Completed()
+
+    monkeypatch.setattr("scripts.retexture_openmvs_session.subprocess.run", fake_run)
+    with pytest.raises(TextureRetextureError, match="Input hashes changed"):
+        run_texture_only(inputs, exe, output)
+
+    manifest = json.loads((output / "texture_reprocess_manifest.json").read_text())
+    assert manifest["input_files_unchanged"] is False
+    assert manifest["status"] == "failed"
+
+
+def test_texture_only_rejects_empty_diffuse_map(tmp_path: Path, monkeypatch):
+    inputs = inspect_session(make_session(tmp_path))
+    exe = make_fixed_executable(tmp_path)
+    output = inputs.session_dir / "texture_ab_fixed"
+
+    class Completed:
+        returncode = 0
+        stdout = "TextureMesh completed"
+
+    def fake_run(command, **kwargs):
+        (output / "scene_textured.obj").write_text("v 0 0 0\\nf 1 1 1\\n", encoding="utf-8")
+        (output / "scene_textured.mtl").write_text(
+            "newmtl material_0\\nmap_Kd atlas.jpg\\n", encoding="utf-8"
+        )
+        (output / "atlas.jpg").write_bytes(b"")
+
+        return Completed()
+
+    monkeypatch.setattr("scripts.retexture_openmvs_session.subprocess.run", fake_run)
+    with pytest.raises(TextureRetextureError, match="Incomplete or empty"):
+        run_texture_only(inputs, exe, output)
+
+    manifest = json.loads((output / "texture_reprocess_manifest.json").read_text())
+    assert manifest["status"] == "failed"
+    assert str(output / "atlas.jpg") in manifest["empty_output_files"]
