@@ -429,3 +429,37 @@ First check free disk space and confirm that the saved session inputs exist. The
 
 *Reviewer B — ChatGPT*
 
+
+
+## Entry 010 — ChatGPT / Code Review and Build Readiness — 2026-11-18
+
+**Review scope:** Re-read the exact texture-only utility, tests, macOS build helper, the saved baseline's `texture_mesh_options()`, and the pinned upstream OpenMVS CMake configuration. Reviewed from correctness, runtime, and data-preservation perspectives.
+
+### Correctness findings
+
+- The exact upstream commit `eeedab7acceae48a92ddf44eaf4eb6ffe2fef14d` is the appropriate targeted source candidate. It corrects the `TImage<TYPE>::sample()` template argument, rewrites global seam-leveling patch/vertex indexing, adjusts local seam sample coordinates, and corrects the max-texture-size cap logic.
+- The reported symptom is a close match: OpenMVS issue #1251 records black atlas areas and random-coloured patch borders, including on macOS, and its maintainer identified the sampler mismatch and directed users to the corrected develop code.
+- The first A/B command matches the saved Apple-Silicon High texture options: resolution level 0, minimum resolution 640, max atlas 2048, one virtual face image, cost/smoothness 0.7, hole closing disabled, sharpness 0.5, ignore-mask label -1, local seam on and global seam off. The thread count is read from the original session log instead of being guessed.
+- The first experiment intentionally retains the original global-seam-off setting. A separate global-seam-on experiment is only considered if the first output removes corruption but seam blending remains insufficient.
+
+### Data-safety improvements implemented
+
+1. The texture utility now hashes the full current contents of the protected dense-image directory and final-mesh directory before and after the operation. This detects additions and removals as well as modified contents; the scene MVS and source PLY remain individually fingerprinted.
+2. Empty OBJ, MTL or diffuse-map files are rejected, even if the referenced filenames exist.
+3. The macOS build helper validates a supplied `VCPKG_ROOT`, records it in build provenance, checks that the compiled executable contains an `arm64` slice, and executes `TextureMesh --help` to catch a binary that cannot load its linked libraries before writing trusted provenance.
+4. Documentation now calls out the dependency check before building. No dependency installation, existing OpenMVS replacement, automatic cleanup, or original session overwrite has been introduced.
+
+### Build-readiness finding
+
+The user's terminal reports CMake 4.5.0, Git 2.39.3, Apple Clang 15.0.0 and Xcode Command Line Tools. The pinned upstream CMake requires CMake 3.18+ and automatically loads vcpkg only when `VCPKG_ROOT` is set. The user's value is currently unset. This is not by itself fatal if the required Boost, Eigen 3.4+, OpenCV, CGAL and VCG dependencies are already discoverable in system prefixes, but it means we must inspect the existing dependency setup before invoking CMake. The user's 31 GiB free disk space is recorded; no claim is made that this alone guarantees a dependency build will fit.
+
+### CI and remaining uncertainty
+
+- GitHub Actions on the code-review revision completed successfully: **123 passed in 1.29 seconds**; integrated Python compilation and the build helper's Bash syntax check passed.
+- The later documentation-only follow-up is separate from the 123-test run and will receive its own CI check.
+- CI verifies the Python contracts and shell syntax, not a native macOS OpenMVS compile.
+- No fixed binary has yet been built on the user's Mac, and no texture-only run or visual colour/geometry acceptance has taken place. The reddish-brown fountain colour remains an objective, not a claimed result.
+
+**Decision:** The isolated workflow is ready for dependency discovery, not yet ready for its native build. First locate an existing vcpkg toolchain or verify that the required libraries are already installed; only then run the separate build helper. Keep session-049 geometry, original texture package and runtime baseline frozen.
+
+*Code review synthesis — ChatGPT*
