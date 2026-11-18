@@ -10,6 +10,7 @@ on:
       - "scripts/summarize_openmvs_benchmark.py"
       - "scripts/retexture_openmvs_session.py"
       - "scripts/build_openmvs_texture_fix_macos.sh"
+      - "scripts/launch_viewer_macos.sh"
       - "photo_reconstruction/tests/test_openmvs_retexture.py"
       - "docs/OPENMVS_TEXTURE_FIX.md"
       - "pyproject.toml"
@@ -68,6 +69,7 @@ on:
       - "scripts/summarize_openmvs_benchmark.py"
       - "scripts/retexture_openmvs_session.py"
       - "scripts/build_openmvs_texture_fix_macos.sh"
+      - "scripts/launch_viewer_macos.sh"
       - "photo_reconstruction/tests/test_openmvs_retexture.py"
       - "docs/OPENMVS_TEXTURE_FIX.md"
       - "pyproject.toml"
@@ -166,8 +168,10 @@ jobs:
             viewer/viewport.py \
             viewer/obj_texture_loader.py
 
-      - name: Check macOS OpenMVS build helper syntax
-        run: bash -n scripts/build_openmvs_texture_fix_macos.sh
+      - name: Check macOS launcher and OpenMVS build helper syntax
+        run: |
+          bash -n scripts/build_openmvs_texture_fix_macos.sh
+          bash -n scripts/launch_viewer_macos.sh
 
       - name: Run reconstruction QA and OpenMVS contract tests
         run: |
