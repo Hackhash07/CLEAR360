@@ -274,7 +274,7 @@ jobs:
 
           BUILD_INFO="$(xcrun vtool -show-build "$DIST_DIR/TextureMesh")"
           echo "$BUILD_INFO"
-          grep -Eq 'minos[[:space:]]+14\\.0([[:space:]]|$)' <<< "$BUILD_INFO" || {
+          grep -Eq 'minos[[:space:]]+14\.0([[:space:]]|$)' <<< "$BUILD_INFO" || {
             echo "ERROR: TextureMesh is not built for macOS 14.0 minimum." >&2
             exit 1
           }
