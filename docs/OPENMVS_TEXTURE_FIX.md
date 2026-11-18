@@ -64,8 +64,8 @@ From the CLEAR360 repository root:
 ```bash
 TEXTURE_MESH="$(find "$HOME/Applications/OpenMVS-texture-fix-eeedab7/build" -type f -name TextureMesh -perm -111 -print -quit)"
 
-python scripts/retexture_openmvs_session.py \\
-  --session data/phone_reconstruction/session_049 \\
+python scripts/retexture_openmvs_session.py \
+  --session data/phone_reconstruction/session_049 \
   --texture-mesh "$TEXTURE_MESH"
 ```
 
@@ -76,14 +76,14 @@ The utility refuses missing inputs, an unknown/non-executable binary, a binary w
 Only after the dry-run paths and binary are checked, execute:
 
 ```bash
-python scripts/retexture_openmvs_session.py \\
-  --session data/phone_reconstruction/session_049 \\
-  --texture-mesh "$TEXTURE_MESH" \\
-  --output-dir texture_ab_fixed \\
-  --max-texture-size 2048 \\
-  --virtual-face-images 1 \\
-  --local-seam-leveling 1 \\
-  --global-seam-leveling 0 \\
+python scripts/retexture_openmvs_session.py \
+  --session data/phone_reconstruction/session_049 \
+  --texture-mesh "$TEXTURE_MESH" \
+  --output-dir texture_ab_fixed \
+  --max-texture-size 2048 \
+  --virtual-face-images 1 \
+  --local-seam-leveling 1 \
+  --global-seam-leveling 0 \
   --run
 ```
 
