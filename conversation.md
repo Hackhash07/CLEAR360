@@ -385,3 +385,47 @@ The tool generates a dry-run command and then, when explicitly invoked, creates 
 
 *Implementation decision — ChatGPT*
 
+## Entry 009 — ChatGPT / Implementation Result — 2026-11-18
+
+**Implementation branch:** `review/texture-only-reprocess`, based on the restored session-049 baseline commit `b325bb55c1726087c544939f60e2d3553b54f3d0`.
+**Pull request:** [#6 — Add safe session-049 OpenMVS texture-only reprocessing](https://github.com/Hackhash07/CLEAR360/pull/6). Open, draft, unmerged; base `perf/high-native-mesh-vectorization`.
+**Scope:** Implement Entry 008's isolated tooling without altering production reconstruction behaviour.
+
+### Files added/changed
+
+1. `scripts/retexture_openmvs_session.py` — dry-run by default; requires explicit `--run`; verifies the saved session scene, geometry PLY, undistorted image directory, executable provenance, and fresh output path; executes TextureMesh only; preserves input and baseline package hashes; validates OBJ/MTL/diffuse maps; writes a JSON manifest and log.
+2. `scripts/build_openmvs_texture_fix_macos.sh` — clones upstream OpenMVS, checks out exact fix commit `eeedab7acceae48a92ddf44eaf4eb6ffe2fef14d`, builds only `TextureMesh` for Apple Silicon Release, records source commit and binary SHA-256, refuses to overwrite an existing build root, and leaves the old v2.4.0 installation untouched.
+3. `docs/OPENMVS_TEXTURE_FIX.md` — documents pinned source, build preflight, texture-only A/B, and safety conditions.
+4. `photo_reconstruction/tests/test_openmvs_retexture.py` — tests input validation, flags, output safety, MTL maps, build identity and input-hash preservation.
+5. `.github/workflows/reconstruction-qa.yml` — includes utility compilation, helper shell syntax check and focused test coverage.
+
+### Implementation correction from review
+
+The first helper draft placed the CMake build directory at `source/build`, which would collide with OpenMVS's existing source-side `build/` directory containing CMake modules. This was caught before asking the user to run the helper. It was corrected to the out-of-source layout `OpenMVS-texture-fix-eeedab7/build`, with the source at `OpenMVS-texture-fix-eeedab7/source`.
+
+### Validation
+
+- GitHub Actions run `44205624093`: success.
+- `120 passed in 1.67s`.
+- Integrated Python compilation: success.
+- `bash -n scripts/build_openmvs_texture_fix_macos.sh`: success.
+- The new test module validates that all saved input hashes and original final-mesh package hashes remain unchanged during the texture-only operation.
+
+### Safety and outstanding work
+
+- PR #6 changes only the five support files above; it does not modify `openmvs_quality.py`, `openmvs_backend.py`, `viewer/viewport.py`, the OBJ/GLB texture loaders or the accepted geometry settings.
+- No OpenMVS binary has been built on the user's Mac yet.
+- No TextureMesh-only command has been executed against session 049.
+- The actual new atlas and fountain colour remain unverified.
+- The build helper retains its build/cache folder; no multi-GB automatic cleanup is performed.
+- The texture utility requires the pre-texture `session_049/openmvs/scene_mesh.mvs`, `scene_mesh.ply`, `dense/images/`, and the existing final `mesh/` package. If any are absent, it stops rather than starting a full reconstruction.
+- The user must inspect the dry-run command before using `--run`. Do not replace the original `session_049/mesh/` package until the visual comparison is approved.
+
+### Next action
+
+First check free disk space and confirm that the saved session inputs exist. Then use the build helper on the user's Mac, run the texture utility without `--run` (dry-run), inspect the paths/arguments, and only then execute the isolated TextureMesh A/B. The geometry baseline remains frozen.
+
+**Status:** Implementation PR ready for dry-run review. Colour fix is not yet accepted.
+
+*Reviewer B — ChatGPT*
+
