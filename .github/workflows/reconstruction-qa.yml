@@ -259,41 +259,30 @@ jobs:
           set -euo pipefail
           cmake --build "$RUNNER_TEMP/openMVS-build" --target TextureMesh --parallel "$OPENMVS_BUILD_JOBS"
 
-      - name: Bundle and verify relocatable arm64 executable
+      - name: Package and verify standalone arm64 executable
         run: |
           set -euo pipefail
           BUILD_DIR="$RUNNER_TEMP/openMVS-build"
           TEXTURE_MESH="$(find "$BUILD_DIR" -type f -name TextureMesh -perm -111 -print -quit)"
           test -n "$TEXTURE_MESH"
-          BIN_DIR="$(dirname "$TEXTURE_MESH")"
           DIST_DIR="$RUNNER_TEMP/TextureMesh-fixed-macos-arm64"
           mkdir -p "$DIST_DIR"
-
           cp -p "$TEXTURE_MESH" "$DIST_DIR/TextureMesh"
-          find "$BIN_DIR" -maxdepth 1 -type f -name '*.dylib' -exec cp -p {} "$DIST_DIR/" \;
-
-          # CMake build-tree rpaths are absolute on macOS unless rewritten.
-          # Make the executable and every bundled OpenMVS dylib resolve peers beside themselves.
-          for MACHO in "$DIST_DIR/TextureMesh" "$DIST_DIR"/*.dylib; do
-            install_name_tool -delete_rpath "$BIN_DIR" "$MACHO" 2>/dev/null || true
-            install_name_tool -add_rpath '@loader_path' "$MACHO" 2>/dev/null || true
-          done
 
           ARCHS="$(lipo -archs "$DIST_DIR/TextureMesh")"
           [[ " $ARCHS " == *" arm64 "* ]]
 
-          for MACHO in "$DIST_DIR/TextureMesh" "$DIST_DIR"/*.dylib; do
-            while IFS= read -r DEP; do
-              case "$DEP" in
-                @rpath/*.dylib)
-                  [[ -f "$DIST_DIR/${DEP##*/}" ]] || {
-                    echo "Missing bundled dependency: $DEP (from $MACHO)" >&2
-                    exit 1
-                  }
-                  ;;
-              esac
-            done < <(otool -L "$MACHO" | awk 'NR > 1 {print $1}')
-          done
+          # Static vcpkg/OpenMVS linkage should leave only Apple system libraries/frameworks.
+          otool -L "$DIST_DIR/TextureMesh" | awk 'NR > 1 {print $1}' > "$DIST_DIR/TextureMesh.dependencies.txt"
+          while IFS= read -r DEP; do
+            case "$DEP" in
+              /System/Library/*|/usr/lib/*) ;;
+              *)
+                echo "Unexpected non-system runtime dependency: $DEP" >&2
+                exit 1
+                ;;
+            esac
+          done < "$DIST_DIR/TextureMesh.dependencies.txt"
 
           set +e
           env -u DYLD_LIBRARY_PATH "$DIST_DIR/TextureMesh" --help > "$DIST_DIR/TextureMesh.help.txt" 2>&1
@@ -328,7 +317,7 @@ jobs:
               "machine": platform.machine(),
               "build_type": "Release",
               "build_jobs": int(sys.argv[4]),
-              "rpath_policy": "@loader_path",
+              "linkage": "static OpenMVS/vcpkg; Apple system runtime only",
               "built_at_utc": datetime.now(timezone.utc).isoformat(),
           }
           (dist / "TextureMesh.build.json").write_text(
