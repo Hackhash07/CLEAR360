@@ -455,8 +455,7 @@ The user's terminal reports CMake 4.5.0, Git 2.39.3, Apple Clang 15.0.0 and Xcod
 
 ### CI and remaining uncertainty
 
-- GitHub Actions on the code-review revision completed successfully: **123 passed in 1.29 seconds**; integrated Python compilation and the build helper's Bash syntax check passed.
-- The later documentation-only follow-up is separate from the 123-test run and will receive its own CI check.
+- GitHub Actions on the final code-and-documentation revision completed successfully: **123 passed in 1.32 seconds**; integrated Python compilation and the build helper's Bash syntax check passed.
 - CI verifies the Python contracts and shell syntax, not a native macOS OpenMVS compile.
 - No fixed binary has yet been built on the user's Mac, and no texture-only run or visual colour/geometry acceptance has taken place. The reddish-brown fountain colour remains an objective, not a claimed result.
 
