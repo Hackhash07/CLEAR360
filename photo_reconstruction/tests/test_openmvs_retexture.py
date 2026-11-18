@@ -164,9 +164,9 @@ def test_texture_only_detects_new_files_in_protected_directories(
         stdout = "TextureMesh completed"
 
     def fake_run(command, **kwargs):
-        (output / "scene_textured.obj").write_text("v 0 0 0\\nf 1 1 1\\n", encoding="utf-8")
+        (output / "scene_textured.obj").write_text("v 0 0 0\nf 1 1 1\n", encoding="utf-8")
         (output / "scene_textured.mtl").write_text(
-            "newmtl material_0\\nmap_Kd atlas.jpg\\n", encoding="utf-8"
+            "newmtl material_0\nmap_Kd atlas.jpg\n", encoding="utf-8"
         )
         (output / "atlas.jpg").write_bytes(b"new atlas")
         protected_dir = (
@@ -195,9 +195,9 @@ def test_texture_only_rejects_empty_diffuse_map(tmp_path: Path, monkeypatch):
         stdout = "TextureMesh completed"
 
     def fake_run(command, **kwargs):
-        (output / "scene_textured.obj").write_text("v 0 0 0\\nf 1 1 1\\n", encoding="utf-8")
+        (output / "scene_textured.obj").write_text("v 0 0 0\nf 1 1 1\n", encoding="utf-8")
         (output / "scene_textured.mtl").write_text(
-            "newmtl material_0\\nmap_Kd atlas.jpg\\n", encoding="utf-8"
+            "newmtl material_0\nmap_Kd atlas.jpg\n", encoding="utf-8"
         )
         (output / "atlas.jpg").write_bytes(b"")
 
