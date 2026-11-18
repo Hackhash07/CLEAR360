@@ -189,3 +189,162 @@ jobs:
             photo_reconstruction/tests/test_openmvs_retexture.py \
             viewer/tests/test_obj_texture_loader.py \
             viewer/tests/test_glb_texture_loader.py
+
+
+  build-pinned-texturemesh:
+    name: Build pinned OpenMVS TextureMesh (Apple Silicon)
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'review/texture-only-reprocess'
+    runs-on: macos-latest
+    timeout-minutes: 120
+    env:
+      OPENMVS_FIX_COMMIT: eeedab7acceae48a92ddf44eaf4eb6ffe2fef14d
+      VCPKG_COMMIT: 9eec002df1cd109f8f104cd966a763daf9751489
+      VCPKG_DEFAULT_TRIPLET: arm64-osx
+      OPENMVS_BUILD_JOBS: "2"
+      VCPKG_FEATURE_FLAGS: manifests,binarycaching,registries
+    steps:
+      - name: Verify Apple Silicon runner
+        run: |
+          test "$(uname -s)" = "Darwin"
+          test "$(uname -m)" = "arm64"
+          sw_vers
+          cmake --version
+          clang++ --version | head -1
+
+      - name: Install OpenMVS build tools
+        run: brew install automake autoconf autoconf-archive libtool ninja
+
+      - name: Fetch pinned vcpkg toolchain
+        run: |
+          set -euo pipefail
+          VCPKG_ROOT="$RUNNER_TEMP/vcpkg"
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
+          git -C "$VCPKG_ROOT" fetch --depth 1 origin "$VCPKG_COMMIT"
+          git -C "$VCPKG_ROOT" checkout --detach "$VCPKG_COMMIT"
+          test "$(git -C "$VCPKG_ROOT" rev-parse HEAD)" = "$VCPKG_COMMIT"
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=$VCPKG_ROOT" >> "$GITHUB_ENV"
+          echo "VCPKG_DEFAULT_TRIPLET=$VCPKG_DEFAULT_TRIPLET" >> "$GITHUB_ENV"
+          echo "Pinned vcpkg: $VCPKG_COMMIT"
+
+      - name: Fetch exact OpenMVS texture fix
+        run: |
+          set -euo pipefail
+          OPENMVS_SOURCE="$RUNNER_TEMP/openMVS-source"
+          git clone --filter=blob:none https://github.com/cdcseacave/openMVS.git "$OPENMVS_SOURCE"
+          git -C "$OPENMVS_SOURCE" fetch --depth 1 origin "$OPENMVS_FIX_COMMIT"
+          git -C "$OPENMVS_SOURCE" checkout --detach "$OPENMVS_FIX_COMMIT"
+          test "$(git -C "$OPENMVS_SOURCE" rev-parse HEAD)" = "$OPENMVS_FIX_COMMIT"
+          echo "OPENMVS_SOURCE=$OPENMVS_SOURCE" >> "$GITHUB_ENV"
+
+      - name: Configure TextureMesh-only Release build
+        run: |
+          set -euo pipefail
+          cmake -S "$OPENMVS_SOURCE" -B "$RUNNER_TEMP/openMVS-build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_BUILD_RPATH='@loader_path' \
+            -DCMAKE_INSTALL_RPATH='@loader_path' \
+            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=arm64-osx \
+            -DOpenMVS_BUILD_TOOLS=ON \
+            -DOpenMVS_BUILD_VIEWER=OFF \
+            -DOpenMVS_USE_PYTHON=OFF \
+            -DOpenMVS_USE_CUDA=OFF \
+            -DOpenMVS_ENABLE_TESTS=OFF
+
+      - name: Build only TextureMesh
+        run: |
+          set -euo pipefail
+          cmake --build "$RUNNER_TEMP/openMVS-build" --target TextureMesh --parallel "$OPENMVS_BUILD_JOBS"
+
+      - name: Bundle and verify relocatable arm64 executable
+        run: |
+          set -euo pipefail
+          BUILD_DIR="$RUNNER_TEMP/openMVS-build"
+          TEXTURE_MESH="$(find "$BUILD_DIR" -type f -name TextureMesh -perm -111 -print -quit)"
+          test -n "$TEXTURE_MESH"
+          BIN_DIR="$(dirname "$TEXTURE_MESH")"
+          DIST_DIR="$RUNNER_TEMP/TextureMesh-fixed-macos-arm64"
+          mkdir -p "$DIST_DIR"
+
+          cp -p "$TEXTURE_MESH" "$DIST_DIR/TextureMesh"
+          find "$BIN_DIR" -maxdepth 1 -type f -name '*.dylib' -exec cp -p {} "$DIST_DIR/" \;
+
+          # CMake build-tree rpaths are absolute on macOS unless rewritten.
+          # Make the executable and every bundled OpenMVS dylib resolve peers beside themselves.
+          for MACHO in "$DIST_DIR/TextureMesh" "$DIST_DIR"/*.dylib; do
+            install_name_tool -delete_rpath "$BIN_DIR" "$MACHO" 2>/dev/null || true
+            install_name_tool -add_rpath '@loader_path' "$MACHO" 2>/dev/null || true
+          done
+
+          ARCHS="$(lipo -archs "$DIST_DIR/TextureMesh")"
+          [[ " $ARCHS " == *" arm64 "* ]]
+
+          for MACHO in "$DIST_DIR/TextureMesh" "$DIST_DIR"/*.dylib; do
+            while IFS= read -r DEP; do
+              case "$DEP" in
+                @rpath/*.dylib)
+                  [[ -f "$DIST_DIR/${DEP##*/}" ]] || {
+                    echo "Missing bundled dependency: $DEP (from $MACHO)" >&2
+                    exit 1
+                  }
+                  ;;
+              esac
+            done < <(otool -L "$MACHO" | awk 'NR > 1 {print $1}')
+          done
+
+          set +e
+          env -u DYLD_LIBRARY_PATH "$DIST_DIR/TextureMesh" --help > "$DIST_DIR/TextureMesh.help.txt" 2>&1
+          HELP_STATUS=$?
+          set -e
+          if ! grep -Eiq 'Texture options:|Generic options:|input-file' "$DIST_DIR/TextureMesh.help.txt"; then
+            cat "$DIST_DIR/TextureMesh.help.txt" >&2
+            echo "TextureMesh launch/help validation failed (exit $HELP_STATUS)." >&2
+            exit 1
+          fi
+
+          python3 - "$DIST_DIR" "$OPENMVS_FIX_COMMIT" "$VCPKG_COMMIT" "$OPENMVS_BUILD_JOBS" "$ARCHS" <<'PY'
+          import hashlib
+          import json
+          import platform
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          dist = Path(sys.argv[1])
+          binary = dist / "TextureMesh"
+          digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+          metadata = {
+              "source_repository": "https://github.com/cdcseacave/openMVS",
+              "source_commit": sys.argv[2],
+              "source_commit_url": f"https://github.com/cdcseacave/openMVS/commit/{sys.argv[2]}",
+              "vcpkg_commit": sys.argv[3],
+              "binary_path": "TextureMesh",
+              "binary_sha256": digest,
+              "binary_architectures": sys.argv[5],
+              "platform": platform.platform(),
+              "machine": platform.machine(),
+              "build_type": "Release",
+              "build_jobs": int(sys.argv[4]),
+              "rpath_policy": "@loader_path",
+              "built_at_utc": datetime.now(timezone.utc).isoformat(),
+          }
+          (dist / "TextureMesh.build.json").write_text(
+              json.dumps(metadata, indent=2, sort_keys=True) + "\\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(metadata, indent=2, sort_keys=True))
+          PY
+
+          echo "TextureMesh binary verified and packaged:"
+          ls -lh "$DIST_DIR"
+
+      - name: Upload fixed TextureMesh artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TextureMesh-fixed-macos-arm64
+          path: ${{ runner.temp }}/TextureMesh-fixed-macos-arm64/*
+          if-no-files-found: error
+          retention-days: 14
