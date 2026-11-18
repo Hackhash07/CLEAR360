@@ -68,7 +68,8 @@ The helper:
 - builds only the `TextureMesh` target in Release mode for `arm64`;
 - disables the optional Viewer, Python bindings and tests to keep the build focused;
 - uses the existing `VCPKG_ROOT` automatically when configured by OpenMVS CMake;
-- verifies the executable contains an `arm64` slice and can run `--help` (catching missing linked libraries before it is trusted);\n- keeps the source/build tree and creates an adjacent `TextureMesh.build.json` with the exact source commit, binary architecture, vcpkg root (if used), and binary SHA-256.
+- verifies the executable contains an `arm64` slice and can run `--help` (catching missing linked libraries before it is trusted);
+- keeps the source/build tree and creates an adjacent `TextureMesh.build.json` with the exact source commit, binary architecture, vcpkg root (if used), and binary SHA-256.
 
 The build is limited to two parallel jobs by default for the MacBook Air. Set `OPENMVS_BUILD_JOBS` to another positive number only after checking available RAM. If CMake reports missing dependencies, stop and inspect the existing OpenMVS/vcpkg dependency setup rather than changing the working installation. No build folder or dependency cache is automatically deleted.
 
