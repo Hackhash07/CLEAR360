@@ -22,6 +22,20 @@ for tool in git cmake clang++ python3; do
     exit 2
   }
 done
+
+if [[ -n "${VCPKG_ROOT:-}" ]]; then
+  VCPKG_TOOLCHAIN="${VCPKG_ROOT%/}/scripts/buildsystems/vcpkg.cmake"
+  if [[ ! -f "$VCPKG_TOOLCHAIN" ]]; then
+    echo "ERROR: VCPKG_ROOT is set but its CMake toolchain is missing:" >&2
+    echo "  $VCPKG_TOOLCHAIN" >&2
+    exit 2
+  fi
+  echo "Using vcpkg toolchain: $VCPKG_TOOLCHAIN"
+else
+  echo "NOTICE: VCPKG_ROOT is not set."
+  echo "CMake will rely on dependencies already installed in discoverable system paths."
+  echo "If Boost, Eigen3, OpenCV, CGAL or VCG is missing, configuration will stop."
+fi
 if ! [[ "$BUILD_JOBS" =~ ^[1-9][0-9]*$ ]]; then
   echo "ERROR: OPENMVS_BUILD_JOBS must be a positive integer." >&2
   exit 2
@@ -94,6 +108,7 @@ metadata = {
     "machine": platform.machine(),
     "build_type": "Release",
     "build_jobs": jobs,
+    "vcpkg_root": __import__("os").environ.get("VCPKG_ROOT") or None,
     "built_at_utc": datetime.now(timezone.utc).isoformat(),
 }
 metadata_path = binary.with_name("TextureMesh.build.json")
