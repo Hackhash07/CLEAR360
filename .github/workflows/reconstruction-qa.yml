@@ -201,6 +201,7 @@ jobs:
       VCPKG_COMMIT: 9eec002df1cd109f8f104cd966a763daf9751489
       VCPKG_DEFAULT_TRIPLET: arm64-osx
       OPENMVS_BUILD_JOBS: "2"
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
       VCPKG_FEATURE_FLAGS: manifests,binarycaching,registries
     steps:
       - name: Verify Apple Silicon runner
@@ -243,6 +244,7 @@ jobs:
           cmake -S "$OPENMVS_SOURCE" -B "$RUNNER_TEMP/openMVS-build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
             -DBUILD_SHARED_LIBS=OFF \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET=arm64-osx \
@@ -269,6 +271,13 @@ jobs:
 
           ARCHS="$(lipo -archs "$DIST_DIR/TextureMesh")"
           [[ " $ARCHS " == *" arm64 "* ]]
+
+          BUILD_INFO="$(xcrun vtool -show-build "$DIST_DIR/TextureMesh")"
+          echo "$BUILD_INFO"
+          grep -Eq 'minos[[:space:]]+14\\.0([[:space:]]|$)' <<< "$BUILD_INFO" || {
+            echo "ERROR: TextureMesh is not built for macOS 14.0 minimum." >&2
+            exit 1
+          }
 
           # Static vcpkg/OpenMVS linkage should leave only Apple system libraries/frameworks.
           otool -L "$DIST_DIR/TextureMesh" | awk 'NR > 1 {print $1}' > "$DIST_DIR/TextureMesh.dependencies.txt"
@@ -311,6 +320,7 @@ jobs:
               "binary_path": "TextureMesh",
               "binary_sha256": digest,
               "binary_architectures": sys.argv[5],
+              "minimum_macos_version": "14.0",
               "platform": platform.platform(),
               "machine": platform.machine(),
               "build_type": "Release",
