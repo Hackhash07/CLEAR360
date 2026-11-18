@@ -101,3 +101,44 @@ def test_finds_openmvs_tool_in_nested_build_directory(tmp_path: Path):
     )
 
     assert found == str(executable.resolve())
+
+
+
+def test_prefers_complete_fixed_texture_overlay_without_environment_override(
+    tmp_path: Path, monkeypatch
+):
+    from photo_reconstruction.openmvs_tools import (
+        EXECUTABLE_NAMES,
+        configured_openmvs_root,
+    )
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    applications = tmp_path / "Applications"
+    fixed_overlay = applications / "CLEAR360-OpenMVS-fixed-texture"
+    legacy = applications / "OpenMVS-2.4.0"
+
+    for name in EXECUTABLE_NAMES:
+        _make_executable(fixed_overlay / name)
+        _make_executable(legacy / name)
+
+    assert configured_openmvs_root({}) == fixed_overlay
+
+
+def test_explicit_openmvs_directory_overrides_fixed_texture_overlay(tmp_path: Path):
+    from photo_reconstruction.openmvs_tools import configured_openmvs_root
+
+    explicit = tmp_path / "explicit-openmvs"
+    assert configured_openmvs_root({"CLEAR360_OPENMVS_DIR": str(explicit)}) == explicit
+
+
+def test_incomplete_fixed_overlay_falls_back_to_legacy_openmvs(tmp_path: Path, monkeypatch):
+    from photo_reconstruction.openmvs_tools import configured_openmvs_root
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    applications = tmp_path / "Applications"
+    fixed_overlay = applications / "CLEAR360-OpenMVS-fixed-texture"
+    legacy = applications / "OpenMVS-2.4.0"
+    _make_executable(fixed_overlay / "TextureMesh")
+    legacy.mkdir(parents=True)
+
+    assert configured_openmvs_root({}) == legacy
