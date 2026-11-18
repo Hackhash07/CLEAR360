@@ -482,7 +482,7 @@ The user's terminal reports CMake 4.5.0, Git 2.39.3, Apple Clang 15.0.0 and Xcod
 
 Inspection of the upstream November 6 Apple-Silicon artifact showed its Mach-O executable was built with **minimum macOS 26.0**. It is therefore not a safe binary for a Sonoma (macOS 14) host, even though it is arm64. That artifact remains rejected.
 
-The exact-fix CI workflow was updated to set both `MACOSX_DEPLOYMENT_TARGET=14.0` and `CMAKE_OSX_DEPLOYMENT_TARGET=14.0`. Before artifact upload it runs `xcrun vtool -show-build` and refuses the binary unless its Mach-O minimum OS reports macOS 14.0. The build metadata records `minimum_macos_version: 14.0`. New CI run: `44212503368`; dependency configuration is in progress. The earlier no-deployment-target run `44210783972` is superseded and should not be used.
+The exact-fix CI workflow was updated to set both `MACOSX_DEPLOYMENT_TARGET=14.0` and `CMAKE_OSX_DEPLOYMENT_TARGET=14.0`. Before artifact upload it runs `xcrun vtool -show-build` and refuses the binary unless its Mach-O minimum OS reports macOS 14.0. The build metadata records `minimum_macos_version: 14.0`. New CI run: `44212850712` (head `fdd96e04`); it is queued, with its regular regression-test job running. The earlier no-deployment-target runs `44210783972` and `44212503368` are superseded and must not be used.
 
 **Decision:** Prefer the exact-source CI artifact over a large local vcpkg/Homebrew dependency install. Accept it only after the native build, arm64 check, runtime-launch check, artifact hash and sidecar provenance all pass. Then work from a separate Git worktree so the user's current checkout and untracked files remain intact. The actual six-photo texture A/B is still pending.
 
