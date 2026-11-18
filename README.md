@@ -74,12 +74,21 @@ CLEAR360 automatically:
 - Estimates the scene's vertical axis from registered COLMAP camera poses and aligns OBJ, PLY, dense cloud and GLB exports to +Z when the camera-up directions are consistent.
 - The built-in OBJ loader resolves independent vertex/UV/normal indices and combines multiple diffuse material atlases, so UV seams do not silently fall back to a grey mesh.
 
-For automatic COLMAP + OpenMVS detection, install the tools locally and set the OpenMVS executable directory:
+For automatic COLMAP + OpenMVS detection, CLEAR360 resolves the tools in this order:
+
+1. An explicit `CLEAR360_OPENMVS_DIR` environment variable.
+2. A complete `~/Applications/CLEAR360-OpenMVS-fixed-texture` overlay (when all five executable tools are present).
+3. The conventional `~/Applications/OpenMVS-2.4.0` installation, then `PATH`.
+
+The fixed overlay lets the existing geometry executables remain unchanged while replacing only `TextureMesh`. It is selected automatically on launch when complete, so the texture fix does not depend on a one-terminal-only export.
+
+On macOS, launch the application through the project wrapper so the intended Conda environment and COLMAP binary are selected every time:
 
 ```bash
-export CLEAR360_OPENMVS_DIR="$HOME/Applications/OpenMVS-2.4.0"
-export CLEAR360_COLMAP_BIN="$(command -v colmap)"
+bash scripts/launch_viewer_macos.sh
 ```
+
+The default Conda environment name is `clear360-py314`; override it with `CLEAR360_CONDA_ENV` if your environment uses another name. You can still set `CLEAR360_OPENMVS_DIR` explicitly to override automatic tool discovery.
 
 The backend selector checks for COLMAP and all required OpenMVS executables before starting. Its decision is shown in the reconstruction status label. The OpenMVS processing log is saved at `data/phone_reconstruction/<session>/openmvs_pipeline.log`.
 
