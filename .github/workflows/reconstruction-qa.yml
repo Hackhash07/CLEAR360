@@ -332,7 +332,7 @@ jobs:
               "built_at_utc": datetime.now(timezone.utc).isoformat(),
           }
           (dist / "TextureMesh.build.json").write_text(
-              json.dumps(metadata, indent=2, sort_keys=True) + "\\n",
+              json.dumps(metadata, indent=2, sort_keys=True) + "\n",
               encoding="utf-8",
           )
           print(json.dumps(metadata, indent=2, sort_keys=True))
