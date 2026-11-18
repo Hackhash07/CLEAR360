@@ -66,7 +66,7 @@ def test_1_gui_to_pipeline_api_compatibility():
 # -----------------------------------------------------------------------------
 def test_2_every_quality_preset():
     """Verify all 4 primary presets ('draft', 'standard', 'high', 'maximum') plus 'quick'."""
-    presets = ["draft", "quick", "standard", "high", "maximum"]
+    presets = ["fast", "draft", "quick", "standard", "high", "maximum"]
     for p in presets:
         val = validate_quality_preset(p)
         assert val in QUALITY_PRESETS
@@ -78,6 +78,7 @@ def test_2_every_quality_preset():
         assert "cv_sift_features" in cfg and cfg["cv_sift_features"] > 0
 
     # Verify Draft has lower density/size and Maximum has highest
+    assert QUALITY_PRESETS["fast"]["max_image_size"] <= QUALITY_PRESETS["draft"]["max_image_size"]
     assert QUALITY_PRESETS["draft"]["max_image_size"] < QUALITY_PRESETS["maximum"]["max_image_size"]
     assert QUALITY_PRESETS["draft"]["sift_max_features"] < QUALITY_PRESETS["maximum"]["sift_max_features"]
     assert QUALITY_PRESETS["draft"]["voxel_size"] > QUALITY_PRESETS["maximum"]["voxel_size"]
@@ -292,6 +293,7 @@ def test_9_button_reenabling(qapp, monkeypatch):
             "success": True,
             "session_id": "session_success_test",
             "mesh_ply": Path(tmp_dir) / "mesh.ply",
+            "report": {"mesh_quality": {"status": "healthy", "score": 95.0}},
         }
         panel._on_reconstruction_success(mock_success_res)
         assert panel.btn_start.isEnabled() is True
@@ -329,3 +331,99 @@ def test_10_successful_reconstruction_completion():
         assert (session_dir / "report.json").exists()
         assert len(res["camera_poses"]) >= 2
         assert res["quality_preset"] == "draft"
+
+
+
+# -----------------------------------------------------------------------------
+# 11. OpenMVS Worker Input Manifest JSON Scope Regression
+# -----------------------------------------------------------------------------
+def test_openmvs_worker_writes_input_manifest_before_backend(
+    qapp, monkeypatch, tmp_path
+):
+    """The OpenMVS worker must serialize its input manifest before starting tools."""
+    import json
+
+    import numpy as np
+    from PIL import Image
+    from photo_reconstruction import openmvs_backend
+
+    # Use high-texture, sharp images so this test exercises staging rather
+    # than being rejected by the real image-quality assessment.
+    rng = np.random.default_rng(20261117)
+    image_paths = []
+    for index in range(6):
+        pixels = rng.integers(0, 256, size=(480, 640, 3), dtype=np.uint8)
+        path = tmp_path / f"openmvs_input_{index}.jpg"
+        Image.fromarray(pixels).save(path, format="JPEG", quality=95)
+        image_paths.append(path)
+
+    manifests = []
+
+    class FakeOpenMVSBackend:
+        def __init__(self, **kwargs):
+            pass
+
+        def run(self, image_paths, session_dir, **kwargs):
+            manifest_path = Path(session_dir) / "input_manifest.json"
+            manifests.append(json.loads(manifest_path.read_text(encoding="utf-8")))
+            raise RuntimeError("Fake OpenMVS backend reached after manifest write")
+
+    monkeypatch.setattr(openmvs_backend, "OpenMVSBackend", FakeOpenMVSBackend)
+
+    pipeline = PhoneReconstructionPipeline(data_root=tmp_path)
+    worker = ReconstructionWorker(
+        pipeline=pipeline,
+        image_paths=image_paths,
+        quality_preset="standard",
+        reference_distance_m=None,
+        backend="openmvs",
+    )
+    failures = []
+    worker.failed.connect(lambda message, tb: failures.append((message, tb)))
+
+    worker.run()
+
+    assert len(manifests) == 1
+    assert manifests[0]["uploaded_count"] == 6
+    assert manifests[0]["sfm_ready_count"] == 6
+    assert len(manifests[0]["images"]) == 6
+    assert len(failures) == 1
+    assert "Fake OpenMVS backend reached" in failures[0][0]
+    assert "cannot access local variable 'json'" not in failures[0][0]
+
+
+def test_phone_panel_exposes_fast_standard_and_high_quality_presets(qapp, tmp_path):
+    panel = PhoneReconstructionPanel(data_root=tmp_path)
+    try:
+        assert panel.combo_quality_preset.count() == 3
+        assert panel.combo_quality_preset.currentData() == "fast"
+        assert "geometry only" in panel.lbl_auto_quality.text()
+        assert "not guaranteed" in panel.lbl_auto_quality.text()
+
+        standard_index = panel.combo_quality_preset.findData("standard")
+        assert standard_index >= 0
+        panel.combo_quality_preset.setCurrentIndex(standard_index)
+        assert "full refinement" in panel.lbl_auto_quality.text()
+        assert "1440 px inputs" in panel.lbl_auto_quality.text()
+        assert "4-view / 2-iteration" in panel.lbl_auto_quality.text()
+
+        high_index = panel.combo_quality_preset.findData("high")
+        assert high_index >= 0
+        panel.combo_quality_preset.setCurrentIndex(high_index)
+
+        assert panel.combo_quality_preset.currentData() == "high"
+        assert "higher RAM use" in panel.lbl_auto_quality.text()
+    finally:
+        panel.close()
+
+
+def test_fast_preview_output_selects_point_cloud_viewport_mode(tmp_path):
+    from viewer.phone_panel import reconstruction_display_mode
+
+    preview = tmp_path / "mesh" / "scene_geometry_preview.ply"
+    final_mesh = tmp_path / "mesh" / "scene_mesh.ply"
+    textured_obj = tmp_path / "mesh" / "scene_mesh.obj"
+
+    assert reconstruction_display_mode(preview) == "cloud"
+    assert reconstruction_display_mode(final_mesh) == "mesh"
+    assert reconstruction_display_mode(textured_obj) == "textured"

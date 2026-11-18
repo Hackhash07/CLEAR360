@@ -28,6 +28,14 @@ from photo_reconstruction.session_manager import SessionManager
 
 
 QUALITY_PRESETS: Dict[str, Dict[str, Any]] = {
+    "fast": {
+        "max_image_size": 800,
+        "sift_max_features": 1500,
+        "voxel_size": 0.06,
+        "poisson_depth": 7,
+        "cv_sift_features": 1500,
+        "use_mvs_verification": False,
+    },
     "draft": {
         "max_image_size": 800,
         "sift_max_features": 1000,
@@ -99,6 +107,7 @@ class PhoneReconstructionPipeline:
         quality_preset: Optional[str] = None,
         mesh_method: Optional[str] = None,
         use_mvs: Optional[bool] = None,
+        photo_set_report: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Execute full photogrammetry pipeline on a collection of smartphone images.
@@ -137,41 +146,106 @@ class PhoneReconstructionPipeline:
         current_session_id = session_dir.name
 
         img_target_dir = session_dir / "original_images"
+        source_archive_dir = session_dir / "source_uploads"
         exif_dir = session_dir / "exif_metadata"
         poses_dir = session_dir / "camera_poses"
         sparse_dir = session_dir / "sparse_cloud"
         dense_dir = session_dir / "dense_cloud"
         mesh_dir = session_dir / "mesh"
 
-        # 2. Ingest & Validate Source Images
+        # 2. Ingest, preserve originals, and prepare SfM-readable working images.
         update_progress(10, f"Validating and ingesting {len(image_paths)} images...")
+        from photo_reconstruction.image_preparation import (
+            session_relative_path,
+            stage_reconstruction_image,
+        )
+
         copied_paths = []
-        image_arrays = []
         camera_infos = []
         quality_evals = []
+        photo_set_records = []
+        input_manifest = []
+        original_name_by_sfm_name: dict[str, str] = {}
 
         for idx, p in enumerate(image_paths):
-            src = Path(p)
+            src = Path(p).expanduser()
             if not src.is_file():
+                photo_set_records.append({
+                    "path": str(src),
+                    "error": "Source image file does not exist.",
+                })
                 continue
-            dest = img_target_dir / src.name
-            if dest.exists() and dest.resolve() != src.resolve():
-                dest = img_target_dir / f"{src.stem}_{idx:03d}{src.suffix}"
-            if not dest.exists() or dest.resolve() != src.resolve():
-                shutil.copy2(src, dest)
-            copied_paths.append(dest)
 
-            # Load and analyze
-            rgb, meta = ImageLoader.load_image(dest)
-            image_arrays.append(rgb)
+            try:
+                # Decode and score the original upload before format conversion.
+                rgb, meta = ImageLoader.load_image(src)
+                q_res = ImageQualityAssessor.evaluate(rgb)
+                c_info = ExifReader.get_camera_info(
+                    src, meta["width"], meta["height"]
+                )
+                staged = stage_reconstruction_image(
+                    src,
+                    rgb,
+                    source_archive_dir,
+                    img_target_dir,
+                    index=idx,
+                )
+                # Release the decoded full-resolution image before the next
+                # upload is decoded; the staged files are already on disk.
+                del rgb
+            except Exception as exc:
+                photo_set_records.append({
+                    "path": str(src),
+                    "error": str(exc),
+                })
+                continue
 
-            # Quality Assessment
-            q_res = ImageQualityAssessor.evaluate(rgb)
-            quality_evals.append({"file": dest.name, **q_res})
+            sfm_path = Path(staged["sfm_image_path"])
+            archived_path = Path(staged["source_archive_path"])
+            copied_paths.append(sfm_path)
+            quality_evals.append({"file": src.name, **q_res})
+            camera_infos.append({"file": src.name, **c_info})
+            original_name_by_sfm_name[sfm_path.name] = src.name
 
-            # EXIF Extraction
-            c_info = ExifReader.get_camera_info(dest, meta["width"], meta["height"])
-            camera_infos.append({"file": dest.name, **c_info})
+            # The auditor hashes the archived original but keeps the upload name.
+            source_meta = dict(meta)
+            source_meta["file_name"] = src.name
+            source_meta["file_path"] = str(archived_path)
+            photo_set_records.append({
+                "path": str(archived_path),
+                "meta": source_meta,
+                "exif": c_info,
+                "quality": q_res,
+            })
+            input_manifest.append({
+                "original_filename": src.name,
+                "source_archive": session_relative_path(archived_path, session_dir),
+                "sfm_filename": sfm_path.name,
+                "working_format": staged["working_format"],
+                "converted_for_sfm": staged["converted_for_sfm"],
+                "source_size_bytes": staged["source_size_bytes"],
+                "working_size_bytes": staged["working_size_bytes"],
+            })
+
+        from photo_reconstruction.photo_set_auditor import PhotoSetQualityAuditor
+
+        upload_preflight_snapshot = photo_set_report
+        photo_set_report = PhotoSetQualityAuditor.audit(photo_set_records)
+        if upload_preflight_snapshot is not None:
+            photo_set_report["upload_preflight_snapshot"] = {
+                "status": upload_preflight_snapshot.get("status"),
+                "warnings": upload_preflight_snapshot.get("warnings", []),
+            }
+        with open(session_dir / "photo_set_report.json", "w", encoding="utf-8") as f_photo:
+            json.dump(photo_set_report, f_photo, indent=2)
+        with open(session_dir / "input_manifest.json", "w", encoding="utf-8") as f_manifest:
+            json.dump({
+                "uploaded_count": len(image_paths),
+                "sfm_ready_count": len(copied_paths),
+                "source_archive_directory": source_archive_dir.name,
+                "sfm_working_directory": img_target_dir.name,
+                "images": input_manifest,
+            }, f_manifest, indent=2)
 
         # Save metadata JSON
         with open(exif_dir / "camera_infos.json", "w") as f:
@@ -182,37 +256,73 @@ class PhoneReconstructionPipeline:
         # Check for mixed lenses
         is_mixed, mixed_warnings = ExifReader.check_mixed_lenses(camera_infos)
 
-        if len(copied_paths) < 2:
-            update_progress(100, "Reconstruction failed: fewer than 2 valid images.")
+        if len(copied_paths) < 2 or not photo_set_report.get("can_reconstruct", True):
+            update_progress(100, "Reconstruction failed: fewer than 2 distinct valid images.")
+            invalid_source_names = [
+                item.get("image", "unknown image")
+                for item in photo_set_report.get("invalid_images", [])
+            ]
+            duplicate_source_names = [
+                name
+                for group in photo_set_report.get("duplicate_groups", [])
+                for name in group[1:]
+            ]
+            failed_input_names = list(dict.fromkeys(
+                invalid_source_names + duplicate_source_names
+            ))
+            if not failed_input_names:
+                failed_input_names = [Path(p).name for p in image_paths]
             report = QualityReportGenerator.generate_report(
                 session_id=current_session_id,
                 uploaded_count=len(image_paths),
                 registered_count=0,
-                failed_images=[Path(p).name for p in image_paths],
+                failed_images=failed_input_names,
                 sparse_point_count=0,
                 dense_point_count=0,
                 mesh_triangle_count=0,
-                reprojection_error_px=0.0,
+                reprojection_error_px=None,
                 processing_time_s=time.perf_counter() - t_start,
                 scale_info=self.scale_calibrator.get_calibration_info(),
-                notes="Failed: At least 2 valid photographs required.",
+                notes="Failed: At least 2 distinct, readable photographs required.",
                 quality_preset=active_preset,
+                photo_set=photo_set_report,
             )
             QualityReportGenerator.save_report_json(report, session_dir / "report.json")
             return {"success": False, "report": report, "session_dir": session_dir, "quality_preset": active_preset}
 
         # 3. Structure from Motion (SfM)
-        update_progress(25, f"Running camera pose estimation & feature matching ({active_preset} preset)...")
+        from photo_reconstruction.camera_calibration import resolve_colmap_camera_mode
+
+        camera_calibration = resolve_colmap_camera_mode(photo_set_report)
+        update_progress(
+            25,
+            f"Running camera pose estimation ({camera_calibration['strategy']}; {active_preset} preset)...",
+        )
         sfm = SfMEngine(work_dir=session_dir / "sfm_work", quality_preset=active_preset)
-        sfm_res = sfm.run_reconstruction(img_target_dir, progress_cb=update_progress)
+        sfm_res = sfm.run_reconstruction(
+            img_target_dir,
+            progress_cb=update_progress,
+            camera_mode=camera_calibration["strategy"],
+        )
+
+        failed_source_names = list(dict.fromkeys(
+            [
+                original_name_by_sfm_name.get(name, name)
+                for name in sfm_res["failed_images"]
+            ]
+            + [
+                item.get("image", "unknown image")
+                for item in photo_set_report.get("invalid_images", [])
+            ]
+        ))
 
         if not sfm_res["success"] or sfm_res["registered_count"] < 2:
             update_progress(100, "Reconstruction incomplete: could not register camera poses.")
             report = QualityReportGenerator.generate_report(
                 session_id=current_session_id,
-                uploaded_count=len(copied_paths),
+                uploaded_count=len(image_paths),
                 registered_count=sfm_res["registered_count"],
-                failed_images=sfm_res["failed_images"],
+                failed_images=failed_source_names,
                 sparse_point_count=len(sfm_res["sparse_points"]),
                 dense_point_count=0,
                 mesh_triangle_count=0,
@@ -221,6 +331,8 @@ class PhoneReconstructionPipeline:
                 scale_info=self.scale_calibrator.get_calibration_info(),
                 notes=sfm_res["message"],
                 quality_preset=active_preset,
+                photo_set=photo_set_report,
+                camera_calibration=camera_calibration,
             )
             QualityReportGenerator.save_report_json(report, session_dir / "report.json")
             return {"success": False, "report": report, "session_dir": session_dir, "quality_preset": active_preset}
@@ -401,7 +513,36 @@ class PhoneReconstructionPipeline:
             MeshBuilder.save_mesh_obj(mesh_v, mesh_f, mesh_c, mesh_obj)
             MeshBuilder.save_mesh_ply(mesh_v, mesh_f, mesh_c, mesh_ply, normals=mesh_n)
 
-        # 7. Quality Report Compilation
+        # 7. Backend-independent geometric and export quality audit.
+        update_progress(94, "Auditing reconstructed geometry and texture references...")
+        from photo_reconstruction.reconstruction_qa import (
+            audit_camera_overlap_from_track_ids,
+            audit_reconstruction_outputs,
+        )
+
+        camera_track_ids = {
+            original_name_by_sfm_name.get(image_name, image_name): {
+                int(track["point3D_id"])
+                for track in observations
+                if track.get("point3D_id") is not None
+            }
+            for image_name, observations in sfm_res.get("sparse_tracks", {}).items()
+        }
+        camera_overlap = audit_camera_overlap_from_track_ids(camera_track_ids)
+
+        mesh_quality = audit_reconstruction_outputs(
+            mesh_ply,
+            obj_path=mesh_obj,
+            texturing_report_path=(
+                session_dir / "texturing_report.json"
+                if (session_dir / "texturing_report.json").is_file()
+                else None
+            ),
+        )
+        with open(session_dir / "reconstruction_quality.json", "w", encoding="utf-8") as f_qa:
+            json.dump(mesh_quality, f_qa, indent=2)
+
+        # 8. Standardized reconstruction report compilation.
         update_progress(95, "Compiling reconstruction quality report...")
         t_total = time.perf_counter() - t_start
 
@@ -414,9 +555,9 @@ class PhoneReconstructionPipeline:
 
         report = QualityReportGenerator.generate_report(
             session_id=current_session_id,
-            uploaded_count=len(copied_paths),
+            uploaded_count=len(image_paths),
             registered_count=len(camera_poses),
-            failed_images=sfm_res["failed_images"],
+            failed_images=failed_source_names,
             sparse_point_count=len(sparse_pts),
             dense_point_count=len(dense_pts),
             mesh_triangle_count=len(mesh_f),
@@ -431,6 +572,10 @@ class PhoneReconstructionPipeline:
             },
             notes=notes_text,
             quality_preset=active_preset,
+            mesh_quality=mesh_quality,
+            camera_overlap=camera_overlap,
+            photo_set=photo_set_report,
+            camera_calibration=camera_calibration,
         )
         QualityReportGenerator.save_report_json(report, session_dir / "report.json")
 
@@ -480,6 +625,9 @@ class PhoneReconstructionPipeline:
             "camera_poses": camera_poses,
             "quality_preset": active_preset,
             "report": report,
+            "camera_overlap": camera_overlap,
+            "photo_set_report": photo_set_report,
+            "input_manifest": input_manifest,
         }
 
 
@@ -499,7 +647,7 @@ def main():
     parser.add_argument(
         "--preset",
         "-p",
-        choices=["draft", "quick", "standard", "high", "maximum"],
+        choices=["fast", "draft", "quick", "standard", "high", "maximum"],
         default="standard",
         help="Quality preset (default: standard).",
     )

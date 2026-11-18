@@ -52,6 +52,7 @@ class SessionManager:
         (session_dir / "sparse_cloud").mkdir(exist_ok=True)
         (session_dir / "dense_cloud").mkdir(exist_ok=True)
         (session_dir / "mesh").mkdir(exist_ok=True)
+        (session_dir / "openmvs").mkdir(exist_ok=True)
 
         return session_dir
 

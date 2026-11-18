@@ -15,10 +15,26 @@ import numpy as np
 from PIL import Image
 
 
+def ensure_image_format_support(file_path: str | Path) -> None:
+    """Register optional Pillow decoders required by the source image format."""
+    suffix = Path(file_path).suffix.lower()
+    if suffix in {".heic", ".heif"}:
+        try:
+            from pillow_heif import register_heif_opener
+        except ImportError as exc:
+            raise RuntimeError(
+                "HEIC/HEIF decoding requires the pillow-heif package. "
+                "Install the CLEAR360 dependencies with: python -m pip install -e ."
+            ) from exc
+        register_heif_opener(thumbnails=False)
+
+
 class ImageLoader:
     """Validates and loads smartphone photographs for 3D reconstruction."""
 
-    SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic", ".tiff", ".bmp"}
+    SUPPORTED_EXTENSIONS = {
+        ".jpg", ".jpeg", ".png", ".heic", ".heif", ".tif", ".tiff", ".bmp"
+    }
 
     MIN_WIDTH = 320
     MIN_HEIGHT = 240
@@ -51,6 +67,7 @@ class ImageLoader:
             raise ValueError(f"Unsupported image format: {p.suffix}. Supported: {cls.SUPPORTED_EXTENSIONS}")
 
         file_size = os.path.getsize(p)
+        ensure_image_format_support(p)
 
         # Use PIL for robust image decoding
         try:

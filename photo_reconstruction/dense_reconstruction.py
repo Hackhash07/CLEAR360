@@ -347,6 +347,11 @@ class DenseReconstructor:
         pcd.points = o3d.utility.Vector3dVector(merged_pts.astype(np.float64))
         pcd.colors = o3d.utility.Vector3dVector(merged_cols.astype(np.float64))
 
+        # Open3D owns copies of the double-precision point/color buffers now.
+        # Drop the concatenated float32 arrays and their per-view source lists
+        # before voxel filtering and normal estimation to lower resident memory.
+        del merged_pts, merged_cols, all_pts, all_cols
+
         # 1. Voxel Grid Downsampling
         if self.voxel_size > 0.005 and len(pcd.points) > 100:
             pcd = pcd.voxel_down_sample(voxel_size=self.voxel_size)

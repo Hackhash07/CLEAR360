@@ -1,0 +1,347 @@
+name: Reconstruction Quality QA
+
+on:
+  push:
+    branches:
+      - feature/universal-reconstruction-qa
+    paths:
+      - "photo_reconstruction/benchmark_report.py"
+      - "photo_reconstruction/tests/test_benchmark_report.py"
+      - "scripts/summarize_openmvs_benchmark.py"
+      - "scripts/retexture_openmvs_session.py"
+      - "scripts/build_openmvs_texture_fix_macos.sh"
+      - "photo_reconstruction/tests/test_openmvs_retexture.py"
+      - "docs/OPENMVS_TEXTURE_FIX.md"
+      - "pyproject.toml"
+      - "requirements.txt"
+      - "photo_reconstruction/__init__.py"
+      - "photo_reconstruction/image_loader.py"
+      - "photo_reconstruction/tests/test_phone_reconstruction.py"
+      - "photo_reconstruction/image_preparation.py"
+      - "photo_reconstruction/camera_calibration.py"
+      - "photo_reconstruction/sfm_engine.py"
+      - "photo_reconstruction/quality_report.py"
+      - "photo_reconstruction/tests/test_camera_calibration.py"
+      - "photo_reconstruction/tests/test_image_preparation.py"
+      - "photo_reconstruction/reconstruction_qa.py"
+      - "photo_reconstruction/openmvs_backend.py"
+      - "photo_reconstruction/openmvs_quality.py"
+      - "photo_reconstruction/texture_arrays.py"
+      - "photo_reconstruction/texture_diagnostics.py"
+      - "photo_reconstruction/tests/test_texture_diagnostics.py"
+      - "viewer/glb_texture_loader.py"
+      - "viewer/tests/test_glb_texture_loader.py"
+      - "photo_reconstruction/texture_engine.py"
+      - "photo_reconstruction/depth_helper.py"
+      - "photo_reconstruction/dense_reconstruction.py"
+      - "photo_reconstruction/tests/test_texture_arrays.py"
+      - "photo_reconstruction/tests/test_depth_helper_memory.py"
+      - "photo_reconstruction/openmvs_assets.py"
+      - "photo_reconstruction/tests/test_openmvs_assets.py"
+      - "viewer/app.py"
+      - "viewer/__init__.py"
+      - "viewer/tests/test_viewport.py"
+      - "viewer/obj_texture_loader.py"
+      - "viewer/viewport.py"
+      - "viewer/tests/test_obj_texture_loader.py"
+      - "viewer/tests/test_viewer_app.py"
+      - "photo_reconstruction/quality_report.py"
+      - "photo_reconstruction/pipeline.py"
+      - "viewer/phone_panel.py"
+      - "photo_reconstruction/coverage_diagnostics.py"
+      - "photo_reconstruction/exif_reader.py"
+      - "photo_reconstruction/image_quality.py"
+      - "photo_reconstruction/tests/test_image_quality_normalization.py"
+      - "photo_reconstruction/photo_set_auditor.py"
+      - "photo_reconstruction/tests/test_photo_set_auditor.py"
+      - "photo_reconstruction/tests/test_reconstruction_qa.py"
+      - "photo_reconstruction/tests/test_openmvs_backend.py"
+      - "photo_reconstruction/tests/test_openmvs_quality.py"
+      - "photo_reconstruction/mesh_builder.py"
+      - "photo_reconstruction/nearest_neighbors.py"
+      - "photo_reconstruction/tests/test_mesh_builder_vectorized.py"
+      - ".github/workflows/reconstruction-qa.yml"
+  pull_request:
+    paths:
+      - "photo_reconstruction/benchmark_report.py"
+      - "photo_reconstruction/tests/test_benchmark_report.py"
+      - "scripts/summarize_openmvs_benchmark.py"
+      - "scripts/retexture_openmvs_session.py"
+      - "scripts/build_openmvs_texture_fix_macos.sh"
+      - "photo_reconstruction/tests/test_openmvs_retexture.py"
+      - "docs/OPENMVS_TEXTURE_FIX.md"
+      - "pyproject.toml"
+      - "requirements.txt"
+      - "photo_reconstruction/__init__.py"
+      - "photo_reconstruction/image_preparation.py"
+      - "photo_reconstruction/tests/test_image_preparation.py"
+      - "photo_reconstruction/image_loader.py"
+      - "photo_reconstruction/tests/test_phone_reconstruction.py"
+      - "photo_reconstruction/reconstruction_qa.py"
+      - "photo_reconstruction/openmvs_backend.py"
+      - "photo_reconstruction/texture_arrays.py"
+      - "photo_reconstruction/texture_diagnostics.py"
+      - "photo_reconstruction/tests/test_texture_diagnostics.py"
+      - "viewer/glb_texture_loader.py"
+      - "viewer/tests/test_glb_texture_loader.py"
+      - "photo_reconstruction/texture_engine.py"
+      - "photo_reconstruction/depth_helper.py"
+      - "photo_reconstruction/dense_reconstruction.py"
+      - "photo_reconstruction/tests/test_texture_arrays.py"
+      - "photo_reconstruction/tests/test_depth_helper_memory.py"
+      - "photo_reconstruction/openmvs_assets.py"
+      - "photo_reconstruction/tests/test_openmvs_assets.py"
+      - "viewer/app.py"
+      - "viewer/__init__.py"
+      - "viewer/tests/test_viewport.py"
+      - "viewer/obj_texture_loader.py"
+      - "viewer/viewport.py"
+      - "viewer/tests/test_obj_texture_loader.py"
+      - "viewer/tests/test_viewer_app.py"
+      - "photo_reconstruction/quality_report.py"
+      - "photo_reconstruction/pipeline.py"
+      - "viewer/phone_panel.py"
+      - "photo_reconstruction/coverage_diagnostics.py"
+      - "photo_reconstruction/exif_reader.py"
+      - "photo_reconstruction/photo_set_auditor.py"
+      - "photo_reconstruction/tests/test_photo_set_auditor.py"
+      - "photo_reconstruction/tests/test_reconstruction_qa.py"
+      - "photo_reconstruction/tests/test_openmvs_backend.py"
+      - "photo_reconstruction/tests/test_openmvs_quality.py"
+      - "photo_reconstruction/mesh_builder.py"
+      - "photo_reconstruction/nearest_neighbors.py"
+      - "photo_reconstruction/tests/test_mesh_builder_vectorized.py"
+      - ".github/workflows/reconstruction-qa.yml"
+
+jobs:
+  reconstruction-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install focused QA dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy trimesh pytest pillow pillow-heif opencv-python-headless
+
+      - name: Compile integrated reconstruction modules
+        run: |
+          python -m py_compile \
+            photo_reconstruction/__init__.py \
+            photo_reconstruction/image_loader.py \
+            photo_reconstruction/image_preparation.py \
+            photo_reconstruction/camera_calibration.py \
+            photo_reconstruction/image_loader.py \
+            photo_reconstruction/sfm_engine.py \
+            photo_reconstruction/exif_reader.py \
+            photo_reconstruction/photo_set_auditor.py \
+            photo_reconstruction/reconstruction_qa.py \
+            photo_reconstruction/quality_report.py \
+            photo_reconstruction/pipeline.py \
+            photo_reconstruction/openmvs_backend.py \
+            photo_reconstruction/benchmark_report.py \
+            scripts/summarize_openmvs_benchmark.py \
+            scripts/retexture_openmvs_session.py \
+            photo_reconstruction/openmvs_quality.py \
+            photo_reconstruction/texture_arrays.py \
+            photo_reconstruction/texture_engine.py \
+            photo_reconstruction/depth_helper.py \
+            photo_reconstruction/dense_reconstruction.py \
+            photo_reconstruction/openmvs_assets.py \
+            photo_reconstruction/texture_diagnostics.py \
+            viewer/glb_texture_loader.py \
+            photo_reconstruction/mesh_builder.py \
+            photo_reconstruction/nearest_neighbors.py \
+            viewer/app.py \
+            viewer/phone_panel.py \
+            viewer/__init__.py \
+            viewer/viewport.py \
+            viewer/obj_texture_loader.py
+
+      - name: Check macOS OpenMVS build helper syntax
+        run: bash -n scripts/build_openmvs_texture_fix_macos.sh
+
+      - name: Run reconstruction QA and OpenMVS contract tests
+        run: |
+          python -m pytest -q \
+            photo_reconstruction/tests/test_reconstruction_qa.py \
+            photo_reconstruction/tests/test_openmvs_backend.py \
+            photo_reconstruction/tests/test_openmvs_assets.py \
+            photo_reconstruction/tests/test_openmvs_quality.py \
+            photo_reconstruction/tests/test_coverage_diagnostics.py \
+            photo_reconstruction/tests/test_photo_set_auditor.py \
+            photo_reconstruction/tests/test_image_quality_normalization.py \
+            photo_reconstruction/tests/test_image_preparation.py \
+            photo_reconstruction/tests/test_camera_calibration.py \
+            photo_reconstruction/tests/test_mesh_builder_vectorized.py \
+            photo_reconstruction/tests/test_texture_arrays.py \
+            photo_reconstruction/tests/test_texture_diagnostics.py \
+            photo_reconstruction/tests/test_depth_helper_memory.py \
+            photo_reconstruction/tests/test_benchmark_report.py \
+            photo_reconstruction/tests/test_openmvs_retexture.py \
+            viewer/tests/test_obj_texture_loader.py \
+            viewer/tests/test_glb_texture_loader.py
+
+
+  build-pinned-texturemesh:
+    name: Build pinned OpenMVS TextureMesh (Apple Silicon)
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'review/texture-only-reprocess'
+    runs-on: macos-latest
+    timeout-minutes: 120
+    env:
+      OPENMVS_FIX_COMMIT: eeedab7acceae48a92ddf44eaf4eb6ffe2fef14d
+      VCPKG_COMMIT: 9eec002df1cd109f8f104cd966a763daf9751489
+      VCPKG_DEFAULT_TRIPLET: arm64-osx
+      OPENMVS_BUILD_JOBS: "2"
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+      VCPKG_FEATURE_FLAGS: manifests,binarycaching,registries
+    steps:
+      - name: Verify Apple Silicon runner
+        run: |
+          test "$(uname -s)" = "Darwin"
+          test "$(uname -m)" = "arm64"
+          sw_vers
+          cmake --version
+          clang++ --version | head -1
+
+      - name: Install OpenMVS build tools
+        run: brew install automake autoconf autoconf-archive libtool ninja
+
+      - name: Fetch pinned vcpkg toolchain
+        run: |
+          set -euo pipefail
+          VCPKG_ROOT="$RUNNER_TEMP/vcpkg"
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
+          git -C "$VCPKG_ROOT" fetch --depth 1 origin "$VCPKG_COMMIT"
+          git -C "$VCPKG_ROOT" checkout --detach "$VCPKG_COMMIT"
+          test "$(git -C "$VCPKG_ROOT" rev-parse HEAD)" = "$VCPKG_COMMIT"
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=$VCPKG_ROOT" >> "$GITHUB_ENV"
+          echo "VCPKG_DEFAULT_TRIPLET=$VCPKG_DEFAULT_TRIPLET" >> "$GITHUB_ENV"
+          echo "Pinned vcpkg: $VCPKG_COMMIT"
+
+      - name: Fetch exact OpenMVS texture fix
+        run: |
+          set -euo pipefail
+          OPENMVS_SOURCE="$RUNNER_TEMP/openMVS-source"
+          git clone --filter=blob:none https://github.com/cdcseacave/openMVS.git "$OPENMVS_SOURCE"
+          git -C "$OPENMVS_SOURCE" fetch --depth 1 origin "$OPENMVS_FIX_COMMIT"
+          git -C "$OPENMVS_SOURCE" checkout --detach "$OPENMVS_FIX_COMMIT"
+          test "$(git -C "$OPENMVS_SOURCE" rev-parse HEAD)" = "$OPENMVS_FIX_COMMIT"
+          echo "OPENMVS_SOURCE=$OPENMVS_SOURCE" >> "$GITHUB_ENV"
+
+      - name: Configure TextureMesh-only Release build
+        run: |
+          set -euo pipefail
+          cmake -S "$OPENMVS_SOURCE" -B "$RUNNER_TEMP/openMVS-build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=arm64-osx \
+            -DOpenMVS_BUILD_TOOLS=ON \
+            -DOpenMVS_BUILD_VIEWER=OFF \
+            -DOpenMVS_USE_PYTHON=OFF \
+            -DOpenMVS_USE_CUDA=OFF \
+            -DOpenMVS_ENABLE_TESTS=OFF
+
+      - name: Build only TextureMesh
+        run: |
+          set -euo pipefail
+          cmake --build "$RUNNER_TEMP/openMVS-build" --target TextureMesh --parallel "$OPENMVS_BUILD_JOBS"
+
+      - name: Package and verify standalone arm64 executable
+        run: |
+          set -euo pipefail
+          BUILD_DIR="$RUNNER_TEMP/openMVS-build"
+          TEXTURE_MESH="$(find "$BUILD_DIR" -type f -name TextureMesh -perm -111 -print -quit)"
+          test -n "$TEXTURE_MESH"
+          DIST_DIR="$RUNNER_TEMP/TextureMesh-fixed-macos-arm64"
+          mkdir -p "$DIST_DIR"
+          cp -p "$TEXTURE_MESH" "$DIST_DIR/TextureMesh"
+
+          ARCHS="$(lipo -archs "$DIST_DIR/TextureMesh")"
+          [[ " $ARCHS " == *" arm64 "* ]]
+
+          BUILD_INFO="$(xcrun vtool -show-build "$DIST_DIR/TextureMesh")"
+          echo "$BUILD_INFO"
+          grep -Eq 'minos[[:space:]]+14\.0([[:space:]]|$)' <<< "$BUILD_INFO" || {
+            echo "ERROR: TextureMesh is not built for macOS 14.0 minimum." >&2
+            exit 1
+          }
+
+          # Static vcpkg/OpenMVS linkage should leave only Apple system libraries/frameworks.
+          otool -L "$DIST_DIR/TextureMesh" | awk 'NR > 1 {print $1}' > "$DIST_DIR/TextureMesh.dependencies.txt"
+          while IFS= read -r DEP; do
+            case "$DEP" in
+              /System/Library/*|/usr/lib/*) ;;
+              *)
+                echo "Unexpected non-system runtime dependency: $DEP" >&2
+                exit 1
+                ;;
+            esac
+          done < "$DIST_DIR/TextureMesh.dependencies.txt"
+
+          set +e
+          env -u DYLD_LIBRARY_PATH "$DIST_DIR/TextureMesh" --help > "$DIST_DIR/TextureMesh.help.txt" 2>&1
+          HELP_STATUS=$?
+          set -e
+          if ! grep -Eiq 'Texture options:|Generic options:|input-file' "$DIST_DIR/TextureMesh.help.txt"; then
+            cat "$DIST_DIR/TextureMesh.help.txt" >&2
+            echo "TextureMesh launch/help validation failed (exit $HELP_STATUS)." >&2
+            exit 1
+          fi
+
+          python3 - "$DIST_DIR" "$OPENMVS_FIX_COMMIT" "$VCPKG_COMMIT" "$OPENMVS_BUILD_JOBS" "$ARCHS" <<'PY'
+          import hashlib
+          import json
+          import platform
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          dist = Path(sys.argv[1])
+          binary = dist / "TextureMesh"
+          digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+          metadata = {
+              "source_repository": "https://github.com/cdcseacave/openMVS",
+              "source_commit": sys.argv[2],
+              "source_commit_url": f"https://github.com/cdcseacave/openMVS/commit/{sys.argv[2]}",
+              "vcpkg_commit": sys.argv[3],
+              "binary_path": "TextureMesh",
+              "binary_sha256": digest,
+              "binary_architectures": sys.argv[5],
+              "minimum_macos_version": "14.0",
+              "platform": platform.platform(),
+              "machine": platform.machine(),
+              "build_type": "Release",
+              "build_jobs": int(sys.argv[4]),
+              "linkage": "static OpenMVS/vcpkg; Apple system runtime only",
+              "built_at_utc": datetime.now(timezone.utc).isoformat(),
+          }
+          (dist / "TextureMesh.build.json").write_text(
+              json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(metadata, indent=2, sort_keys=True))
+          PY
+
+          echo "TextureMesh binary verified and packaged:"
+          ls -lh "$DIST_DIR"
+
+      - name: Upload fixed TextureMesh artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TextureMesh-fixed-macos-arm64
+          path: ${{ runner.temp }}/TextureMesh-fixed-macos-arm64/*
+          if-no-files-found: error
+          retention-days: 14

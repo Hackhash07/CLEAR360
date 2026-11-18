@@ -44,6 +44,7 @@ class SfMEngine:
         self,
         image_dir: Path,
         progress_cb: Optional[callable] = None,
+        camera_mode: str = "shared_camera",
     ) -> Dict[str, Any]:
         """
         Execute full SfM pipeline:
@@ -57,6 +58,9 @@ class SfMEngine:
         image_dir : Path
             Directory containing source photographs.
         progress_cb : Optional[callable(pct: int, msg: str)]
+        camera_mode : str
+            "shared_camera" for a consistent same-lens set, or "per_image_camera"
+            when the photo-set audit finds mixed cameras/lenses or dimensions.
 
         Returns
         -------
@@ -78,6 +82,11 @@ class SfMEngine:
             images = [f for f in img_dir.iterdir() if f.is_file() and f.suffix.lower() in {".jpg", ".jpeg", ".png"}]
         num_images = len(images)
 
+        if camera_mode not in {"shared_camera", "per_image_camera"}:
+            raise ValueError(
+                "camera_mode must be 'shared_camera' or 'per_image_camera'."
+            )
+
         if num_images < 2:
             return {
                 "success": False,
@@ -87,7 +96,7 @@ class SfMEngine:
                 "camera_poses": {},
                 "sparse_points": np.zeros((0, 3), dtype=np.float32),
                 "sparse_colors": np.zeros((0, 3), dtype=np.float32),
-                "mean_reprojection_error": 0.0,
+                "mean_reprojection_error": None,
                 "message": "At least 2 photographs are required for Structure-from-Motion.",
             }
 
@@ -95,24 +104,59 @@ class SfMEngine:
             progress_cb(10, f"Extracting visual features from {num_images} photographs...")
 
         if HAS_PYCOLMAP:
-            res = self._run_pycolmap_sfm(img_dir, images, progress_cb)
+            res = self._run_pycolmap_sfm(
+                img_dir, images, progress_cb, camera_mode=camera_mode
+            )
+            res["camera_calibration_mode"] = camera_mode
             if res.get("success") and res.get("registered_count", 0) >= 2:
                 return res
-            # Graceful fallback to OpenCV Multi-View SfM if pycolmap lacks enough texture/matches
+
+            # The OpenCV fallback estimates one shared K matrix. It cannot honour
+            # per-image calibrations, so never use it for a mixed-camera upload.
+            from photo_reconstruction.camera_calibration import can_use_opencv_fallback
+            if not can_use_opencv_fallback(camera_mode):
+                res["message"] = (
+                    str(res.get("message", "PyCOLMAP reconstruction failed."))
+                    + " OpenCV fallback was not used because it cannot honour "
+                    "per-image camera calibration. Install or repair PyCOLMAP."
+                )
+                return res
+
             if progress_cb:
                 progress_cb(50, "Running OpenCV feature matching and camera pose estimation...")
             res_cv = self._run_opencv_sfm(img_dir, images, progress_cb)
+            res_cv["camera_calibration_mode"] = camera_mode
             if res_cv.get("success") and res_cv.get("registered_count", 0) >= 2:
                 return res_cv
             return res
-        else:
-            return self._run_opencv_sfm(img_dir, images, progress_cb)
+        from photo_reconstruction.camera_calibration import can_use_opencv_fallback
+        if not can_use_opencv_fallback(camera_mode):
+            return {
+                "success": False,
+                "registered_count": 0,
+                "total_images": num_images,
+                "failed_images": [img.name for img in images],
+                "camera_poses": {},
+                "sparse_points": np.zeros((0, 3), dtype=np.float32),
+                "sparse_colors": np.zeros((0, 3), dtype=np.float32),
+                "mean_reprojection_error": None,
+                "camera_calibration_mode": camera_mode,
+                "message": (
+                    "This photo set requires per-image camera calibration, but PyCOLMAP "
+                    "is unavailable. Install PyCOLMAP or recapture using one lens and "
+                    "consistent image dimensions."
+                ),
+            }
+        res = self._run_opencv_sfm(img_dir, images, progress_cb)
+        res["camera_calibration_mode"] = camera_mode
+        return res
 
     def _run_pycolmap_sfm(
         self,
         image_dir: Path,
         images: List[Path],
         progress_cb: Optional[callable],
+        camera_mode: str = "shared_camera",
     ) -> Dict[str, Any]:
         """Execute SfM using pycolmap."""
         num_images = len(images)
@@ -121,7 +165,10 @@ class SfMEngine:
 
         # 1. Feature Extraction
         extract_opts = pycolmap.FeatureExtractionOptions()
-        if self.quality_preset == "draft":
+        if self.quality_preset == "fast":
+            extract_opts.max_image_size = 800
+            extract_opts.sift.max_num_features = 1500
+        elif self.quality_preset == "draft":
             extract_opts.max_image_size = 800
             extract_opts.sift.max_num_features = 1000
         elif self.quality_preset == "quick":
@@ -138,9 +185,16 @@ class SfMEngine:
             extract_opts.sift.max_num_features = 2500
 
         try:
+            from photo_reconstruction.camera_calibration import pycolmap_camera_mode
+
+            reader_options = pycolmap.ImageReaderOptions()
+            reader_options.camera_model = "SIMPLE_RADIAL"
+            explicit_camera_mode = pycolmap_camera_mode(pycolmap, camera_mode)
             pycolmap.extract_features(
                 database_path=str(self.db_path),
                 image_path=str(image_dir),
+                camera_mode=explicit_camera_mode,
+                reader_options=reader_options,
                 extraction_options=extract_opts,
             )
         except Exception as e:
@@ -152,7 +206,7 @@ class SfMEngine:
                 "camera_poses": {},
                 "sparse_points": np.zeros((0, 3), dtype=np.float32),
                 "sparse_colors": np.zeros((0, 3), dtype=np.float32),
-                "mean_reprojection_error": 0.0,
+                "mean_reprojection_error": None,
                 "message": f"Feature extraction failed: {e}",
             }
 
@@ -175,7 +229,7 @@ class SfMEngine:
                 "camera_poses": {},
                 "sparse_points": np.zeros((0, 3), dtype=np.float32),
                 "sparse_colors": np.zeros((0, 3), dtype=np.float32),
-                "mean_reprojection_error": 0.0,
+                "mean_reprojection_error": None,
                 "message": f"Feature matching failed: {e}",
             }
 
@@ -211,7 +265,7 @@ class SfMEngine:
                 "camera_poses": {},
                 "sparse_points": np.zeros((0, 3), dtype=np.float32),
                 "sparse_colors": np.zeros((0, 3), dtype=np.float32),
-                "mean_reprojection_error": 0.0,
+                "mean_reprojection_error": None,
                 "message": f"Incremental mapping failed: {e}",
             }
 
@@ -224,7 +278,7 @@ class SfMEngine:
                 "camera_poses": {},
                 "sparse_points": np.zeros((0, 3), dtype=np.float32),
                 "sparse_colors": np.zeros((0, 3), dtype=np.float32),
-                "mean_reprojection_error": 0.0,
+                "mean_reprojection_error": None,
                 "message": (
                     "Could not register camera poses. Photographs lack sufficient visual overlap (recommend 60-80% overlap) "
                     "or contain significant motion blur. Capture additional intermediate views around the scene."
@@ -335,11 +389,17 @@ class SfMEngine:
         if len(pts_list) > 0:
             sparse_pts = np.array(pts_list, dtype=np.float32)
             sparse_cols = np.array(cols_list, dtype=np.float32)
-            mean_error = float(np.mean(errors))
+            mean_error: Optional[float] = float(np.mean(errors))
         else:
             sparse_pts = np.zeros((0, 3), dtype=np.float32)
             sparse_cols = np.zeros((0, 3), dtype=np.float32)
-            mean_error = 0.0
+            mean_error = None
+
+        reprojection_message = (
+            f"mean reprojection error {mean_error:.2f} px"
+            if mean_error is not None
+            else "reprojection residuals unavailable (no sparse 3D points)"
+        )
 
         if progress_cb:
             progress_cb(80, f"Sparse reconstruction complete: {len(camera_poses)}/{num_images} registered.")
@@ -358,7 +418,7 @@ class SfMEngine:
             "mean_reprojection_error": round(mean_error, 3),
             "message": (
                 f"Successfully registered {len(camera_poses)} of {num_images} photographs. "
-                f"Reconstructed {len(sparse_pts):,} 3D points with mean reprojection error {mean_error:.2f} px."
+                f"Reconstructed {len(sparse_pts):,} 3D points; {reprojection_message}."
             ),
         }
 
@@ -370,6 +430,7 @@ class SfMEngine:
     ) -> Dict[str, Any]:
         """Fallback OpenCV-based Two-View / Multi-View SfM."""
         cv_features = {
+            "fast": 1500,
             "draft": 1000,
             "quick": 1500,
             "standard": 2500,
@@ -378,6 +439,7 @@ class SfMEngine:
         }.get(self.quality_preset, 2500)
         sift = cv2.SIFT_create(nfeatures=cv_features)
         max_size = {
+            "fast": 800,
             "draft": 800,
             "quick": 1000,
             "standard": 1600,
@@ -455,7 +517,7 @@ class SfMEngine:
                 "camera_poses": {},
                 "sparse_points": np.zeros((0, 3), dtype=np.float32),
                 "sparse_colors": np.zeros((0, 3), dtype=np.float32),
-                "mean_reprojection_error": 0.0,
+                "mean_reprojection_error": None,
                 "message": "Insufficient feature matches between image pairs (< 15 matches).",
             }
 
@@ -632,6 +694,6 @@ class SfMEngine:
             "sparse_tracks": sparse_tracks,
             "sparse_points": sparse_pts,
             "sparse_colors": sparse_cols,
-            "mean_reprojection_error": 1.25,
+            "mean_reprojection_error": None,
             "message": f"Successfully registered {len(camera_poses)}/{len(images)} photographs with OpenCV SfM.",
         }

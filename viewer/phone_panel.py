@@ -2,17 +2,18 @@
 viewer/phone_panel.py — Smartphone Photograph to 3D World GUI Panel (M7.3)
 ========================================================================
 
-Provides the desktop interface for:
+Provides an upload-first desktop workflow for:
   1. Multi-photo upload and file management (JPG, PNG, HEIC).
   2. Thumbnail preview and EXIF metadata inspector.
   3. Image quality diagnostics (blur, exposure, texture score).
-  4. Reconstruction configuration (quality preset, metric reference distance).
+  4. Automatic reconstruction-engine detection and balanced quality selection.
   5. Asynchronous photogrammetry execution with real-time progress tracking.
   6. Session management and instant 3D viewport scene loading.
 """
 
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+import json
 import os
 import threading
 
@@ -23,6 +24,18 @@ from photo_reconstruction.exif_reader import ExifReader
 from photo_reconstruction.image_quality import ImageQualityAssessor
 from photo_reconstruction.session_manager import SessionManager
 from photo_reconstruction.pipeline import PhoneReconstructionPipeline
+from photo_reconstruction.backend_selector import resolve_reconstruction_backend
+from photo_reconstruction.photo_set_auditor import PhotoSetQualityAuditor
+
+
+def reconstruction_display_mode(mesh_path: str | Path) -> str:
+    """Return the viewport mode required for a reconstruction output artifact."""
+    output_path = Path(mesh_path)
+    if output_path.name == "scene_geometry_preview.ply":
+        return "cloud"
+    if output_path.suffix.lower() == ".obj":
+        return "textured"
+    return "mesh"
 
 
 class ReconstructionWorker(QtCore.QThread):
@@ -41,27 +54,269 @@ class ReconstructionWorker(QtCore.QThread):
         image_paths: List[Path],
         quality_preset: str,
         reference_distance_m: Optional[float],
+        backend: str = "native",
         parent: Optional[QtCore.QObject] = None,
+        photo_set_report: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(parent)
         self.pipeline = pipeline
         self.image_paths = list(image_paths)
         self.quality_preset = quality_preset
         self.reference_distance_m = reference_distance_m
+        self.backend = backend
+        self.photo_set_report = photo_set_report or {}
 
     def run(self):
         try:
             def progress_callback(pct: int, msg: str):
                 self.progress.emit(pct, msg)
 
-            res = self.pipeline.run_pipeline(
-                image_paths=self.image_paths,
-                quality_preset=self.quality_preset,
-                reference_distance_m=self.reference_distance_m,
-                progress_cb=progress_callback,
-            )
+            if self.backend == "openmvs":
+                from photo_reconstruction.openmvs_backend import OpenMVSBackend
+                import os
+
+                session_dir = self.pipeline.session_manager.create_session()
+                copied = []
+                source_dir = session_dir / "source_uploads"
+                working_dir = session_dir / "original_images"
+                from photo_reconstruction.image_preparation import (
+                    session_relative_path,
+                    stage_reconstruction_image,
+                )
+
+                input_manifest = []
+                staging_errors = []
+                for index, source in enumerate(self.image_paths):
+                    try:
+                        rgb, _ = ImageLoader.load_image(source)
+                        staged = stage_reconstruction_image(
+                            source,
+                            rgb,
+                            source_dir,
+                            working_dir,
+                            index=index,
+                        )
+                        # Do not keep the previous full-resolution RGB buffer
+                        # alive while decoding the next uploaded photograph.
+                        del rgb
+                        copied.append(Path(staged["sfm_image_path"]))
+                        input_manifest.append({
+                            "original_filename": source.name,
+                            "source_archive": str(
+                                session_relative_path(
+                                    staged["source_archive_path"], session_dir
+                                )
+                            ),
+                            "sfm_filename": staged["sfm_filename"],
+                            "working_format": staged["working_format"],
+                            "converted_for_sfm": staged["converted_for_sfm"],
+                        })
+                    except Exception as exc:
+                        staging_errors.append({
+                            "image": source.name,
+                            "reason": str(exc),
+                        })
+
+                (session_dir / "input_manifest.json").write_text(
+                    json.dumps({
+                        "uploaded_count": len(self.image_paths),
+                        "sfm_ready_count": len(copied),
+                        "source_archive_directory": source_dir.name,
+                        "sfm_working_directory": working_dir.name,
+                        "images": input_manifest,
+                        "staging_errors": staging_errors,
+                    }, indent=2),
+                    encoding="utf-8",
+                )
+
+                openmvs_dir = os.environ.get("CLEAR360_OPENMVS_DIR")
+                colmap_bin = os.environ.get("CLEAR360_COLMAP_BIN")
+                backend_runner = OpenMVSBackend(
+                    openmvs_dir=Path(openmvs_dir) if openmvs_dir else None,
+                    colmap_bin=colmap_bin,
+                )
+                result = backend_runner.run(
+                    copied,
+                    session_dir=session_dir,
+                    quality_preset=self.quality_preset,
+                    progress_cb=progress_callback,
+                    photo_set_report=self.photo_set_report,
+                )
+                from datetime import datetime
+                from photo_reconstruction.quality_report import classify_reconstruction_grade
+
+                registration = dict(result.get("registration", {}))
+                mesh_quality = result.get("mesh_quality", {})
+                actual_photo_set_report = dict(
+                    result.get("photo_set", self.photo_set_report)
+                )
+                from photo_reconstruction.reconstruction_qa import (
+                    remap_camera_overlap_names,
+                )
+
+                working_to_original = {
+                    item["sfm_filename"]: item["original_filename"]
+                    for item in input_manifest
+                }
+                failed_source_names = list(dict.fromkeys(
+                    [
+                        working_to_original.get(name, name)
+                        for name in result.get("failed_images", [])
+                    ]
+                    + [item["image"] for item in staging_errors]
+                ))
+                camera_overlap = registration.get("camera_overlap", {})
+                if camera_overlap:
+                    camera_overlap = remap_camera_overlap_names(
+                        camera_overlap, working_to_original
+                    )
+                    registration["camera_overlap"] = camera_overlap
+                registration["uploaded_count"] = len(self.image_paths)
+                registration["failed_images"] = failed_source_names
+                registration["registration_completeness_percentage"] = round(
+                    100.0 * result.get("registered_count", 0)
+                    / max(1, len(self.image_paths)),
+                    1,
+                )
+                if staging_errors:
+                    actual_photo_set_report["staging_errors"] = staging_errors
+                    actual_photo_set_report.setdefault("warnings", []).append(
+                        f"{len(staging_errors)} uploaded image(s) could not be staged for OpenMVS."
+                    )
+                    actual_photo_set_report["status"] = "review"
+                geometry_quality = mesh_quality.get("geometry") or {}
+                mesh_warnings = mesh_quality.get("warnings", [])
+                registration_warnings = list(registration.get("warnings", []))
+                registration_warnings.extend(camera_overlap.get("warnings", []))
+                registered_count = result.get("registered_count", 0)
+                reprojection_error = result.get("reprojection_error_px")
+                reconstruction_grade = classify_reconstruction_grade(
+                    uploaded_count=len(self.image_paths),
+                    registered_count=registered_count,
+                    reprojection_error_px=reprojection_error,
+                    mesh_quality=mesh_quality,
+                    camera_overlap=registration.get("camera_overlap", {}),
+                    photo_set=actual_photo_set_report,
+                )
+                preview_only = bool(result.get("preview_only", False))
+                if preview_only:
+                    reconstruction_grade = "PREVIEW_ONLY"
+                backend_label = result.get("backend_label", "COLMAP + OpenMVS")
+                report = {
+                    "session_id": session_dir.name,
+                    "reconstruction_grade": reconstruction_grade,
+                    "preview_only": preview_only,
+                    "output_mode": "geometry_only" if preview_only else "textured_mesh",
+                    "completeness_percentage": round(
+                        100.0 * registered_count / max(1, len(self.image_paths)), 1
+                    ),
+                    "backend": backend_label,
+                    "uploaded_count": len(self.image_paths),
+                    "registered_count": result.get("registered_count", 0),
+                    "failed_images": failed_source_names,
+                    "image_counts": {
+                        "uploaded": len(self.image_paths),
+                        "registered": registered_count,
+                        "failed": len(failed_source_names),
+                    },
+                    "registration": registration,
+                    "camera_overlap": camera_overlap,
+                    "camera_calibration": registration.get("camera_calibration", {}),
+                    "pipeline_configuration": result.get("pipeline_configuration", {}),
+                    "visibility_filter": result.get("visibility_filter", {}),
+                    "dense_ply_unfiltered": str(result.get("dense_ply_unfiltered", "")),
+                    "input_manifest": input_manifest,
+                    "staging_errors": staging_errors,
+                    "photo_set": actual_photo_set_report,
+                    "geometric_metrics": {
+                        "sparse_points": result.get("sparse_point_count", 0),
+                        "dense_points": result.get("dense_point_count"),
+                        "dense_points_before_visibility_filter": result.get("dense_point_count_unfiltered"),
+                        "mesh_vertices": geometry_quality.get("vertex_count", 0),
+                        "mesh_triangles": geometry_quality.get("face_count", 0),
+                        "mean_reprojection_error_px": result.get("reprojection_error_px"),
+                    },
+                    "mesh_quality": mesh_quality,
+                    "diagnostics": {
+                        "has_failures": bool(failed_source_names),
+                        "failure_reasons": [
+                            f"Image '{name}' was not registered by COLMAP or could not be staged."
+                            for name in failed_source_names
+                        ],
+                        "registration_warnings": registration_warnings,
+                        "mesh_warnings": mesh_warnings,
+                        "guidance": (
+                            "Some uploaded photographs were not registered. "
+                            "Review failed_images and the reconstruction diagnostics."
+                            if failed_source_names else
+                            "Review camera overlap and mesh quality warnings before using this model."
+                            if registration_warnings or mesh_warnings else
+                            "No camera-overlap or mesh QA warnings were reported."
+                        ),
+                    },
+                    "notes": (
+                        "Fast geometry-only preview; refinement and texturing were skipped."
+                        if preview_only else "COLMAP + OpenMVS reconstruction completed."
+                    ),
+                    "mesh_ply": str(result["mesh_ply"]),
+                    "mesh_obj": str(result.get("mesh_obj") or ""),
+                    "mesh_glb": str(result.get("mesh_glb") or ""),
+                    "dense_ply": str(result["dense_ply"]),
+                    "log_file": str(result["log_file"]),
+                    "mesh_quality_report": str(result.get("mesh_quality_report", "")),
+                    "orientation": result.get("orientation"),
+                    "created_at": datetime.now().astimezone().isoformat(),
+                }
+                (session_dir / "report.json").write_text(
+                    json.dumps(report, indent=2), encoding="utf-8"
+                )
+                res = {
+                    "success": True,
+                    "session_id": session_dir.name,
+                    "session_dir": session_dir,
+                    "mesh_ply": result["mesh_ply"],
+                    "mesh_viewer": result.get("mesh_obj", result["mesh_ply"]),
+                    "mesh_glb": result.get("mesh_glb"),
+                    "preview_only": preview_only,
+                    "dense_ply": result["dense_ply"],
+                    "report": report,
+                    "photo_set_report": actual_photo_set_report,
+                }
+            else:
+                res = self.pipeline.run_pipeline(
+                    image_paths=self.image_paths,
+                    quality_preset=self.quality_preset,
+                    reference_distance_m=self.reference_distance_m,
+                    progress_cb=progress_callback,
+                    photo_set_report=self.photo_set_report,
+                )
 
             if res.get("success", False):
+                if self.photo_set_report:
+                    report = dict(res.get("report") or {})
+                    actual_photo_set_report = (
+                        res.get("photo_set_report")
+                        or report.get("photo_set")
+                        or self.photo_set_report
+                    )
+                    report["photo_set"] = actual_photo_set_report
+                    diagnostics = dict(report.get("diagnostics") or {})
+                    diagnostics["photo_set_warnings"] = actual_photo_set_report.get("warnings", [])
+                    report["diagnostics"] = diagnostics
+                    res["report"] = report
+                    res["photo_set_report"] = actual_photo_set_report
+
+                    session_dir = res.get("session_dir")
+                    if session_dir:
+                        session_dir = Path(session_dir)
+                        (session_dir / "photo_set_report.json").write_text(
+                            json.dumps(actual_photo_set_report, indent=2),
+                            encoding="utf-8",
+                        )
+                        (session_dir / "report.json").write_text(
+                            json.dumps(report, indent=2),
+                            encoding="utf-8",
+                        )
                 self.finished_success.emit(res)
             else:
                 report = res.get("report", {})
@@ -150,9 +405,19 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.list_photos.currentRowChanged.connect(self._on_photo_selected)
         grp_up_layout.addWidget(self.list_photos)
 
-        self.lbl_photo_count = QtWidgets.QLabel("0 photographs selected (min 2, rec 4–40+)")
+        self.lbl_photo_count = QtWidgets.QLabel("0 photographs selected (min 2 native / 6 OpenMVS; 20–40+ recommended)")
         self.lbl_photo_count.setStyleSheet("font-size: 10px; color: #94a3b8;")
         grp_up_layout.addWidget(self.lbl_photo_count)
+
+        self.lbl_photo_set_summary = QtWidgets.QLabel(
+            "Photo-set check: add photographs to inspect duplicates, image quality and camera consistency."
+        )
+        self.lbl_photo_set_summary.setWordWrap(True)
+        self.lbl_photo_set_summary.setStyleSheet(
+            "font-size: 10px; color: #94a3b8; padding: 4px; "
+            "background-color: #161821; border-radius: 4px;"
+        )
+        grp_up_layout.addWidget(self.lbl_photo_set_summary)
 
         self.btn_capture_guide = QtWidgets.QPushButton("📖 Capture Guidelines")
         self.btn_capture_guide.setStyleSheet("background-color: #1e2230; font-size: 11px;")
@@ -181,45 +446,39 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         layout.addWidget(grp_meta)
 
         # ---------------------------------------------------------------------
-        # 3. Reconstruction Settings & Metric Scale
+        # 3. Automatic Reconstruction
         # ---------------------------------------------------------------------
-        grp_settings = QtWidgets.QGroupBox("3. Reconstruction Options")
+        grp_settings = QtWidgets.QGroupBox("3. Automatic 3D Reconstruction")
         grp_set_layout = QtWidgets.QVBoxLayout(grp_settings)
         grp_set_layout.setSpacing(6)
 
-        lbl_qual = QtWidgets.QLabel("Quality Preset:")
-        lbl_qual.setStyleSheet("font-size: 11px; font-weight: bold;")
-        self.combo_quality = QtWidgets.QComboBox()
-        self.combo_quality.addItem("⚡ Draft (Fast Preview)", "draft")
-        self.combo_quality.addItem("✨ Standard (Recommended)", "standard")
-        self.combo_quality.addItem("💎 High (Detailed Geometry)", "high")
-        self.combo_quality.addItem("👑 Maximum (Ultra Resolution)", "maximum")
-        self.combo_quality.setCurrentIndex(1)
-        grp_set_layout.addWidget(lbl_qual)
-        grp_set_layout.addWidget(self.combo_quality)
-
-        # Metric scale calibration
-        self.chk_scale = QtWidgets.QCheckBox("Apply Known Metric Distance")
-        self.chk_scale.setChecked(False)  # Unchecked by default
-        self.chk_scale.setToolTip(
-            "Only enable if you have two identifiable scene points separated by this exact distance.\n"
-            "Leave unchecked to preserve natural unscaled photogrammetry coordinates."
+        self.lbl_auto_engine = QtWidgets.QLabel(
+            "CLEAR360 detects the available 3D engine automatically. "
+            "Choose the reconstruction quality below before starting."
         )
-        self.chk_scale.toggled.connect(self._on_scale_toggled)
-        grp_set_layout.addWidget(self.chk_scale)
+        self.lbl_auto_engine.setWordWrap(True)
+        self.lbl_auto_engine.setStyleSheet("font-size: 11px; color: #cbd5e1;")
+        grp_set_layout.addWidget(self.lbl_auto_engine)
 
-        scale_row = QtWidgets.QHBoxLayout()
-        lbl_dist = QtWidgets.QLabel("Reference Dist (m):")
-        lbl_dist.setStyleSheet("font-size: 11px;")
-        self.spin_scale = QtWidgets.QDoubleSpinBox()
-        self.spin_scale.setRange(0.1, 500.0)
-        self.spin_scale.setValue(2.61)  # Default Creta wheelbase or ~2.6m car scale
-        self.spin_scale.setSingleStep(0.1)
-        self.spin_scale.setSuffix(" m")
-        self.spin_scale.setEnabled(False)  # Disabled until user checks the box
-        scale_row.addWidget(lbl_dist)
-        scale_row.addWidget(self.spin_scale)
-        grp_set_layout.addLayout(scale_row)
+        self.lbl_auto_quality = QtWidgets.QLabel()
+        self.lbl_auto_quality.setStyleSheet("font-size: 10px; color: #38bdf8;")
+        grp_set_layout.addWidget(self.lbl_auto_quality)
+
+        self.combo_quality_preset = QtWidgets.QComboBox()
+        self.combo_quality_preset.addItem(
+            "Fast Preview — geometry only, target under 15 min", "fast"
+        )
+        self.combo_quality_preset.addItem(
+            "Standard — full refinement and textured exports", "standard"
+        )
+        self.combo_quality_preset.addItem(
+            "High — more detail, more processing time and memory", "high"
+        )
+        self.combo_quality_preset.currentIndexChanged.connect(
+            self._on_quality_preset_changed
+        )
+        grp_set_layout.addWidget(self.combo_quality_preset)
+        self._on_quality_preset_changed(self.combo_quality_preset.currentIndex())
 
         layout.addWidget(grp_settings)
 
@@ -327,7 +586,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             self,
             "Select Smartphone Photographs",
             "",
-            "Images (*.jpg *.jpeg *.png *.heic *.bmp);;All Files (*)",
+            "Images (*.jpg *.jpeg *.png *.heic *.heif *.tif *.tiff *.bmp);;All Files (*)",
         )
         if not files:
             return
@@ -343,50 +602,148 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
                     rgb, meta = ImageLoader.load_image(p)
                     c_info = ExifReader.get_camera_info(p, meta["width"], meta["height"])
                     q_res = ImageQualityAssessor.evaluate(rgb)
-                    self.image_metadata[p.name] = {"meta": meta, "exif": c_info, "quality": q_res}
+                    self.image_metadata[str(p.resolve())] = {
+                        "path": str(p.resolve()),
+                        "meta": meta,
+                        "exif": c_info,
+                        "quality": q_res,
+                    }
                 except Exception as e:
-                    self.image_metadata[p.name] = {"error": str(e)}
+                    self.image_metadata[str(p.resolve())] = {
+                        "path": str(p.resolve()),
+                        "error": str(e),
+                    }
 
         count = len(self.selected_image_paths)
         self.lbl_photo_count.setText(f"{count} photographs selected (min 2, rec 4–40+)")
         if count > 0 and self.list_photos.currentRow() == -1:
             self.list_photos.setCurrentRow(0)
+        self._refresh_photo_set_summary()
+        if count >= 2:
+            self.lbl_status.setText(
+                f"{count} photographs ready. CLEAR360 will select the reconstruction engine automatically."
+            )
+
+    def _refresh_photo_set_summary(self):
+        """Show whole-upload diagnostics before users start expensive reconstruction."""
+        if not self.selected_image_paths:
+            self.lbl_photo_set_summary.setText(
+                "Photo-set check: add photographs to inspect duplicates, image quality and camera consistency."
+            )
+            self.lbl_photo_set_summary.setStyleSheet(
+                "font-size: 10px; color: #94a3b8; padding: 4px; "
+                "background-color: #161821; border-radius: 4px;"
+            )
+            return None
+
+        records = []
+        for image_path in self.selected_image_paths:
+            key = str(image_path.resolve())
+            record = dict(self.image_metadata.get(key) or {})
+            record.setdefault("path", key)
+            records.append(record)
+        report = PhotoSetQualityAuditor.audit(records)
+
+        quality = report.get("image_quality", {})
+        camera = report.get("camera", {})
+        overlap = report.get("overlap", {})
+        mean_score = quality.get("mean_score")
+        mean_score_text = f"{mean_score:.1f}/100" if mean_score is not None else "not available"
+        lines = [
+            f"Photo set: {str(report.get('status', 'unknown')).upper()}",
+            (
+                f"{report.get('valid_photo_count', 0)}/{report.get('photo_count', len(records))} readable"
+                f" · {report.get('unique_photo_count', 0)} unique"
+                f" · {report.get('duplicate_image_count', 0)} exact duplicates"
+            ),
+            (
+                f"Image quality: avg {mean_score_text}"
+                f" · blurry {quality.get('blurry_count', 0)}"
+                f" · low-feature {quality.get('low_feature_count', 0)}"
+                f" · rejected {quality.get('rejected_count', 0)}"
+            ),
+            (
+                "Camera/lens mix detected"
+                if camera.get("mixed_lenses_detected")
+                else f"EXIF camera metadata: {camera.get('metadata_coverage_percentage', 0)}% available"
+            ),
+            (
+                "Visual overlap: measured during camera reconstruction"
+                if not overlap.get("available")
+                else f"Visual overlap: {overlap.get('status', 'measured')}"
+            ),
+        ]
+        if len(self.selected_image_paths) < 20:
+            lines.append(
+                f"Coverage note: {len(self.selected_image_paths)} photos is only the OpenMVS minimum "
+                "of 6; use 20–40+ well-overlapped views for detailed object coverage."
+            )
+        warnings = report.get("warnings", [])
+        if warnings:
+            lines.append("Review: " + " ".join(warnings[:2]))
+
+        self.lbl_photo_set_summary.setText("\n".join(lines))
+        status = report.get("status")
+        color = "#22c55e" if status == "ready" else "#eab308" if status == "review" else "#ef4444"
+        self.lbl_photo_set_summary.setStyleSheet(
+            f"font-size: 10px; color: {color}; padding: 4px; "
+            "background-color: #161821; border-radius: 4px;"
+        )
+        return report
 
     def _on_clear_photos_clicked(self):
         """Clear selected images."""
         self.selected_image_paths.clear()
         self.image_metadata.clear()
         self.list_photos.clear()
-        self.lbl_photo_count.setText("0 photographs selected (min 2, rec 4–40+)")
+        self.lbl_photo_count.setText("0 photographs selected (min 2 native / 6 OpenMVS; 20–40+ recommended)")
         self._reset_meta_labels()
+        self._refresh_photo_set_summary()
 
     def _on_show_capture_guide(self):
         """Display smartphone capture guidelines dialog."""
         dlg = QtWidgets.QDialog(self)
-        dlg.setWindowTitle("Smartphone Photogrammetry Capture Guidelines")
-        dlg.resize(550, 420)
+        dlg.setWindowTitle("CLEAR360 — Photo-to-3D Capture Guide")
+        dlg.resize(620, 560)
         layout = QtWidgets.QVBoxLayout(dlg)
 
         text = QtWidgets.QTextBrowser()
         text.setHtml("""
-        <h3 style='color: #a855f7;'>CLEAR360 — Smartphone Photogrammetry Capture Guidelines</h3>
-        <p>Follow these best practices to ensure successful 3D Structure-from-Motion reconstruction:</p>
+        <h3 style='color: #a855f7;'>CLEAR360 — Capture Guide for Any Static Subject</h3>
+        <p>CLEAR360 reconstructs objects and environments from overlapping photographs. The goal is to show the same physical surfaces in several images while moving the camera around the subject.</p>
+
+        <h4>1. Capture a connected sequence</h4>
         <ul>
-            <li><b>60–80% Visual Overlap:</b> Adjacent photographs must share significant overlapping scene features.</li>
-            <li><b>Stationary Environment:</b> Photograph static scenes (parked cars, walls, alleys, pillars). Avoid moving objects or pedestrians.</li>
-            <li><b>Move Physically:</b> Walk around the subject in an arc or grid. Do not stand in one place and simply pan/rotate the camera.</li>
-            <li><b>Consistent Main Lens:</b> Use your phone's primary 1x wide lens for all photos. Do not switch between ultra-wide (0.5x) and telephoto (3x/5x).</li>
-            <li><b>Avoid Digital Zoom:</b> Digital zoom crops pixels and destroys optical geometry calibration.</li>
-            <li><b>Ensure Sharp Focus:</b> Tap to focus. Avoid motion blur, low light, and dirty camera lenses.</li>
-            <li><b>Feature-Rich Surfaces:</b> Avoid blank featureless white walls or uniform asphalt without visual landmarks.</li>
-            <li><b>Recommended Photo Counts:</b>
-                <ul>
-                    <li>Single obstacle or small vehicle: <b>4–12 photographs</b></li>
-                    <li>Parking bay or small street corner: <b>12–25 photographs</b></li>
-                    <li>Full urban scene or large alleyway: <b>25–40+ photographs</b></li>
-                </ul>
-            </li>
+            <li><b>60–80% visual overlap:</b> Each photo should share recognizable details with nearby photos. Avoid large gaps between viewpoints.</li>
+            <li><b>Move the camera physically:</b> Walk around the subject in a loop, arc or grid. Panning from one standing position does not create enough viewpoint change.</li>
+            <li><b>Cover different heights:</b> Capture low, eye-level and elevated/oblique views where accessible. Include the top and lower surfaces when they matter.</li>
+            <li><b>Keep the subject in view:</b> Do not crop important edges or let the subject disappear between consecutive photographs.</li>
         </ul>
+
+        <h4>2. Keep camera settings consistent</h4>
+        <ul>
+            <li>Use the same physical camera and lens for one sequence whenever possible. Avoid switching between ultra-wide, 1x and telephoto lenses.</li>
+            <li>Avoid digital zoom. Keep image dimensions and orientation consistent where practical.</li>
+            <li>Use sharp focus, adequate light and a steady hand. Avoid motion blur, strong exposure changes and aggressive filters.</li>
+            <li>Upload original-resolution photographs. CLEAR360 keeps original uploads and creates working copies where format conversion is needed.</li>
+        </ul>
+
+        <h4>3. Choose a capture path for the subject</h4>
+        <ul>
+            <li><b>Single object:</b> Capture a complete orbit with overlapping front, side, rear and elevated views. Include close views for fine details without losing wider context.</li>
+            <li><b>Vehicle or large object:</b> Move around the full perimeter and capture multiple elevations. Include wheels, undersides or recesses only where they are visible from safe viewpoints.</li>
+            <li><b>Room or building:</b> Capture connected paths through the space and overlapping views of corners, openings, walls and ceiling/floor transitions.</li>
+            <li><b>Outdoor environment:</b> Move along a continuous route with overlapping views. Keep enough common landmarks between adjacent positions.</li>
+        </ul>
+
+        <h4>4. Avoid difficult surfaces and motion</h4>
+        <ul>
+            <li>Keep people, vehicles, trees in strong wind, water and other moving objects out of the capture where possible.</li>
+            <li>Plain, glossy, reflective, transparent or textureless surfaces are difficult to reconstruct. Add more viewpoints and diffuse lighting; do not expect missing surfaces to be inferred reliably.</li>
+            <li>Avoid repetitive patterns without unique landmarks and avoid large blank regions.</li>
+        </ul>
+
+        <p><b>Before processing:</b> CLEAR360 checks readability, exact duplicates, blur, exposure, feature density, camera/lens metadata and image dimensions. True visual overlap is assessed during camera matching, not guessed from image sharpness alone.</p>
         """)
         layout.addWidget(text)
 
@@ -402,7 +759,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             return
 
         p = self.selected_image_paths[row]
-        data = self.image_metadata.get(p.name, {})
+        data = self.image_metadata.get(str(p.resolve()), {})
 
         if "error" in data:
             self.lbl_meta_dims.setText(f"Error: {data['error']}")
@@ -438,31 +795,93 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.lbl_meta_quality.setText("Quality Rating: --")
         self.lbl_meta_quality.setStyleSheet("font-weight: bold; color: #94a3b8;")
 
-    def _on_scale_toggled(self, checked: bool):
-        """Enable or disable metric reference distance spinbox."""
-        self.spin_scale.setEnabled(checked)
+    def _on_quality_preset_changed(self, index: int = -1):
+        """Explain the resource/detail trade-off for the selected preset."""
+        if not hasattr(self, "combo_quality_preset"):
+            return
+        preset = self.combo_quality_preset.currentData()
+        descriptions = {
+            "fast": (
+                "Fast Preview: 800 px inputs · 1500 SIFT features · low-res geometry only · "
+                "skips refinement and texturing. Under-15-minute target is not guaranteed."
+            ),
+            "standard": (
+                "Quality: Standard · 1440 px inputs / 1400 px MVS · 6000 SIFT features · "
+                "balanced 4-view / 2-iteration depth matching · full refinement and "
+                "2048 px textured OBJ/GLB exports"
+            ),
+            "high": (
+                "Quality: High · 2400 px feature images · 8192 SIFT features · "
+                "higher RAM use and longer CPU processing"
+            ),
+        }
+        self.lbl_auto_quality.setText(
+            descriptions.get(preset, "Quality: Fast Preview")
+        )
 
     def _on_start_clicked(self):
-        """Trigger photogrammetry pipeline in dedicated background worker thread."""
+        """Run the best installed reconstruction engine with automatic settings."""
         if len(self.selected_image_paths) < 2:
             QtWidgets.QMessageBox.warning(
                 self,
-                "Insufficient Photographs",
-                "Please add at least 2 overlapping smartphone photographs to begin 3D reconstruction.\n\n"
-                "Tip: 4 photographs covering the surround view or 8–40+ overlapping views yield optimal results.",
+                "Add more photographs",
+                "Please upload at least two photographs with overlapping views of the same scene.",
             )
             return
+
+        photo_records = []
+        for image_path in self.selected_image_paths:
+            key = str(image_path.resolve())
+            record = dict(self.image_metadata.get(key) or {})
+            record.setdefault("path", key)
+            photo_records.append(record)
+
+        photo_set_report = PhotoSetQualityAuditor.audit(photo_records)
+        if not photo_set_report["can_reconstruct"]:
+            details = "\n".join(photo_set_report.get("warnings", []))
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Photo set cannot be reconstructed",
+                details or "At least two distinct, readable photographs are required.",
+            )
+            return
+
+        if photo_set_report["status"] == "review":
+            details = "\n".join(
+                f"• {warning}" for warning in photo_set_report.get("warnings", [])
+            )
+            answer = QtWidgets.QMessageBox.question(
+                self,
+                "Review uploaded photographs",
+                "CLEAR360 found issues that may reduce reconstruction quality:\n\n"
+                f"{details}\n\nProceed with reconstruction anyway?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No,
+            )
+            if answer != QtWidgets.QMessageBox.Yes:
+                return
+
+        backend, backend_reason = resolve_reconstruction_backend()
+        if backend == "openmvs" and len(self.selected_image_paths) < 6:
+            backend = "native"
+            backend_reason = (
+                "built-in CLEAR360 engine selected automatically because this upload "
+                "has fewer than six photos (COLMAP + OpenMVS needs at least six)"
+            )
 
         self.btn_start.setEnabled(False)
         self.btn_add_photos.setEnabled(False)
         self.prog_bar.setValue(0)
-        self.lbl_status.setText("Initializing photogrammetry engine...")
+        self.lbl_auto_engine.setText(f"Automatic engine: {backend_reason}")
+        self.lbl_status.setText("Preparing automatic 3D reconstruction...")
         self.lbl_status.setStyleSheet("font-size: 10px; color: #38bdf8;")
 
-        preset = self.combo_quality.currentData() or "standard"
-        ref_dist = self.spin_scale.value() if self.chk_scale.isChecked() else None
+        preset = str(self.combo_quality_preset.currentData() or "standard")
+        self.lbl_auto_quality.setText(
+            self.lbl_auto_quality.text() + f" · selected for this run: {preset.upper()}"
+        )
+        reference_distance = None
 
-        # Start live elapsed timer
         import time
         self._recon_start_time = time.time()
         if not hasattr(self, "elapsed_timer"):
@@ -471,13 +890,14 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             self.elapsed_timer.timeout.connect(self._update_elapsed_ui)
         self.elapsed_timer.start()
 
-        # Start managed QThread worker
         self.worker = ReconstructionWorker(
             pipeline=self.pipeline,
             image_paths=self.selected_image_paths,
             quality_preset=preset,
-            reference_distance_m=ref_dist,
+            reference_distance_m=reference_distance,
+            backend=backend,
             parent=self,
+            photo_set_report=photo_set_report,
         )
         self.worker.progress.connect(self._update_progress_ui)
         self.worker.finished_success.connect(self._on_reconstruction_success)
@@ -506,22 +926,115 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.prog_bar.setValue(100)
 
         session_id = str(res.get("session_id", ""))
-        mesh_path = str(res.get("mesh_ply", ""))
+        # The desktop viewport can display the OpenMVS textured OBJ/atlas
+        # directly; keep the GLB in the session for export and external viewers.
+        mesh_path = str(res.get("mesh_viewer") or res.get("mesh_ply", ""))
         self.current_session_id = session_id
 
-        self.lbl_status.setText(f"Reconstruction successful! Saved to {session_id}.")
-        self.lbl_status.setStyleSheet("font-size: 10px; color: #22c55e;")
+        result_report = res.get("report") or {}
+        backend_label = result_report.get("backend") or (
+            "COLMAP + OpenMVS" if res.get("mesh_glb") else "CLEAR360 Python"
+        )
+        preview_only = bool(result_report.get("preview_only", False))
+        quality = result_report.get("mesh_quality", {})
+        quality_status = quality.get("status", "not available")
+        texture_status = quality.get("texture_status", "not_checked")
+        texture_incomplete = texture_status == "atlas_mostly_black"
+        quality_score = quality.get("score")
+        quality_label = (
+            f"Mesh QA: {quality_status.upper()} ({quality_score:.1f}/100)"
+            if isinstance(quality_score, (int, float))
+            else f"Mesh QA: {quality_status.upper()}"
+        )
+        photo_set = result_report.get("photo_set") or {}
+        if texture_incomplete:
+            quality_label += " · TEXTURE INCOMPLETE"
+        if photo_set:
+            quality_label += f" · Photo set: {str(photo_set.get('status', 'unknown')).upper()}"
+        registration = result_report.get("registration") or {}
+        calibration = (
+            registration.get("camera_calibration")
+            or result_report.get("camera_calibration")
+            or {}
+        )
+        calibration_strategy = calibration.get("strategy")
+        if calibration_strategy:
+            quality_label += f" · Calibration: {calibration_strategy.replace('_', ' ').upper()}"
+        overlap = (
+            registration.get("camera_overlap")
+            or result_report.get("camera_overlap")
+            or {}
+        )
+        if overlap:
+            overlap_status_value = overlap.get("status")
+            if not overlap.get("available", False):
+                overlap_status = "NOT AVAILABLE"
+            elif overlap_status_value == "insufficient":
+                overlap_status = "INSUFFICIENT"
+            elif overlap_status_value == "disconnected":
+                overlap_status = "REVIEW"
+            else:
+                overlap_status = "CONNECTED"
+            quality_label += f" · Camera overlap: {overlap_status}"
+        if preview_only:
+            quality_label += " · GEOMETRY PREVIEW ONLY — no refinement or texture"
+            status_prefix = "Fast geometry preview generated — not a final textured asset"
+        else:
+            status_prefix = (
+                "Reconstruction generated — TEXTURE INCOMPLETE"
+                if texture_incomplete
+                else "Reconstruction successful"
+                if quality_status == "healthy"
+                else "Reconstruction generated — QA review required"
+            )
+        self.lbl_status.setText(
+            f"{status_prefix}. {backend_label} backend: {session_id}. {quality_label}."
+        )
+        status_color = (
+            "#38bdf8" if preview_only
+            else "#22c55e" if quality_status == "healthy"
+            else "#eab308" if quality_status == "review"
+            else "#ef4444" if quality_status == "poor"
+            else "#38bdf8"
+        )
+        self.lbl_status.setStyleSheet(f"font-size: 10px; color: {status_color};")
         self._refresh_session_list()
 
         # Emit completion signal to open in 3D viewport
         self.reconstruction_completed.emit(session_id, mesh_path)
 
-        QtWidgets.QMessageBox.information(
-            self,
-            "Photogrammetry Complete",
-            f"3D reconstruction completed successfully!\nSession: {session_id}\n\n"
-            "The reconstructed scene has been loaded into the 3D viewer.",
-        )
+        if preview_only:
+            dialog_title = "Fast Geometry Preview Ready"
+            dialog_message = (
+                f"Session: {session_id}\n\n"
+                "A low-resolution geometry-only preview was generated and loaded. "
+                "Mesh refinement and texture exports were intentionally skipped for speed. "
+                "Review the shape and camera coverage, then run Standard for the final textured asset."
+            )
+        elif texture_incomplete:
+            dialog_title = "Photogrammetry Generated — Texture Incomplete"
+            dialog_message = (
+                f"Session: {session_id}\n\n"
+                "The geometry was reconstructed, but more than 90% of sampled diffuse-atlas "
+                "texels are near-black. The model is loaded for inspection, but its photographic "
+                "colour is incomplete. Review reconstruction_quality.json and the source photos; "
+                "CLEAR360 has not recolored the dark pixels."
+            )
+        elif quality_status == "healthy":
+            dialog_title = "Photogrammetry Complete"
+            dialog_message = (
+                f"3D reconstruction completed and passed mesh QA.\nSession: {session_id}\n\n"
+                "The reconstructed scene has been loaded into the 3D viewer."
+            )
+        else:
+            dialog_title = "Photogrammetry Generated — Review Required"
+            dialog_message = (
+                f"Session: {session_id}\n\n"
+                f"Mesh QA status: {quality_status.upper()}. "
+                "The model is loaded for inspection, but it has not passed the healthy-quality gate. "
+                "Review reconstruction_quality.json and the pipeline diagnostics before treating it as complete."
+            )
+        QtWidgets.QMessageBox.information(self, dialog_title, dialog_message)
 
     @QtCore.Slot(str, str)
     def _on_reconstruction_failed(self, error_msg: str, tb_str: str):

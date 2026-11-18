@@ -11,6 +11,8 @@ from typing import Dict, Any, Optional, List, Tuple
 from PIL import Image, ExifTags
 import numpy as np
 
+from photo_reconstruction.image_loader import ensure_image_format_support
+
 
 class ExifReader:
     """Extracts and parses camera metadata from photograph EXIF headers."""
@@ -29,6 +31,7 @@ class ExifReader:
             return exif_data
 
         try:
+            ensure_image_format_support(p)
             with Image.open(p) as img:
                 raw_exif = img._getexif()
                 if raw_exif:
@@ -109,6 +112,12 @@ class ExifReader:
             "focal_length_35mm": f_35mm,
             "estimated_fx": float(fx),
             "estimated_fy": float(fy),
+            # Normalize focal length by the longest image dimension so captures
+            # from the same lens at different resolutions are comparable.
+            "normalized_fx": float(fx / max_dim),
+            "normalized_fy": float(fy / max_dim),
+            "image_width": int(width),
+            "image_height": int(height),
             "cx": float(cx),
             "cy": float(cy),
             "has_exif": bool(raw_exif),
@@ -132,20 +141,40 @@ class ExifReader:
         if len(camera_infos) < 2:
             return False, warnings
 
-        fx_values = [info["estimated_fx"] for info in camera_infos]
-        fx_min, fx_max = min(fx_values), max(fx_values)
+        fx_values = []
+        for info in camera_infos:
+            normalized_fx = info.get("normalized_fx")
+            if normalized_fx is None and info.get("estimated_fx") is not None:
+                normalized_fx = float(info["estimated_fx"]) / max(
+                    1,
+                    int(info.get("image_width", 1)),
+                    int(info.get("image_height", 1)),
+                )
+            try:
+                value = float(normalized_fx)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(value) and value > 0:
+                fx_values.append(value)
+        if len(fx_values) >= 2:
+            fx_min, fx_max = min(fx_values), max(fx_values)
 
-        # If focal length varies by more than 20%, flag mixed lenses
-        ratio = fx_max / (fx_min + 1e-6)
-        if ratio > 1.25:
-            warnings.append(
-                f"Mixed camera lenses detected across session (Focal length variation: {ratio:.1f}x). "
-                f"For optimal 3D photogrammetry, capture all images using the primary 1x lens."
-            )
-            return True, warnings
+            # A 25% normalized focal-length spread is a strong mixed-lens signal.
+            ratio = fx_max / (fx_min + 1e-6)
+            if ratio > 1.25:
+                warnings.append(
+                    f"Mixed camera lenses detected across session "
+                    f"(normalized focal-length variation: {ratio:.1f}x). "
+                    "For optimal 3D photogrammetry, capture all images using the same lens."
+                )
+                return True, warnings
 
-        # Check for multiple models
-        models = set(info["model"] for info in camera_infos if info["model"] != "Smartphone")
+        # Check for multiple camera models even when focal metadata is unavailable.
+        models = {
+            str(info.get("model", "Smartphone"))
+            for info in camera_infos
+            if str(info.get("model", "Smartphone")) not in {"", "Smartphone", "Unknown"}
+        }
         if len(models) > 1:
             warnings.append(f"Multiple camera models detected: {list(models)}. Per-camera bundle adjustment recommended.")
             return True, warnings

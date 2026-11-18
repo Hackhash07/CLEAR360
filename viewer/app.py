@@ -336,7 +336,7 @@ class Clear360ViewerWindow(QtWidgets.QMainWindow):
         self.viewport.canvas.events.draw.connect(self._on_canvas_draw)
 
     def _on_phone_display_mode_changed(self, mode: str):
-        """Toggle between textured mesh, solid surface mesh, and dense point cloud."""
+        """Toggle textured OBJ, solid surface, and dense point-cloud layers."""
         if mode == "mesh":
             self.viewport.visual_surface_mesh.visible = True
             self.viewport.visual_textured_mesh.visible = False
@@ -349,21 +349,45 @@ class Clear360ViewerWindow(QtWidgets.QMainWindow):
             self.viewport.visual_surface_mesh.visible = False
             self.viewport.visual_textured_mesh.visible = True
             self.viewport.visual_cloud.visible = False
+
+        self.viewport.visual_obj_untextured_mesh.visible = (
+            mode in ("textured", "texture")
+            and getattr(self.viewport, "_obj_untextured_triangle_count", 0) > 0
+        )
         self.viewport.request_update()
 
     def _on_phone_mesh_loaded(self, session_id: str, mesh_path: str):
         """Callback when photogrammetry completes."""
-        self.viewport.load_external_mesh(mesh_path)
+        loaded_mode = self.viewport.load_external_mesh(mesh_path)
+        # Keep MODE 2 active so the automotive default scene does not overwrite
+        # the newly reconstructed independent scene on the next mode switch.
+        self._set_app_mode("phone")
         self.lbl_status_frame.setText(f"Session: {session_id}")
         self.lbl_status_source.setText("Source: Smartphone Photogrammetry (SfM)")
+        if loaded_mode is None:
+            self.statusBar().showMessage(
+                f"Could not load reconstruction artifact: {mesh_path}", 6000
+            )
+            return
         if hasattr(self.phone_panel, "set_display_mode"):
-            self.phone_panel.set_display_mode("mesh")
+            # Trust the mode returned by the viewport. An OBJ can fall back to
+            # an untextured solid mesh when its material or UV data is invalid.
+            self.phone_panel.set_display_mode(loaded_mode)
 
     def _on_phone_session_requested(self, session_id: str):
         """Load past photogrammetry session mesh."""
         sess_dir = self.data_loader.data_dir / "phone_reconstruction" / session_id
+        preview_ply = sess_dir / "mesh" / "scene_geometry_preview.ply"
         mesh_ply = sess_dir / "mesh" / "scene_mesh.ply"
-        if mesh_ply.exists():
+        mesh_obj = sess_dir / "mesh" / "scene_mesh.obj"
+        mesh_glb = sess_dir / "mesh" / "scene_textured.glb"
+        if mesh_obj.exists():
+            self._on_phone_mesh_loaded(session_id, str(mesh_obj))
+        elif mesh_glb.exists():
+            self._on_phone_mesh_loaded(session_id, str(mesh_glb))
+        elif preview_ply.exists():
+            self._on_phone_mesh_loaded(session_id, str(preview_ply))
+        elif mesh_ply.exists():
             self._on_phone_mesh_loaded(session_id, str(mesh_ply))
         else:
             self.statusBar().showMessage(f"No mesh found in {session_id}", 4000)

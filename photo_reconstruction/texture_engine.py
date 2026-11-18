@@ -35,6 +35,7 @@ import numpy as np
 import open3d as o3d
 
 from photo_reconstruction.camera_model import PhoneCameraModel
+from photo_reconstruction.texture_arrays import build_unwelded_uv_arrays
 
 
 @dataclass
@@ -295,44 +296,21 @@ class VisibilityAwareTextureEngine:
             cam_cell_offsets[c_idx] = (x_off, y_off, scale_x, scale_y)
             cam_counts[name] = int(np.sum(best_cam_idx == c_idx))
 
-        # 4. Generate Unwelded UV Vertices and Atlas UV Coordinates
-        new_verts = np.zeros((num_faces * 3, 3), dtype=np.float32)
-        new_uvs = np.zeros((num_faces * 3, 2), dtype=np.float32)
-        new_faces = np.arange(num_faces * 3, dtype=np.uint32).reshape(num_faces, 3)
-
-        for f_i in range(num_faces):
-            c_idx = best_cam_idx[f_i]
-            pts_3d = verts[faces[f_i]]  # (3, 3)
-            new_verts[f_i * 3 : f_i * 3 + 3] = pts_3d
-
-            if c_idx < 0 or c_idx not in cam_cell_offsets:
-                # Untextured / rear-facing / occluded face: map to neutral swatch
-                new_uvs[f_i * 3 : f_i * 3 + 3] = np.array([
-                    [u_neutral, v_neutral],
-                    [u_neutral, v_neutral],
-                    [u_neutral, v_neutral],
-                ], dtype=np.float32)
-                continue
-
-            x_off, y_off, s_x, s_y = cam_cell_offsets[c_idx]
-            cam = camera_models[cam_names[c_idx]]
-
-            # Project the 3 vertices into the valid observing camera
-            pix_2d, _, _ = cam.project_world_to_image(pts_3d, check_bounds=False)
-
-            u_atlas = (x_off + pix_2d[:, 0] * s_x) / float(total_atlas_w)
-            v_atlas = (y_off + pix_2d[:, 1] * s_y) / float(total_atlas_h)
-
-            # Clamp UV within atlas cell bounds to avoid seam bleeding
-            u_min = x_off / float(total_atlas_w)
-            u_max = (x_off + cell_w) / float(total_atlas_w)
-            v_min = y_off / float(total_atlas_h)
-            v_max = (y_off + cell_h) / float(total_atlas_h)
-
-            u_atlas = np.clip(u_atlas, u_min + 1e-4, u_max - 1e-4)
-            v_atlas = np.clip(v_atlas, v_min + 1e-4, v_max - 1e-4)
-
-            new_uvs[f_i * 3 : f_i * 3 + 3] = np.column_stack([u_atlas, v_atlas])
+        # 4. Generate unwelded UV vertices in batched per-camera projection calls.
+        new_verts, new_faces, new_uvs = build_unwelded_uv_arrays(
+            verts,
+            faces,
+            best_cam_idx,
+            cam_names,
+            camera_models,
+            cam_cell_offsets,
+            total_atlas_width=total_atlas_w,
+            total_atlas_height=total_atlas_h,
+            cell_width=cell_w,
+            cell_height=cell_h,
+            neutral_u=u_neutral,
+            neutral_v=v_neutral,
+        )
 
         coverage_pct = float(textured_count / float(num_faces) * 100.0) if num_faces > 0 else 0.0
 
@@ -375,10 +353,9 @@ class VisibilityAwareTextureEngine:
             m_orig.compute_vertex_normals()
             orig_vn = np.asarray(m_orig.vertex_normals, dtype=np.float32)
 
-            new_vn = np.zeros_like(new_verts, dtype=np.float32)
-            for f_i in range(num_faces):
-                orig_face = faces[f_i]
-                new_vn[f_i * 3 : f_i * 3 + 3] = orig_vn[orig_face]
+            # Every exported triangle gets its source vertex normals in the
+            # same unwelded order as the UV-split vertex array.
+            new_vn = orig_vn[faces].reshape(-1, 3).astype(np.float32, copy=False)
 
             obj_path = o_dir / f"{base_name}.obj"
             with open(obj_path, "w") as f_obj:

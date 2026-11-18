@@ -5,7 +5,7 @@ build-backend = "setuptools.backends.legacy:build"
 [project]
 name = "clear360"
 version = "0.1.0"
-description = "Real-Time 3D Automotive Surroundings Reconstruction"
+description = "Photo-to-3D Photogrammetry and 360-Degree Perception Platform"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
@@ -18,10 +18,14 @@ dependencies = [
     "numpy>=1.26",
     "scipy>=1.13",
     "PySide6>=6.7",
+    "vispy>=0.17.0",
     "PyYAML>=6.0",
     "Pillow>=10.3",
+    "pillow-heif>=1.0",
     "OpenEXR>=3.2",
-    "Imath>=2.5",
+    "trimesh>=4.4",
+    "matplotlib>=3.8",
+    "pycolmap>=3.10",
 ]
 
 [project.optional-dependencies]
@@ -47,6 +51,7 @@ testpaths = [
     "scene/tests",
     "obstacles/tests",
     "viewer/tests",
+    "photo_reconstruction/tests",
     "validation/",
 ]
 python_files = ["test_*.py"]
