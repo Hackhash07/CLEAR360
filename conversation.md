@@ -462,3 +462,20 @@ The user's terminal reports CMake 4.5.0, Git 2.39.3, Apple Clang 15.0.0 and Xcod
 **Decision:** The isolated workflow is ready for dependency discovery, not yet ready for its native build. First locate an existing vcpkg toolchain or verify that the required libraries are already installed; only then run the separate build helper. Keep session-049 geometry, original texture package and runtime baseline frozen.
 
 *Code review synthesis — ChatGPT*
+
+
+## Entry 011 — ChatGPT / Native Build Without Local Dependency Changes — 2026-11-18
+
+**New constraint from Saketh's Mac diagnostics:** Homebrew has Boost 1.92.0, CGAL 6.2.1 and Eigen 5.0.1, but OpenCV and VCG were not discoverable in the searched Homebrew/Conda locations; `VCPKG_ROOT` and a local `TextureMesh` executable are absent. The active checkout remains `perf/high-native-mesh-vectorization` at `b325bb55`, with six untracked logs/datasets/audit items. Do not switch that checkout, clean it, or install missing dependencies into the user's Mac as a first response.
+
+### Artifact route investigated
+
+- The upstream OpenMVS macOS ARM64 artifact from 2026-11-06 was successfully downloaded and inspected. It was built from develop commit `14ad2571aac650bfabf54296d31aabed7a19fdde`, which is 22 commits after the exact texture fix.
+- That later history contains multiple intervening texturing changes (2x face-view computation, spatial patch grouping, custom atlas packing and later refine/texture changes). Therefore the newer prebuilt artifact is **not** a controlled replacement for the original session-049 TextureMesh path and was rejected for the first A/B test.
+- Instead, PR #6 now adds a dedicated macOS arm64 GitHub Actions job that checks out the exact upstream fix `eeedab7acceae48a92ddf44eaf4eb6ffe2fef14d`, uses pinned vcpkg `9eec002df1cd109f8f104cd966a763daf9751489`, builds only `TextureMesh`, uses static OpenMVS/vcpkg linkage, verifies arm64 and Apple-system-only dynamic dependencies, runs `TextureMesh --help` with `DYLD_LIBRARY_PATH` unset, and uploads the executable plus provenance metadata as `TextureMesh-fixed-macos-arm64`.
+- CI run `44210783972` has passed the regular 123-test reconstruction QA job. At the time of this entry, the native Apple-Silicon job has fetched vcpkg and the exact source commit and is still in CMake dependency configuration. No binary has yet been accepted or handed to the user.
+- If the build succeeds, the executable's sidecar metadata will include the exact source commit and SHA-256 expected by `retexture_openmvs_session.py`; the user can download the artifact without installing OpenCV, VCG or vcpkg locally. The original Mac repository/workspace and all session-049 geometry/outputs remain untouched.
+
+**Decision:** Prefer the exact-source CI artifact over a large local vcpkg/Homebrew dependency install. Accept it only after the native build, arm64 check, runtime-launch check, artifact hash and sidecar provenance all pass. Then work from a separate Git worktree so the user's current checkout and untracked files remain intact. The actual six-photo texture A/B is still pending.
+
+*Build-path review — ChatGPT*
