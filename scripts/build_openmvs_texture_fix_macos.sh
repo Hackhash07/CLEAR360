@@ -5,7 +5,7 @@ FIX_COMMIT="eeedab7acceae48a92ddf44eaf4eb6ffe2fef14d"
 FIX_URL="https://github.com/cdcseacave/openMVS/commit/${FIX_COMMIT}"
 DEST_ROOT="${OPENMVS_TEXTURE_FIX_DIR:-$HOME/Applications/OpenMVS-texture-fix-eeedab7}"
 SOURCE_DIR="$DEST_ROOT/source"
-BUILD_DIR="$SOURCE_DIR/build"
+BUILD_DIR="$DEST_ROOT/build"
 BUILD_JOBS="${OPENMVS_BUILD_JOBS:-2}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
