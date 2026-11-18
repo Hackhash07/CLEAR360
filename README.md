@@ -67,7 +67,7 @@ In **MODE 2: Phone Photo 3D World**, the user uploads photographs and starts rec
 CLEAR360 automatically:
 - Selects **COLMAP + OpenMVS** when COLMAP and all required OpenMVS executables are available.
 - Falls back to the built-in **CLEAR360 Python / Open3D** reconstruction pipeline when the external tools are unavailable.
-- Uses the balanced `standard` quality preset to keep memory use and runtime reasonable on laptop hardware.
+- Opens with **Fast Preview** as a geometry-only diagnostic mode. Select **Standard**, **High**, or **Maximum** when you need a complete textured mesh and GLB; Fast Preview intentionally skips meshing and texturing.
 - Archives uploaded originals under `source_uploads/` and creates SfM-readable working copies under `original_images/`; HEIC, TIFF and BMP inputs are normalized to JPEG without discarding the original upload.
 - Saves `input_manifest.json` to map each original filename to its working filename and conversion status.
 - Saves a reconstruction session, textured OBJ/MTL/PNG for the built-in viewer, and a textured GLB for Blender/external tools when using OpenMVS.
