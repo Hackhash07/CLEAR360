@@ -83,6 +83,7 @@ fi
 python3 - "$TEXTURE_MESH" "$SOURCE_DIR" "$FIX_COMMIT" "$FIX_URL" "$BUILD_JOBS" <<'PY'
 import hashlib
 import json
+import os
 import platform
 import subprocess
 import sys
@@ -108,7 +109,7 @@ metadata = {
     "machine": platform.machine(),
     "build_type": "Release",
     "build_jobs": jobs,
-    "vcpkg_root": __import__("os").environ.get("VCPKG_ROOT") or None,
+    "vcpkg_root": os.environ.get("VCPKG_ROOT") or None,
     "built_at_utc": datetime.now(timezone.utc).isoformat(),
 }
 metadata_path = binary.with_name("TextureMesh.build.json")
