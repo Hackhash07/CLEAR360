@@ -161,22 +161,22 @@ def test_colmap_cli_uses_current_feature_extraction_option_groups():
     options = _colmap_feature_extraction_options(max_image_size=1600, max_num_features=2500)
 
     assert options == [
-        "--FeatureExtraction.max_image_size", "1600",
+        "--SiftExtraction.max_image_size", "1600",
         "--SiftExtraction.max_num_features", "2500",
-        "--FeatureExtraction.use_gpu", "0",
+        "--SiftExtraction.use_gpu", "0",
         "--SiftExtraction.estimate_affine_shape", "1",
         "--SiftExtraction.domain_size_pooling", "1",
     ]
-    assert "--SiftExtraction.max_image_size" not in options
-    assert "--SiftExtraction.use_gpu" not in options
+    assert "--SiftExtraction.max_image_size" in options
+    assert "--SiftExtraction.use_gpu" in options
 
 
 def test_colmap_cli_uses_current_feature_matching_option_group():
     from photo_reconstruction.openmvs_backend import _colmap_feature_matching_options
 
     assert _colmap_feature_matching_options() == [
-        "--FeatureMatching.use_gpu", "0",
-        "--FeatureMatching.guided_matching", "1",
+        "--SiftMatching.use_gpu", "0",
+        "--SiftMatching.guided_matching", "1",
     ]
 
 
@@ -187,12 +187,12 @@ def test_colmap_feature_extraction_uses_robust_sift_options():
     options = _colmap_feature_extraction_options(max_image_size=1600, max_num_features=6000)
     pairs = dict(zip(options[0::2], options[1::2]))
 
-    assert pairs["--FeatureExtraction.max_image_size"] == "1600"
+    assert pairs["--SiftExtraction.max_image_size"] == "1600"
     assert pairs["--SiftExtraction.max_num_features"] == "6000"
     assert pairs["--SiftExtraction.estimate_affine_shape"] == "1"
     assert pairs["--SiftExtraction.domain_size_pooling"] == "1"
-    assert pairs["--FeatureExtraction.use_gpu"] == "0"
-    assert "--SiftExtraction.max_image_size" not in options
+    assert pairs["--SiftExtraction.use_gpu"] == "0"
+    assert "--SiftExtraction.max_image_size" in options
 
 
 def test_colmap_matching_uses_geometry_guided_sift_matching():
@@ -201,8 +201,8 @@ def test_colmap_matching_uses_geometry_guided_sift_matching():
     options = _colmap_feature_matching_options()
     pairs = dict(zip(options[0::2], options[1::2]))
 
-    assert pairs["--FeatureMatching.use_gpu"] == "0"
-    assert pairs["--FeatureMatching.guided_matching"] == "1"
+    assert pairs["--SiftMatching.use_gpu"] == "0"
+    assert pairs["--SiftMatching.guided_matching"] == "1"
 
 
 def test_quality_fusion_requires_three_supporting_views_but_draft_allows_two():
@@ -363,13 +363,13 @@ def test_fast_preview_disables_expensive_quality_only_stages():
 
     extract_pairs = dict(zip(fast_extract[0::2], fast_extract[1::2]))
     match_pairs = dict(zip(fast_match[0::2], fast_match[1::2]))
-    assert extract_pairs["--FeatureExtraction.max_image_size"] == "800"
+    assert extract_pairs["--SiftExtraction.max_image_size"] == "800"
     assert extract_pairs["--SiftExtraction.max_num_features"] == "1500"
-    assert extract_pairs["--FeatureExtraction.num_threads"] == "2"
+    assert extract_pairs["--SiftExtraction.num_threads"] == "2"
     assert "--SiftExtraction.estimate_affine_shape" not in fast_extract
     assert "--SiftExtraction.domain_size_pooling" not in fast_extract
-    assert match_pairs["--FeatureMatching.num_threads"] == "2"
-    assert "--FeatureMatching.guided_matching" not in fast_match
+    assert match_pairs["--SiftMatching.num_threads"] == "2"
+    assert "--SiftMatching.guided_matching" not in fast_match
     assert _openmvs_fusion_minimum_views("fast") == 2
     assert _openmvs_point_cloud_filter_threshold("fast") is None
 
