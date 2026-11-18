@@ -59,6 +59,7 @@ class MeshBuilder:
         points: np.ndarray,
         colors: np.ndarray,
         normals: np.ndarray,
+        camera_centers: Optional[np.ndarray] = None,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Reconstruct a 3D surface mesh from points, colors, and normals.
@@ -204,33 +205,48 @@ class MeshBuilder:
         mesh_cols = np.asarray(mesh.vertex_colors, dtype=np.float32)
         mesh_norms = np.asarray(mesh.vertex_normals, dtype=np.float32)
 
-        # Transfer authentic photographic point colors
-        if len(verts) > 0 and (len(mesh_cols) == 0 or len(mesh_cols) != len(verts) or np.all(mesh_cols == 0.7)):
-            if len(pcd.points) > 0 and len(pcd.colors) > 0:
-                pcd_tree = o3d.geometry.KDTreeFlann(pcd)
-                pcd_colors = np.asarray(pcd.colors, dtype=np.float32)
-                mesh_cols = np.zeros((len(verts), 3), dtype=np.float32)
-                for i, v in enumerate(verts):
-                    [k, idx, _] = pcd_tree.search_knn_vector_3d(v.astype(np.float64), 1)
-                    if k > 0 and idx[0] < len(pcd_colors):
-                        mesh_cols[i] = pcd_colors[idx[0]]
-                    else:
-                        mesh_cols[i] = [0.7, 0.7, 0.7]
-            else:
-                mesh_cols = np.ones((len(verts), 3), dtype=np.float32) * 0.7
-
-        # Ensure outward face winding and filter sliver artifacts (CLEAR360 M7.3.4)
+        # Filter degenerate/sliver faces. This operation reindexes vertices, so
+        # all per-vertex attributes must be regenerated for the filtered topology.
         from photo_reconstruction.normal_orientation import NormalOrientationEngine
         norm_engine = NormalOrientationEngine()
         verts, faces, _ = norm_engine.filter_triangular_artifacts(verts, faces)
-        if len(faces) > 0:
-            cam_c = np.array([0.0, 0.0, 2.1])
-            faces, mesh_norms, _ = norm_engine.orient_faces_towards_cameras(verts, faces, cam_c)
 
-        alpha = np.ones((len(mesh_cols), 1), dtype=np.float32)
-        if len(alpha) != len(verts):
-            alpha = np.ones((len(verts), 1), dtype=np.float32)
-            mesh_cols = np.ones((len(verts), 3), dtype=np.float32) * 0.7
+        # Orient faces only against camera centres actually recovered for this
+        # reconstruction. Never use a synthetic/default camera position: doing so
+        # can reverse normals on arbitrary scenes and corrupt texture visibility.
+        centers = None
+        if camera_centers is not None:
+            centers = np.asarray(camera_centers, dtype=np.float64).reshape(-1, 3)
+            centers = centers[np.all(np.isfinite(centers), axis=1)]
+            if len(centers) == 0:
+                centers = None
+        if len(faces) > 0 and centers is not None:
+            faces, _, _ = norm_engine.orient_faces_towards_cameras(verts, faces, centers)
+
+        # Re-sample colors from the original observed point cloud after vertex
+        # reindexing so colors remain aligned with the filtered mesh vertices.
+        if len(verts) > 0 and len(pcd.points) > 0 and len(pcd.colors) > 0:
+            pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+            pcd_colors = np.asarray(pcd.colors, dtype=np.float32)
+            mesh_cols = np.empty((len(verts), 3), dtype=np.float32)
+            for i, vertex in enumerate(verts):
+                _, idx, _ = pcd_tree.search_knn_vector_3d(vertex.astype(np.float64), 1)
+                mesh_cols[i] = pcd_colors[idx[0]] if len(idx) else (0.7, 0.7, 0.7)
+        else:
+            mesh_cols = np.full((len(verts), 3), 0.7, dtype=np.float32)
+
+        # Return genuine vertex normals (not per-face normals) for downstream PLY
+        # export and rendering.
+        mesh_out = o3d.geometry.TriangleMesh()
+        mesh_out.vertices = o3d.utility.Vector3dVector(verts.astype(np.float64))
+        mesh_out.triangles = o3d.utility.Vector3iVector(faces.astype(np.int32))
+        if len(faces) > 0:
+            mesh_out.compute_vertex_normals()
+            mesh_norms = np.asarray(mesh_out.vertex_normals, dtype=np.float32)
+        else:
+            mesh_norms = np.zeros((len(verts), 3), dtype=np.float32)
+
+        alpha = np.ones((len(verts), 1), dtype=np.float32)
         rgba_cols = np.hstack([mesh_cols, alpha])
 
         return verts, faces, rgba_cols, mesh_norms

@@ -70,11 +70,40 @@ class M736GeometricConsensusEngine:
         self,
         base_reproj_thresh_px: float = 3.0,
         normal_compat_thresh: float = 0.707,  # 45 deg max normal divergence
-        voxel_fusion_size: float = 0.025,      # 25 mm normal-compatible fusion grid
+        voxel_fusion_size: float = 0.025,      # units follow the COLMAP scene gauge
+        minimum_support_count: int = 1,
     ):
         self.base_reproj_thresh_px = float(base_reproj_thresh_px)
         self.normal_compat_thresh = float(normal_compat_thresh)
         self.voxel_fusion_size = float(voxel_fusion_size)
+        self.minimum_support_count = int(minimum_support_count)
+        if self.minimum_support_count not in (1, 2):
+            raise ValueError("minimum_support_count must be 1 or 2.")
+
+    @staticmethod
+    def _camera_models_at_depth_resolution(
+        camera_models: Dict[str, PhoneCameraModel],
+        depth_maps: Dict[str, np.ndarray],
+    ) -> Dict[str, PhoneCameraModel]:
+        """Return per-view cameras whose intrinsics match each depth-map pixel grid."""
+        scaled: Dict[str, PhoneCameraModel] = {}
+        for name, camera in camera_models.items():
+            if name not in depth_maps:
+                continue
+            depth = np.asarray(depth_maps[name])
+            if depth.ndim != 2:
+                continue
+            height, width = depth.shape
+            if camera.width != width or camera.height != height:
+                scaled[name] = camera.rescale(width, height)
+            else:
+                scaled[name] = camera
+        return scaled
+
+    def _verified_support_mask(self, support_counts: np.ndarray) -> np.ndarray:
+        """Select samples supported by the configured number of other cameras."""
+        counts = np.asarray(support_counts, dtype=np.int32)
+        return counts >= self.minimum_support_count
 
     @staticmethod
     def adaptive_depth_threshold(depth_z: float) -> float:
@@ -106,7 +135,11 @@ class M736GeometricConsensusEngine:
         confidence_weights : (N,) float32
         report : GeometricConsensusReport
         """
-        cam_names = sorted(list(camera_models.keys()))
+        # Depth maps may be restored at original-photo resolution while SfM
+        # intrinsics/feature coordinates use COLMAP's extraction resolution.
+        # Use a non-mutating, per-view camera copy on the depth-map pixel grid.
+        depth_camera_models = self._camera_models_at_depth_resolution(camera_models, depth_maps)
+        cam_names = sorted(depth_camera_models)
         num_cams = len(cam_names)
 
         raw_candidates_list = []
@@ -117,10 +150,13 @@ class M736GeometricConsensusEngine:
         for c_idx, name in enumerate(cam_names):
             if name not in depth_maps:
                 continue
-            cam = camera_models[name]
+            cam = depth_camera_models[name]
             d_map = depth_maps[name]
             img = images_rgb.get(name)
             H, W = d_map.shape[:2]
+            if img is not None and img.shape[:2] != (H, W):
+                interpolation = cv2.INTER_AREA if img.shape[0] > H or img.shape[1] > W else cv2.INTER_LINEAR
+                img = cv2.resize(img, (W, H), interpolation=interpolation)
 
             v_grid, u_grid = np.mgrid[0:H:stride, 0:W:stride]
             d = d_map[v_grid, u_grid]
@@ -161,7 +197,7 @@ class M736GeometricConsensusEngine:
         all_reproj_errs = []
 
         for j_idx, target_name in enumerate(cam_names):
-            target_cam = camera_models[target_name]
+            target_cam = depth_camera_models[target_name]
             target_depth = depth_maps[target_name]
             H_t, W_t = target_depth.shape[:2]
 
@@ -229,21 +265,28 @@ class M736GeometricConsensusEngine:
         single_view_mask = support_counts == 0
 
         # M7.3.9 Phase 2: Confidence-Aware Point Separation
-        # Retain ONLY geometrically verified points (high confidence + validated) in reconstruction.
-        # Single-view points are uncertain and retained exclusively in a separate diagnostic layer.
-        verified_mask = support_counts >= 1
+        # Retain geometrically supported points according to minimum_support_count.
+        # K==1 and K==0 samples remain available in separate diagnostic layers.
+        # Production default keeps samples supported by >=1 other view.
+        # A stricter diagnostic mode can require >=2 other views to isolate
+        # multi-view consensus surfaces from single-other-view support.
+        verified_mask = self._verified_support_mask(support_counts)
         clean_pts = collapsed_pts[verified_mask]
         clean_cols = all_colors[verified_mask]
         clean_weights = (support_counts[verified_mask] + 1).astype(np.float32)
 
-        # Store uncertain points for diagnostic layer
+        # Preserve lower-confidence strata separately for diagnostics.
+        self.single_other_view_pts = collapsed_pts[med_conf_mask]
+        self.single_other_view_cols = all_colors[med_conf_mask]
         self.uncertain_pts = collapsed_pts[single_view_mask]
         self.uncertain_cols = all_colors[single_view_mask]
 
+        # Require a minimum verified support before surface reconstruction.
+        # This is a quality gate, not a request for arbitrary point density.
         if len(clean_pts) < 1000:
             raise RuntimeError(
                 f"Multi-view geometric consensus failed: only {len(clean_pts)} verified points "
-                f"(requires >= 1000). Check photograph overlap and feature correspondence."
+                f"(requires >= 1000 before fusion). Check photograph overlap and feature correspondence."
             )
 
         # 4. Estimate Clean Normals using Source Camera Line-of-Sight
@@ -253,7 +296,7 @@ class M736GeometricConsensusEngine:
         raw_norms = np.asarray(pcd.normals, dtype=np.float32)
 
         # Assign normal orientation towards closest camera optical center
-        cam_centers = np.array([cam.camera_center for cam in camera_models.values()], dtype=np.float32)
+        cam_centers = np.array([cam.camera_center for cam in depth_camera_models.values()], dtype=np.float32)
         oriented_norms = np.zeros_like(raw_norms)
 
         for i, pt in enumerate(clean_pts):

@@ -82,6 +82,26 @@ def validate_quality_preset(preset: str) -> str:
     return p
 
 
+def resolve_scene_profile(session_dir: Path) -> str:
+    """Return an explicitly selected scene profile; arbitrary phone photos default to generic."""
+    profile_path = Path(session_dir) / "scene_profile.json"
+    try:
+        with profile_path.open("r", encoding="utf-8") as profile_file:
+            metadata = json.load(profile_file)
+    except FileNotFoundError:
+        return "generic"
+    except (OSError, json.JSONDecodeError, TypeError):
+        return "generic"
+
+    if not isinstance(metadata, dict):
+        return "generic"
+    profile = str(metadata.get("profile", "generic")).strip().lower()
+    if profile == "architectural_fountain":
+        return profile
+    # Unknown or unsupported profile names must never activate a specialized assembler.
+    return "generic"
+
+
 class PhoneReconstructionPipeline:
     """End-to-end smartphone 3D photogrammetry reconstruction pipeline."""
 
@@ -239,44 +259,116 @@ class PhoneReconstructionPipeline:
         update_progress(60, f"Generating dense 3D point cloud ({preset_cfg['voxel_size']}m voxel)...")
         from photo_reconstruction.depth_helper import IsolatedDepthEstimator
         reg_paths = [img_target_dir / name for name in camera_poses.keys()]
-        depth_maps = IsolatedDepthEstimator.estimate_depths_for_images(reg_paths, session_dir / "depth_cache")
-
-        # Robust per-view SfM-scale depth alignment (held-out validation)
+        raw_depth_maps = IsolatedDepthEstimator.estimate_depths_for_images(
+            reg_paths, session_dir / "depth_cache"
+        )
+        # Strict MVS accepts only views whose affine depth calibration passed a
+        # genuine held-out check. Draft mode may still use raw monocular depth as
+        # a clearly unverified preview, but it is never used for strict fusion.
+        mvs_flag = use_mvs if use_mvs is not None else preset_cfg.get("use_mvs_verification", False)
+        depth_maps = dict(raw_depth_maps)
+        texture_depth_maps = None
         camera_models = sfm_res.get("camera_models", {})
         sparse_tracks = sfm_res.get("sparse_tracks", {})
-        if depth_maps and camera_models and sparse_tracks:
-            update_progress(65, "Aligning monocular depth scale to SfM coordinate frame (held-out validation)...")
+        trusted_camera_models = dict(camera_models)
+
+        if raw_depth_maps and camera_models and sparse_tracks:
+            update_progress(65, "Calibrating per-view depth against held-out SfM anchors...")
             from photo_reconstruction.depth_aligner import SfMDepthAligner
             aligner = SfMDepthAligner(mode="regularized")
             align_res = aligner.align_depth_maps(
-                depth_maps=depth_maps,
+                depth_maps=raw_depth_maps,
                 camera_models=camera_models,
                 sparse_tracks=sparse_tracks,
             )
-            depth_maps = align_res.aligned_depth_maps
+            accepted_depth_maps = dict(align_res.aligned_depth_maps)
+            accepted_names = sorted(accepted_depth_maps.keys())
+            texture_depth_maps = accepted_depth_maps or None
 
-            # Save depth alignment diagnostics
+            # In strict MVS mode, unvalidated monocular views are excluded from
+            # both cross-view fusion and visibility/occlusion decisions.
+            if mvs_flag:
+                depth_maps = accepted_depth_maps
+                trusted_camera_models = {
+                    name: camera_models[name]
+                    for name in accepted_names
+                    if name in camera_models
+                }
+            else:
+                # Draft is an explicitly approximate preview path. Use accepted
+                # maps where available; if none pass, retain raw maps for preview.
+                depth_maps = accepted_depth_maps or dict(raw_depth_maps)
+
             align_diag = {
                 "mode": align_res.mode,
                 "global_scale": float(align_res.global_scale),
-                "total_anchors": int(align_res.total_anchors),
+                "total_training_anchors": int(align_res.total_anchors),
+                "accepted_views": accepted_names,
+                "rejected_views": sorted(
+                    name for name, stats in align_res.view_stats.items() if not stats.success
+                ),
+                "limits": {
+                    "median_relative_error": aligner.max_val_median_rel,
+                    "p90_relative_error": aligner.max_val_p90_rel,
+                },
                 "views": {
                     name: {
-                        "anchors": s.num_anchors,
+                        "anchors": int(s.num_anchors),
                         "scale": float(s.median_scale),
-                        "mad": float(s.mad_scale),
-                        "raw_residual": float(s.raw_residual_median),
-                        "aligned_residual": float(s.aligned_residual_median),
-                        "reduction_pct": float(s.residual_reduction_pct),
+                        "offset": float(s.depth_offset),
+                        "mad_scale": float(s.mad_scale),
+                        "raw_residual_median": float(s.raw_residual_median),
+                        "aligned_residual_median": float(s.aligned_residual_median),
+                        "validation_median_relative_error": float(s.validation_median_relative_error),
+                        "validation_p90_relative_error": float(s.validation_p90_relative_error),
+                        "residual_reduction_pct": float(s.residual_reduction_pct),
+                        "success": bool(s.success),
+                        "status": s.status_message,
                     }
                     for name, s in align_res.view_stats.items()
                 },
             }
-            with open(session_dir / "depth_alignment_report.json", "w") as f_diag:
+            with open(session_dir / "depth_alignment_report.json", "w", encoding="utf-8") as f_diag:
                 json.dump(align_diag, f_diag, indent=2)
 
+            if mvs_flag and len(depth_maps) < 2:
+                rejected = {
+                    name: stats.status_message
+                    for name, stats in align_res.view_stats.items()
+                    if not stats.success
+                }
+                raise RuntimeError(
+                    "Strict multi-view reconstruction stopped: fewer than two camera views "
+                    "passed held-out depth calibration. The per-view diagnostics were saved. "
+                    "No unverified depth sheets were fused. "
+                    f"Accepted views: {accepted_names}. Rejected views: {rejected}"
+                )
+
+        if mvs_flag and not (raw_depth_maps and camera_models and sparse_tracks):
+            reason = (
+                f"depth maps={len(raw_depth_maps)}, camera models={len(camera_models)}, "
+                f"tracked views={len(sparse_tracks)}"
+            )
+            with open(session_dir / "depth_alignment_report.json", "w", encoding="utf-8") as f_diag:
+                json.dump({
+                    "status": "not_run",
+                    "reason": "Strict MVS requires depth maps, SfM camera models, and sparse feature tracks.",
+                    "available_inputs": reason,
+                }, f_diag, indent=2)
+            raise RuntimeError(
+                "Strict multi-view reconstruction stopped: depth calibration could not run. "
+                f"Available inputs: {reason}. No unverified monocular depth was fused."
+            )
+
+        if mvs_flag and len(depth_maps) < 2:
+            raise RuntimeError(
+                "Strict multi-view reconstruction stopped: fewer than two depth maps are "
+                "available for validated geometric fusion. See depth_alignment_report.json; "
+                "no unverified monocular depth was substituted."
+            )
+
         dense_engine = DenseReconstructor(voxel_size=preset_cfg["voxel_size"])
-        mvs_flag = use_mvs if use_mvs is not None else preset_cfg.get("use_mvs_verification", False)
+        dense_camera_models = trusted_camera_models if mvs_flag else camera_models
         dense_pts, dense_cols, dense_norms = dense_engine.reconstruct_dense(
             image_dir=img_target_dir,
             camera_poses=camera_poses,
@@ -284,7 +376,7 @@ class PhoneReconstructionPipeline:
             sparse_points=sparse_pts,
             sparse_colors=sparse_cols,
             use_mvs_verification=mvs_flag,
-            camera_models=camera_models,
+            camera_models=dense_camera_models,
             session_dir=session_dir,
         )
 
@@ -323,10 +415,18 @@ class PhoneReconstructionPipeline:
         mesh_obj = mesh_dir / "scene_mesh.obj"
         textured_ok = False
 
-        if camera_models and img_dict:
+        # Generic smartphone sessions must not use the legacy fountain-specific
+        # RegionSceneAssembler. That assembler segments fixed fountain coordinates
+        # (wall, basin, sculpture, pavement), which corrupts arbitrary rooms/objects.
+        # Keep it available only behind an explicit opt-in for a future, separately
+        # selected architectural-fountain profile. The default phone workflow uses
+        # the generic geometry produced by SfM/MVS and MeshBuilder.
+        scene_profile = resolve_scene_profile(session_dir)
+
+        if scene_profile == "architectural_fountain" and camera_models and img_dict:
             try:
                 from photo_reconstruction.scene_assembly import RegionSceneAssembler
-                update_progress(80, "Building modular 3D surface mesh and outward-facing normal assembly...")
+                update_progress(80, "Building explicitly requested fountain-specific scene assembly...")
                 assembler = RegionSceneAssembler(session_dir)
                 scene_regions, final_obj, final_ply, _ = assembler.assemble_scene_graph(
                     points=dense_pts,
@@ -340,20 +440,34 @@ class PhoneReconstructionPipeline:
                 mesh_unified = o3d.io.read_triangle_mesh(str(final_ply))
                 mesh_v = np.asarray(mesh_unified.vertices, dtype=np.float32)
                 mesh_f = np.asarray(mesh_unified.triangles, dtype=np.uint32)
-                if len(mesh_unified.vertex_colors) > 0:
-                    mesh_c = np.asarray(mesh_unified.vertex_colors, dtype=np.float32)
-                else:
-                    mesh_c = np.ones((len(mesh_v), 4), dtype=np.float32) * 0.7
+                mesh_c = (
+                    np.asarray(mesh_unified.vertex_colors, dtype=np.float32)
+                    if len(mesh_unified.vertex_colors) > 0
+                    else np.ones((len(mesh_v), 3), dtype=np.float32) * 0.7
+                )
                 mesh_n = np.asarray(mesh_unified.vertex_normals, dtype=np.float32)
+                if len(mesh_v) == 0 or len(mesh_f) == 0:
+                    raise RuntimeError("Fountain assembler returned an empty mesh")
                 textured_ok = True
             except Exception as e:
-                print(f"Notice: Modular assembly fallback: {e}")
+                # Specialized mode failures are surfaced; do not silently pretend
+                # that a generic mesh is an equivalent fountain reconstruction.
+                raise RuntimeError(f"Architectural fountain assembly failed: {e}") from e
 
         if not textured_ok:
             chosen_method = mesh_method if mesh_method is not None else preset_cfg.get("mesh_method", "poisson")
             update_progress(80, f"Building 3D surface mesh using {chosen_method.upper()} meshing algorithm...")
             mesh_builder = MeshBuilder(method=chosen_method, poisson_depth=preset_cfg["poisson_depth"])
-            mesh_v, mesh_f, mesh_c, mesh_n = mesh_builder.build_mesh(dense_pts, dense_cols, dense_norms)
+            registered_camera_centers = (
+                np.asarray([cam.camera_center for cam in camera_models.values()], dtype=np.float64)
+                if camera_models else None
+            )
+            mesh_v, mesh_f, mesh_c, mesh_n = mesh_builder.build_mesh(
+                dense_pts,
+                dense_cols,
+                dense_norms,
+                camera_centers=registered_camera_centers,
+            )
 
         # 6. Metric Scale Recovery (if reference distance provided)
         if reference_distance_m is not None and reference_distance_m > 0 and len(mesh_v) >= 2:
@@ -375,12 +489,21 @@ class PhoneReconstructionPipeline:
             from photo_reconstruction.texture_engine import VisibilityAwareTextureEngine
             tex_engine = VisibilityAwareTextureEngine(atlas_size=4096)
             try:
+                texture_camera_models = (
+                    {name: camera_models[name] for name in texture_depth_maps if name in camera_models}
+                    if texture_depth_maps else (trusted_camera_models if mvs_flag else camera_models)
+                )
+                texture_images = {
+                    name: img_dict[name]
+                    for name in texture_camera_models
+                    if name in img_dict
+                }
                 tex_v, tex_f, tex_uv, tex_atlas, tex_rep = tex_engine.texture_mesh(
                     vertices=mesh_v,
                     faces=mesh_f,
-                    camera_models=camera_models,
-                    images=img_dict,
-                    depth_maps=depth_maps,
+                    camera_models=texture_camera_models,
+                    images=texture_images,
+                    depth_maps=texture_depth_maps,
                     out_dir=mesh_dir,
                     base_name="scene_mesh",
                 )
@@ -399,6 +522,11 @@ class PhoneReconstructionPipeline:
 
         if not textured_ok:
             MeshBuilder.save_mesh_obj(mesh_v, mesh_f, mesh_c, mesh_obj)
+
+        # Always provide the documented vertex-color PLY alongside the OBJ.
+        # The textured OBJ carries UVs/atlas data, while PLY remains a useful
+        # geometry + vertex-color artifact for viewers and regression checks.
+        if not mesh_ply.exists():
             MeshBuilder.save_mesh_ply(mesh_v, mesh_f, mesh_c, mesh_ply, normals=mesh_n)
 
         # 7. Quality Report Compilation
