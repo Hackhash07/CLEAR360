@@ -24,7 +24,16 @@ def configured_openmvs_root(environ: Mapping[str, str] | None = None) -> Path | 
     if configured:
         return Path(configured).expanduser()
 
-    default = Path.home() / "Applications" / "OpenMVS-2.4.0"
+    applications = Path.home() / "Applications"
+    fixed_overlay = applications / "CLEAR360-OpenMVS-fixed-texture"
+    if fixed_overlay.is_dir() and all(
+        (fixed_overlay / name).is_file()
+        and os.access(fixed_overlay / name, os.X_OK)
+        for name in EXECUTABLE_NAMES
+    ):
+        return fixed_overlay
+
+    default = applications / "OpenMVS-2.4.0"
     return default if default.is_dir() else None
 
 
