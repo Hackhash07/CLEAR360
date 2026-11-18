@@ -258,3 +258,130 @@ The best-supported route is now a **separate, fixed upstream OpenMVS build plus 
 
 *Reviewer B — ChatGPT*
 
+## Entry 004 — ChatGPT / Quality Lens — 2026-11-18
+
+**Reviewed baseline:** CLEAR360 session-049 source snapshot `1d7d7bcc088e753b9db8a24d9fc3ff05229ec9b2`; OpenMVS sampler fix `eeedab7acceae48a92ddf44eaf4eb6ffe2fef14d`.
+**Scope:** Correct photographic colour while preserving the accepted fountain geometry.
+**Method:** Quality-only review of the user's exported atlas screenshots, the restored TextureMesh options and the upstream OpenMVS issue/fix.
+
+### Findings
+
+- **Q4 — HIGH — [VERIFIED]** The artifacts are baked into the exported atlas, so a VisPy material/shader change is not the primary fix. The original unlit viewer path should remain unchanged until a clean atlas is available.
+- **Q5 — HIGH — [VERIFIED]** The current restored command still runs local seam leveling with `--local-seam-leveling 1`, while global seam leveling is set to 0. OpenMVS issue #1251 reports black patch edges specifically when local seam leveling alone is enabled on affected v2.4 builds.
+- **Q6 — HIGH — [VERIFIED]** Upstream commit `eeedab7` fixes the exact sampler template argument mismatch in `libs/Common/Types.inl` and updates seam-leveling implementation in `libs/MVS/SceneTexture.cpp`. Use the complete upstream fix rather than applying a one-line local patch to the old binary.
+- **Q7 — MEDIUM — [QUESTION]** The original atlas screenshots need a controlled side-by-side test with the fixed binary. The source correction is verified; the resulting CLEAR360 fountain colour is not yet proven.
+
+### Quality decision
+
+Freeze every geometry-producing stage and every session-049 geometry setting. Run TextureMesh only against the saved `session_049/openmvs/scene_mesh.mvs` (the pre-texture ReconstructMesh scene) and write a new OBJ/MTL/atlas package to a separate output directory. The first A/B run must hold every TextureMesh option constant, including local=1/global=0, virtual-face-images=1 and atlas-size=2048; only the executable build changes. This isolates the sampler fix. If it still needs blending work, compare global seam leveling in a second run, changing only that one flag.
+
+**Acceptance criteria:** same source mesh, no edits to the baseline PLY/MVS, no black seam-edge corruption or random colour borders, natural fountain reddish-brown and wall brick colour, and texture coverage comparable to or better than session 049.
+
+*Quality lens — ChatGPT*
+
+---
+
+## Entry 005 — ChatGPT / Runtime Lens — 2026-11-18
+
+**Reviewed baseline:** session-049 benchmark: six photos; 328.8 seconds (5m28.8s) sum of recorded external stages.
+**Scope:** Preserve the known runtime while fixing texture colour.
+**Method:** Compare the baseline stage graph with standalone OpenMVS TextureMesh operation and identify stages that can be avoided.
+
+### Findings
+
+- **T1 — HIGH — [VERIFIED]** A full reconstruction repeats COLMAP feature extraction/matching, DensifyPointCloud, fusion, ReconstructMesh and other preparation. None of those stages is required to test a sampler correction if the saved pre-texture mesh scene and its calibrated images are still present.
+- **T2 — HIGH — [VERIFIED]** The original session-049 log measured TextureMesh at approximately 61 seconds. A texture-only A/B test confines additional processing to this stage, plus a one-time separate binary build.
+- **T3 — MEDIUM — [CLAIMED]** The 5m28.8s benchmark is the sum of logged external stages, not a guarantee of total GUI wall-clock time. Do not advertise an exact runtime for the new binary until measured.
+
+### Runtime decision
+
+Do not change COLMAP, DensifyPointCloud resolution, source views, PatchMatch iterations, geometric consistency, fusion, ReconstructMesh, visibility filtering or RefineMesh. Do not change the 2048 atlas size or virtual-face count in the first comparison. Add a standalone TextureMesh-only utility with an explicit executable path, a dry-run default, a safe non-existing output directory and a run manifest. No full pipeline restart is allowed for the A/B test.
+
+*Runtime lens — ChatGPT*
+
+---
+
+## Entry 006 — ChatGPT / Memory Lens — 2026-11-18
+
+**Reviewed environment:** Apple-Silicon MacBook Air; the user has reported large accumulated project/session storage and memory-sensitive workloads.
+**Scope:** Avoid another large working copy or unsafe destructive operation.
+**Method:** Review the upstream build guide and design the smallest reproducible local test that preserves source artifacts.
+
+### Findings
+
+- **M1 — HIGH — [VERIFIED]** A fixed OpenMVS binary must be installed alongside, not over, `~/Applications/OpenMVS-2.4.0`. The existing binary is the rollback option.
+- **M2 — HIGH — [VERIFIED]** The re-texturing tool must never overwrite `session_049/openmvs/scene_mesh.mvs`, `scene_mesh.ply`, `session_049/mesh/`, or the original atlas. Output must go to a fresh directory and fail closed if that directory already exists.
+- **M3 — MEDIUM — [CLAIMED]** Building OpenMVS may create a substantial CMake/vcpkg tree. Use a low parallel build count (default two jobs on this Mac) and inspect disk space before building. Do not auto-delete build caches or dependency directories; the user must choose what to retain after confirming the binary runs.
+- **M4 — HIGH — [VERIFIED]** A texture-only test should write a compact JSON manifest containing the exact executable path, command arguments, upstream source SHA, input scene/mesh SHA-256, output OBJ/MTL/atlas paths, elapsed time and exit code.
+
+### Memory decision
+
+Separate fixed-build source/build/install paths from the current OpenMVS installation. Never use a destructive reset, cleanup or overwrite command. The tool's dry-run should be the default. A run must require explicit `--run`, must refuse to use the final `mesh/` folder as an output, must preserve all source inputs, and must record hashes before/after. Retain only the small result package and manifest as the experimental output; leave CMake build cleanup manual.
+
+*Memory lens — ChatGPT*
+
+---
+
+## Entry 007 — ChatGPT / Cross-Lens Debate — 2026-11-18
+
+**Question:** Which first experiment gives the strongest chance of restoring colour without sacrificing either geometry quality or the 5.5-minute baseline?
+
+### Competing proposals
+
+1. **Viewer correction only:** quickest and lowest memory, but rejected as the first fix because the uploaded atlas images themselves already contain corruption. A viewer patch cannot repair pixels baked into the JPEG atlas.
+2. **Disable both seam passes in the existing v2.4.0 binary:** a useful diagnostic fallback supported by issue #1251, but the issue reporter notes lower overall blending quality. It is not the preferred final solution.
+3. **Build fixed OpenMVS, then rerun the entire reconstruction:** likely tests the bug fix, but wastes the known 5.5-minute geometry run and reintroduces geometry variability. Rejected.
+4. **Build fixed OpenMVS separately, then run TextureMesh only on session 049's saved pre-texture scene:** chosen. It isolates the exact upstream sampler fix, freezes geometry, avoids repeating expensive depth/mesh stages, and confines output to a new folder.
+
+### Decision
+
+Proposal 4 is the only first test that satisfies all three lenses at once:
+- Quality: tests the actual source-atlas generation path using the upstream fix.
+- Time: skips all geometry-producing stages.
+- Memory/storage: uses one separate binary and one isolated texture result folder; no existing session data is rewritten.
+
+The first A/B pair changes only the TextureMesh executable build. Keep local seam=1, global seam=0, virtual-face-images=1, max-texture-size=2048, resolution-level=0, cost-smoothness-ratio=0.7, close-holes=0, sharpness-weight=0.5, ignore-mask-label=-1 and max threads=2 fixed. If the fixed binary solves the artifact, do not change those flags. If not, change one seam flag in a second experiment. Never try ignore-mask-label=-2 based on the crash reported in issue #1251.
+
+*Cross-lens synthesis — ChatGPT*
+
+---
+
+## Entry 008 — ChatGPT / Implementation Decision — 2026-11-18
+
+**Implementation scope:** Add an isolated, safe TextureMesh-only experiment utility and macOS build instructions. Do not modify the production reconstruction pipeline, session-049 profile, viewer material path, current OpenMVS installation, or existing session files.
+
+### Approved implementation
+
+1. Add `scripts/retexture_openmvs_session.py`.
+   - Requires explicit session path and explicit `TextureMesh` executable path.
+   - Dry-run is default; `--run` is required to execute.
+   - Requires the saved pre-texture `openmvs/scene_mesh.mvs` and `openmvs/scene_mesh.ply`.
+   - Uses the session's existing OpenMVS working directory so relative image references resolve as they did in the original pipeline.
+   - Reproduces session-049 TextureMesh options exactly for the first experiment.
+   - Writes to a new folder, default `session_049/texture_ab_fixed/`; refuses to overwrite any existing output.
+   - Stores stdout/stderr, command, elapsed time, executable path and SHA-256 fingerprints in a JSON manifest.
+   - Checks the input scene/PLY hashes after execution and reports if either source input changed.
+   - Validates that the OBJ, MTL and referenced diffuse maps were produced.
+2. Add `docs/OPENMVS_TEXTURE_FIX.md`.
+   - Pin the exact upstream correction `eeedab7acceae48a92ddf44eaf4eb6ffe2fef14d`.
+   - Give isolated macOS CMake build instructions using a separate source/build/install path and low parallelism.
+   - Explain how to verify the newly built `TextureMesh` executable before running the dry-run and A/B test.
+   - Warn that session_049 must retain `openmvs/scene_mesh.mvs`, `scene_mesh.ply` and the referenced undistorted images.
+3. Add CPU-safe unit tests for command construction, input validation, refusal to overwrite, MTL-map validation and input-hash preservation.
+4. Extend the existing focused CI workflow to compile the utility and run the new tests.
+
+### Non-goals and guardrails
+
+- No edits to `photo_reconstruction/openmvs_quality.py`, `photo_reconstruction/openmvs_backend.py`, `viewer/viewport.py`, OBJ/GLB loaders, mesh/UV data, dense reconstruction or quality settings.
+- No automatic install, build, cleanup, session deletion or file replacement.
+- No execution against the user's Mac or session 049 until the user reviews the dry-run output and confirms the saved image references are available.
+- If `session_049/openmvs/scene_mesh.mvs` or its image dependencies are missing, stop and do not fall back to a new full reconstruction without explicit discussion.
+
+### Definition of done
+
+The tool generates a dry-run command and then, when explicitly invoked, creates a self-contained experimental texture output with verified source hashes and valid material maps. It must not modify the original scene, PLY, final mesh package, other sessions or production profile. The actual colour fix remains unaccepted until the user inspects the new atlas and confirms that the fountain and wall colours are correct.
+
+**Status:** Approved to implement on a separate branch based on the restored session-049 code snapshot.
+
+*Implementation decision — ChatGPT*
+
