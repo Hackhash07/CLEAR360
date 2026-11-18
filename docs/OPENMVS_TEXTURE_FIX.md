@@ -10,6 +10,41 @@ OpenMVS issue [#1251](https://github.com/cdcseacave/openMVS/issues/1251) reports
 
 Do not overwrite `~/Applications/OpenMVS-2.4.0`. OpenMVS's build guide lists CMake, Git and a C++17-capable compiler; it documents vcpkg as its dependency-management route. See [OpenMVS Building](https://github.com/cdcseacave/openMVS/blob/develop/docs/wiki/Building.md).
 
+### Dependency check before cloning/building
+
+The pinned OpenMVS CMake configuration automatically loads vcpkg only when
+`VCPKG_ROOT` is set. Your latest terminal output reported
+`VCPKG_ROOT=not-set`. That is not automatically fatal: CMake can use libraries
+already installed in standard system prefixes, but it will not automatically
+fetch the manifest dependencies without the vcpkg toolchain.
+
+The TextureMesh target still requires Boost, Eigen 3.4+, OpenCV, CGAL and VCG.
+Before running the build helper, check whether an existing vcpkg installation
+is available and whether common Homebrew dependencies are installed:
+
+```bash
+command -v vcpkg || true
+for root in "$HOME/vcpkg" /opt/homebrew/opt/vcpkg /opt/homebrew/share/vcpkg \
+            /usr/local/vcpkg /usr/local/share/vcpkg; do
+  if [[ -f "$root/scripts/buildsystems/vcpkg.cmake" ]]; then
+    echo "VCPKG_ROOT candidate: $root"
+  fi
+done
+if command -v brew >/dev/null 2>&1; then
+  brew list --versions boost eigen opencv cgal libomp 2>/dev/null || true
+fi
+```
+
+If a valid vcpkg root is found, set `VCPKG_ROOT` to that directory in the
+current terminal only. Do not install or upgrade dependencies yet. If no vcpkg
+root exists, send the dependency-check output before proceeding; we can choose
+between the already-installed system libraries and an isolated dependency
+setup without touching the existing OpenMVS installation.
+
+The build helper now validates a supplied `VCPKG_ROOT` and records it in
+`TextureMesh.build.json`. If it is unset, it prints a warning before CMake
+configuration rather than pretending dependency auto-installation is enabled.
+
 First inspect available tools and free disk space:
 
 ```bash
