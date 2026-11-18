@@ -476,6 +476,14 @@ The user's terminal reports CMake 4.5.0, Git 2.39.3, Apple Clang 15.0.0 and Xcod
 - CI run `44210783972` has passed the regular 123-test reconstruction QA job. At the time of this entry, the native Apple-Silicon job has fetched vcpkg and the exact source commit and is still in CMake dependency configuration. No binary has yet been accepted or handed to the user.
 - If the build succeeds, the executable's sidecar metadata will include the exact source commit and SHA-256 expected by `retexture_openmvs_session.py`; the user can download the artifact without installing OpenCV, VCG or vcpkg locally. The original Mac repository/workspace and all session-049 geometry/outputs remain untouched.
 
+
+
+### Compatibility correction — macOS minimum version
+
+Inspection of the upstream November 6 Apple-Silicon artifact showed its Mach-O executable was built with **minimum macOS 26.0**. It is therefore not a safe binary for a Sonoma (macOS 14) host, even though it is arm64. That artifact remains rejected.
+
+The exact-fix CI workflow was updated to set both `MACOSX_DEPLOYMENT_TARGET=14.0` and `CMAKE_OSX_DEPLOYMENT_TARGET=14.0`. Before artifact upload it runs `xcrun vtool -show-build` and refuses the binary unless its Mach-O minimum OS reports macOS 14.0. The build metadata records `minimum_macos_version: 14.0`. New CI run: `44212503368`; dependency configuration is in progress. The earlier no-deployment-target run `44210783972` is superseded and should not be used.
+
 **Decision:** Prefer the exact-source CI artifact over a large local vcpkg/Homebrew dependency install. Accept it only after the native build, arm64 check, runtime-launch check, artifact hash and sidecar provenance all pass. Then work from a separate Git worktree so the user's current checkout and untracked files remain intact. The actual six-photo texture A/B is still pending.
 
 *Build-path review — ChatGPT*
