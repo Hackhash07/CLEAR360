@@ -49,6 +49,15 @@ def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
+def directory_hashes(directory: Path) -> dict[str, str]:
+    """Hash every file currently present, detecting additions and removals too."""
+    return {
+        path.relative_to(directory).as_posix(): sha256_file(path)
+        for path in sorted(directory.rglob("*"))
+        if path.is_file()
+    }
+
+
 def build_info_for(executable: Path) -> dict[str, object]:
     """Verify that the executable is the separately built, pinned upstream fix."""
     metadata_path = executable.with_name("TextureMesh.build.json")
@@ -213,11 +222,8 @@ def run_texture_only(
         return {
             "scene_mesh_mvs": sha256_file(inputs.scene_file),
             "scene_mesh_ply": sha256_file(inputs.mesh_ply),
-            "undistorted_images": {p.name: sha256_file(p) for p in inputs.image_files},
-            "baseline_final_mesh_package": {
-                str(p.relative_to(inputs.session_dir)): sha256_file(p)
-                for p in inputs.baseline_mesh_files
-            },
+            "undistorted_images": directory_hashes(inputs.image_dir),
+            "baseline_final_mesh_package": directory_hashes(inputs.session_dir / "mesh"),
         }
 
     before = input_hashes()
@@ -241,7 +247,12 @@ def run_texture_only(
     obj, mtl = output / "scene_textured.obj", output / "scene_textured.mtl"
     maps = diffuse_maps(mtl)
     missing = [p for p in maps if not p.is_file()]
-    valid_outputs = exit_code == 0 and obj.is_file() and mtl.is_file() and bool(maps) and not missing
+    output_files = [p for p in (obj, mtl, *maps) if p.is_file()]
+    empty_outputs = [str(p) for p in output_files if p.stat().st_size == 0]
+    valid_outputs = (
+        exit_code == 0 and obj.is_file() and mtl.is_file()
+        and bool(maps) and not missing and not empty_outputs
+    )
     manifest: dict[str, object] = {
         "schema_version": 1, "created_at": started_at,
         "status": "success" if valid_outputs and unchanged else "failed",
@@ -266,6 +277,7 @@ def run_texture_only(
         "output_mtl": str(mtl) if mtl.is_file() else None,
         "diffuse_maps": [str(p) for p in maps],
         "missing_diffuse_maps": [str(p) for p in missing],
+        "empty_output_files": empty_outputs,
         "output_sha256": {p.name: sha256_file(p) for p in [obj, mtl, *maps] if p.is_file()},
         "geometry_stages_run": [],
     }
@@ -277,7 +289,7 @@ def run_texture_only(
     if not unchanged:
         raise TextureRetextureError("Input hashes changed during texture-only processing.")
     if not valid_outputs:
-        raise TextureRetextureError(f"Incomplete OBJ/MTL/diffuse-map output. Inspect {log_path}.")
+        raise TextureRetextureError(f"Incomplete or empty OBJ/MTL/diffuse-map output. Inspect {log_path}.")
     return manifest
 
 
