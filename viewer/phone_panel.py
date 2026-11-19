@@ -92,9 +92,24 @@ class VideoExtractionWorker(QtCore.QThread):
                         output_dir,
                         max_frames=frame_budget,
                     )
+                    # Make extracted frame basenames globally unique, even when
+                    # several videos (or repeated imports) contain the same timestamps.
+                    for frame in result.get("frames", []):
+                        old_frame_path = Path(frame["path"])
+                        new_frame_path = old_frame_path.with_name(
+                            f"v{index:02d}_{import_root.name[:8]}_{old_frame_path.name}"
+                        )
+                        old_frame_path.rename(new_frame_path)
+                        frame["path"] = str(new_frame_path)
+                        frame["filename"] = new_frame_path.name
+
                     result["source_path"] = str(source.expanduser().resolve())
                     result["original_filename"] = source.name
                     result["cache_dir"] = str(import_root)
+                    (output_dir / "video_extract_manifest.json").write_text(
+                        json.dumps(result, indent=2),
+                        encoding="utf-8",
+                    )
                     imports.append(result)
                     remaining -= int(result.get("saved_frame_count", 0))
                 except Exception as exc:
