@@ -116,6 +116,7 @@ class VideoExtractionWorker(QtCore.QThread):
                     errors.append(f"{source.name}: {exc}")
 
             if not imports:
+                shutil.rmtree(import_root, ignore_errors=True)
                 details = "\n".join(errors) or "No video could be processed."
                 raise RuntimeError(details)
 
@@ -1155,6 +1156,14 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             <li>Avoid digital zoom. Keep image dimensions and orientation consistent where practical.</li>
             <li>Use sharp focus, adequate light and a steady hand. Avoid motion blur, strong exposure changes and aggressive filters.</li>
             <li>Upload original-resolution photographs. CLEAR360 keeps original uploads and creates working copies where format conversion is needed.</li>
+        </ul>
+
+        <h4>Video walkaround option</h4>
+        <ul>
+            <li>Use <b>Add Walkaround Video</b> to select a steady MP4 or MOV clip. CLEAR360 samples up to 40 candidate frames and skips severely blurred or near-identical adjacent frames.</li>
+            <li>Walk physically around the subject in one connected orbit. Keep the subject visible, move slowly, and avoid sudden turns or zoom changes.</li>
+            <li>Video from one fixed position while panning is not enough: the camera must change position to create parallax. The extracted frame count is not proof of overlap; COLMAP checks camera registration later.</li>
+            <li>The original video is preserved with the reconstruction session, together with frame timestamps.</li>
         </ul>
 
         <h4>3. Choose a capture path for the subject</h4>
