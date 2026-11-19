@@ -69,6 +69,7 @@ CLEAR360 automatically:
 - Falls back to the built-in **CLEAR360 Python / Open3D** reconstruction pipeline when the external tools are unavailable.
 - Opens with **Fast Preview** as a geometry-only diagnostic mode. Select **Standard**, **High**, or **Maximum** when you need a complete textured mesh and GLB; Fast Preview intentionally skips meshing and texturing.
 - Archives uploaded originals under `source_uploads/` and creates SfM-readable working copies under `original_images/`; HEIC, TIFF and BMP inputs are normalized to JPEG without discarding the original upload.
+- Accepts walkaround videos (`.mp4`, `.mov`, `.m4v`, `.avi`, `.mkv`, `.webm`, `.3gp`) as an alternative input. It samples at most 40 candidate timestamps per import, skips severely blurred and near-identical adjacent frames, and adds the extracted JPEGs to the same photo-set audit and reconstruction pipeline. The original video is archived under `source_uploads/videos/`, and each extracted frame's source video and timestamp are recorded in the session manifests.
 - Saves `input_manifest.json` to map each original filename to its working filename and conversion status.
 - Saves a reconstruction session, textured OBJ/MTL/PNG for the built-in viewer, and a textured GLB for Blender/external tools when using OpenMVS.
 - Estimates the scene's vertical axis from registered COLMAP camera poses and aligns OBJ, PLY, dense cloud and GLB exports to +Z when the camera-up directions are consistent.
@@ -101,7 +102,7 @@ python scripts/align_openmvs_session.py
 ```
 
 
-**Capture requirements still matter:** photographs must show the same static scene from physically different viewpoints, with strong visual overlap. Each important surface should be visible in multiple images. Six unrelated views or photographs taken from one position by only rotating the camera do not provide enough parallax for a complete 3D model. COLMAP's guidance recommends high overlap, different viewpoints, consistent illumination, and good surface texture. See the [COLMAP reconstruction tutorial](https://colmap.github.io/tutorial.html).
+**Capture requirements still matter, including for video:** the camera must move physically around the same static scene. Panning or rotating from one fixed position does not create parallax. Video sampling is a convenience for collecting frames; it does not manufacture missing viewpoints or guarantee sufficient overlap. Walk steadily, keep the subject visible, maintain strong overlap between adjacent views, and include different heights where possible. COLMAP's guidance recommends high overlap, different viewpoints, consistent illumination, and good surface texture. See the [COLMAP reconstruction tutorial](https://colmap.github.io/tutorial.html).
 
 ## Reconstruction quality and limitations
 

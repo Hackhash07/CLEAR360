@@ -26,6 +26,8 @@ on:
       - "photo_reconstruction/tests/test_image_preparation.py"
       - "photo_reconstruction/reconstruction_qa.py"
       - "photo_reconstruction/openmvs_backend.py"
+      - "photo_reconstruction/video_frame_extractor.py"
+      - "photo_reconstruction/tests/test_video_frame_extractor.py"
       - "photo_reconstruction/openmvs_quality.py"
       - "photo_reconstruction/texture_arrays.py"
       - "photo_reconstruction/texture_diagnostics.py"
@@ -81,6 +83,8 @@ on:
       - "photo_reconstruction/tests/test_phone_reconstruction.py"
       - "photo_reconstruction/reconstruction_qa.py"
       - "photo_reconstruction/openmvs_backend.py"
+      - "photo_reconstruction/video_frame_extractor.py"
+      - "photo_reconstruction/tests/test_video_frame_extractor.py"
       - "photo_reconstruction/texture_arrays.py"
       - "photo_reconstruction/texture_diagnostics.py"
       - "photo_reconstruction/tests/test_texture_diagnostics.py"
@@ -149,6 +153,7 @@ jobs:
             photo_reconstruction/quality_report.py \
             photo_reconstruction/pipeline.py \
             photo_reconstruction/openmvs_backend.py \
+            photo_reconstruction/video_frame_extractor.py \
             photo_reconstruction/benchmark_report.py \
             scripts/summarize_openmvs_benchmark.py \
             scripts/retexture_openmvs_session.py \
@@ -178,6 +183,7 @@ jobs:
           python -m pytest -q \
             photo_reconstruction/tests/test_reconstruction_qa.py \
             photo_reconstruction/tests/test_openmvs_backend.py \
+            photo_reconstruction/tests/test_video_frame_extractor.py \
             photo_reconstruction/tests/test_openmvs_assets.py \
             photo_reconstruction/tests/test_openmvs_quality.py \
             photo_reconstruction/tests/test_coverage_diagnostics.py \

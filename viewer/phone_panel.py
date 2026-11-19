@@ -15,7 +15,9 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 import json
 import os
+import shutil
 import threading
+import uuid
 
 from PySide6 import QtWidgets, QtCore, QtGui
 
@@ -26,6 +28,7 @@ from photo_reconstruction.session_manager import SessionManager
 from photo_reconstruction.pipeline import PhoneReconstructionPipeline
 from photo_reconstruction.backend_selector import resolve_reconstruction_backend
 from photo_reconstruction.photo_set_auditor import PhotoSetQualityAuditor
+from photo_reconstruction.video_frame_extractor import VideoFrameExtractor
 
 
 def reconstruction_display_mode(mesh_path: str | Path) -> str:
@@ -36,6 +39,95 @@ def reconstruction_display_mode(mesh_path: str | Path) -> str:
     if output_path.suffix.lower() == ".obj":
         return "textured"
     return "mesh"
+
+
+class VideoExtractionWorker(QtCore.QThread):
+    """Extract a small, quality-screened image set without blocking the GUI."""
+
+    progress = QtCore.Signal(int, str)
+    completed = QtCore.Signal(dict)
+    failed = QtCore.Signal(str)
+
+    def __init__(
+        self,
+        video_paths: List[Path],
+        cache_root: Path,
+        max_total_frames: int = 40,
+        parent: Optional[QtCore.QObject] = None,
+    ):
+        super().__init__(parent)
+        self.video_paths = list(video_paths)
+        self.cache_root = Path(cache_root)
+        self.max_total_frames = max(1, min(int(max_total_frames), 60))
+
+    def run(self):
+        import traceback
+
+        try:
+            import_root = self.cache_root / uuid.uuid4().hex
+            import_root.mkdir(parents=True, exist_ok=False)
+            imports: list[dict[str, Any]] = []
+            errors: list[str] = []
+            remaining = self.max_total_frames
+            total_videos = len(self.video_paths)
+
+            for index, source in enumerate(self.video_paths, start=1):
+                if remaining <= 0:
+                    errors.append(
+                        f"{source.name}: skipped because the video-frame limit for this import was reached."
+                    )
+                    continue
+
+                videos_left = total_videos - index + 1
+                frame_budget = max(1, min(40, remaining // videos_left))
+                output_dir = import_root / f"video_{index:02d}"
+
+                self.progress.emit(
+                    int(5 + 85 * (index - 1) / max(1, total_videos)),
+                    f"Sampling video {index}/{total_videos}: {source.name}",
+                )
+                try:
+                    result = VideoFrameExtractor.extract(
+                        source,
+                        output_dir,
+                        max_frames=frame_budget,
+                    )
+                    # Make extracted frame basenames globally unique, even when
+                    # several videos (or repeated imports) contain the same timestamps.
+                    for frame in result.get("frames", []):
+                        old_frame_path = Path(frame["path"])
+                        new_frame_path = old_frame_path.with_name(
+                            f"v{index:02d}_{import_root.name[:8]}_{old_frame_path.name}"
+                        )
+                        old_frame_path.rename(new_frame_path)
+                        frame["path"] = str(new_frame_path)
+                        frame["filename"] = new_frame_path.name
+
+                    result["source_path"] = str(source.expanduser().resolve())
+                    result["original_filename"] = source.name
+                    result["cache_dir"] = str(import_root)
+                    (output_dir / "video_extract_manifest.json").write_text(
+                        json.dumps(result, indent=2),
+                        encoding="utf-8",
+                    )
+                    imports.append(result)
+                    remaining -= int(result.get("saved_frame_count", 0))
+                except Exception as exc:
+                    errors.append(f"{source.name}: {exc}")
+
+            if not imports:
+                shutil.rmtree(import_root, ignore_errors=True)
+                details = "\n".join(errors) or "No video could be processed."
+                raise RuntimeError(details)
+
+            self.progress.emit(100, "Video frame extraction complete.")
+            self.completed.emit({
+                "video_imports": imports,
+                "errors": errors,
+                "cache_dir": str(import_root),
+            })
+        except Exception as exc:
+            self.failed.emit(f"{exc}\n\n{traceback.format_exc()}")
 
 
 class ReconstructionWorker(QtCore.QThread):
@@ -57,6 +149,7 @@ class ReconstructionWorker(QtCore.QThread):
         backend: str = "native",
         parent: Optional[QtCore.QObject] = None,
         photo_set_report: Optional[Dict[str, Any]] = None,
+        video_imports: Optional[List[Dict[str, Any]]] = None,
     ):
         super().__init__(parent)
         self.pipeline = pipeline
@@ -65,6 +158,76 @@ class ReconstructionWorker(QtCore.QThread):
         self.reference_distance_m = reference_distance_m
         self.backend = backend
         self.photo_set_report = photo_set_report or {}
+        self.video_imports = list(video_imports or [])
+
+    def _archive_video_sources(self, session_dir: Path):
+        """Copy original videos into the session and map frames to source timestamps."""
+        from shutil import copy2
+
+        videos_dir = Path(session_dir) / "source_uploads" / "videos"
+        manifest: list[dict[str, Any]] = []
+        frame_provenance: dict[str, dict[str, Any]] = {}
+        archive_errors: list[str] = []
+
+        for index, video in enumerate(self.video_imports, start=1):
+            source_path = Path(video.get("source_path", "")).expanduser()
+            original_name = Path(
+                str(video.get("original_filename") or source_path.name)
+            ).name
+            archive_relative = None
+            archive_error = None
+
+            if source_path.is_file():
+                try:
+                    videos_dir.mkdir(parents=True, exist_ok=True)
+                    archive_name = f"{index:03d}_{original_name}"
+                    archive_path = videos_dir / archive_name
+                    duplicate_index = 1
+                    while archive_path.exists():
+                        archive_path = videos_dir / (
+                            f"{index:03d}_{source_path.stem}_{duplicate_index}"
+                            f"{source_path.suffix}"
+                        )
+                        duplicate_index += 1
+                    copy2(source_path, archive_path)
+                    archive_relative = archive_path.relative_to(Path(session_dir)).as_posix()
+                except Exception as exc:
+                    archive_error = str(exc)
+                    archive_errors.append(f"{original_name}: {archive_error}")
+            else:
+                archive_error = f"Original video is no longer available: {source_path}"
+                archive_errors.append(f"{original_name}: {archive_error}")
+
+            video_record = {
+                "original_filename": original_name,
+                "source_video_archive": archive_relative,
+                "archived": bool(archive_relative),
+                "archive_error": archive_error,
+                "duration_seconds": video.get("duration_seconds"),
+                "fps": video.get("fps"),
+                "source_frame_count": video.get("source_frame_count"),
+                "candidate_frame_count": video.get("candidate_frame_count"),
+                "saved_frame_count": video.get("saved_frame_count"),
+                "skipped_blurry_count": video.get("skipped_blurry_count", 0),
+                "skipped_near_duplicate_count": video.get("skipped_near_duplicate_count", 0),
+                "skipped_unreadable_count": video.get("skipped_unreadable_count", 0),
+                "sampling_interval_seconds": video.get("sampling_interval_seconds"),
+            }
+            manifest.append(video_record)
+
+            for frame in video.get("frames", []):
+                frame_path_value = frame.get("path")
+                if not frame_path_value:
+                    continue
+                frame_path = Path(frame_path_value).expanduser()
+                frame_provenance[str(frame_path.resolve())] = {
+                    "source_kind": "video_frame",
+                    "source_video": original_name,
+                    "source_video_archive": archive_relative,
+                    "timestamp_ms": frame.get("timestamp_ms"),
+                }
+
+        return manifest, frame_provenance, archive_errors
 
     def run(self):
         try:
@@ -76,6 +239,9 @@ class ReconstructionWorker(QtCore.QThread):
                 import os
 
                 session_dir = self.pipeline.session_manager.create_session()
+                video_manifest, frame_provenance, video_archive_errors = (
+                    self._archive_video_sources(session_dir)
+                )
                 copied = []
                 source_dir = session_dir / "source_uploads"
                 working_dir = session_dir / "original_images"
@@ -100,7 +266,7 @@ class ReconstructionWorker(QtCore.QThread):
                         # alive while decoding the next uploaded photograph.
                         del rgb
                         copied.append(Path(staged["sfm_image_path"]))
-                        input_manifest.append({
+                        manifest_item = {
                             "original_filename": source.name,
                             "source_archive": str(
                                 session_relative_path(
@@ -110,7 +276,12 @@ class ReconstructionWorker(QtCore.QThread):
                             "sfm_filename": staged["sfm_filename"],
                             "working_format": staged["working_format"],
                             "converted_for_sfm": staged["converted_for_sfm"],
-                        })
+                            "source_kind": "photo",
+                        }
+                        provenance = frame_provenance.get(str(Path(source).resolve()))
+                        if provenance:
+                            manifest_item.update(provenance)
+                        input_manifest.append(manifest_item)
                     except Exception as exc:
                         staging_errors.append({
                             "image": source.name,
@@ -120,9 +291,12 @@ class ReconstructionWorker(QtCore.QThread):
                 (session_dir / "input_manifest.json").write_text(
                     json.dumps({
                         "uploaded_count": len(self.image_paths),
+                        "uploaded_video_count": len(video_manifest),
                         "sfm_ready_count": len(copied),
                         "source_archive_directory": source_dir.name,
                         "sfm_working_directory": working_dir.name,
+                        "video_sources": video_manifest,
+                        "video_archive_errors": video_archive_errors,
                         "images": input_manifest,
                         "staging_errors": staging_errors,
                     }, indent=2),
@@ -226,6 +400,8 @@ class ReconstructionWorker(QtCore.QThread):
                     "visibility_filter": result.get("visibility_filter", {}),
                     "dense_ply_unfiltered": str(result.get("dense_ply_unfiltered", "")),
                     "input_manifest": input_manifest,
+                    "video_sources": video_manifest,
+                    "video_archive_errors": video_archive_errors,
                     "staging_errors": staging_errors,
                     "photo_set": actual_photo_set_report,
                     "geometric_metrics": {
@@ -281,6 +457,7 @@ class ReconstructionWorker(QtCore.QThread):
                     "dense_ply": result["dense_ply"],
                     "report": report,
                     "photo_set_report": actual_photo_set_report,
+                    "video_sources": video_manifest,
                 }
             else:
                 res = self.pipeline.run_pipeline(
@@ -290,6 +467,47 @@ class ReconstructionWorker(QtCore.QThread):
                     progress_cb=progress_callback,
                     photo_set_report=self.photo_set_report,
                 )
+                if res.get("session_dir") and self.video_imports:
+                    session_dir = Path(res["session_dir"])
+                    video_manifest, frame_provenance, video_archive_errors = (
+                        self._archive_video_sources(session_dir)
+                    )
+                    input_manifest_path = session_dir / "input_manifest.json"
+                    if input_manifest_path.is_file():
+                        try:
+                            input_manifest_data = json.loads(
+                                input_manifest_path.read_text(encoding="utf-8")
+                            )
+                        except (OSError, json.JSONDecodeError):
+                            input_manifest_data = {}
+                        for image_record in input_manifest_data.get("images", []):
+                            source_name = image_record.get("original_filename")
+                            matching = next(
+                                (
+                                    provenance
+                                    for frame_path, provenance in frame_provenance.items()
+                                    if Path(frame_path).name == source_name
+                                ),
+                                None,
+                            )
+                            if matching:
+                                image_record.update(matching)
+                        input_manifest_data["uploaded_video_count"] = len(video_manifest)
+                        input_manifest_data["video_sources"] = video_manifest
+                        input_manifest_data["video_archive_errors"] = video_archive_errors
+                        input_manifest_path.write_text(
+                            json.dumps(input_manifest_data, indent=2),
+                            encoding="utf-8",
+                        )
+                    report = dict(res.get("report") or {})
+                    report["video_sources"] = video_manifest
+                    report["video_archive_errors"] = video_archive_errors
+                    (session_dir / "report.json").write_text(
+                        json.dumps(report, indent=2),
+                        encoding="utf-8",
+                    )
+                    res["report"] = report
+                    res["video_sources"] = video_manifest
 
             if res.get("success", False):
                 if self.photo_set_report:
@@ -345,9 +563,12 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.session_manager = SessionManager(data_root)
         self.pipeline = PhoneReconstructionPipeline(data_root)
         self.worker: Optional[ReconstructionWorker] = None
+        self.video_extraction_worker: Optional[VideoExtractionWorker] = None
 
         self.selected_image_paths: List[Path] = []
         self.image_metadata: Dict[str, Dict[str, Any]] = {}
+        self.video_imports: List[Dict[str, Any]] = []
+        self.video_cache_root = self.session_manager.root_dir / "video_frame_cache"
         self.current_session_id: Optional[str] = None
 
         self._init_ui()
@@ -398,6 +619,21 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         btn_row.addWidget(self.btn_add_photos)
         btn_row.addWidget(self.btn_clear_photos)
         grp_up_layout.addLayout(btn_row)
+
+        self.btn_add_video = QtWidgets.QPushButton("🎥 Add Walkaround Video...")
+        self.btn_add_video.setStyleSheet(
+            "background-color: #0e7490; color: #ffffff; font-weight: bold;"
+        )
+        self.btn_add_video.clicked.connect(self._on_add_video_clicked)
+        grp_up_layout.addWidget(self.btn_add_video)
+
+        self.lbl_video_hint = QtWidgets.QLabel(
+            "MP4 / MOV / AVI / MKV · extracts up to 40 sharp, spaced frames. "
+            "Walk around the subject; panning in place is not enough."
+        )
+        self.lbl_video_hint.setWordWrap(True)
+        self.lbl_video_hint.setStyleSheet("font-size: 10px; color: #94a3b8;")
+        grp_up_layout.addWidget(self.lbl_video_hint)
 
         self.list_photos = QtWidgets.QListWidget()
         self.list_photos.setFixedHeight(120)
@@ -615,7 +851,14 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
                     }
 
         count = len(self.selected_image_paths)
-        self.lbl_photo_count.setText(f"{count} photographs selected (min 2, rec 4–40+)")
+        video_frame_count = sum(
+            int(item.get("saved_frame_count", 0) or 0)
+            for item in self.video_imports
+        )
+        self.lbl_photo_count.setText(
+            f"{count} views selected · {video_frame_count} extracted from video · "
+            "20–40+ well-spaced views recommended"
+        )
         if count > 0 and self.list_photos.currentRow() == -1:
             self.list_photos.setCurrentRow(0)
         self._refresh_photo_set_summary()
@@ -623,6 +866,187 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             self.lbl_status.setText(
                 f"{count} photographs ready. CLEAR360 will select the reconstruction engine automatically."
             )
+
+    def _on_add_video_clicked(self):
+        """Import one or more walkaround clips and extract useful still frames."""
+        if self.video_extraction_worker and self.video_extraction_worker.isRunning():
+            return
+
+        files, _ = QtWidgets.QFileDialog.getOpenFileNames(
+            self,
+            "Select Walkaround Videos",
+            "",
+            "Videos (*.mp4 *.mov *.m4v *.avi *.mkv *.webm *.3gp);;All Files (*)",
+        )
+        if not files:
+            return
+        if len(files) > 6:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Too many videos",
+                "Select at most six clips per import. For one object, one continuous walkaround clip is usually best.",
+            )
+            return
+
+        existing_video_frames = sum(
+            int(item.get("saved_frame_count", 0) or 0)
+            for item in self.video_imports
+        )
+        remaining_budget = 60 - existing_video_frames
+        if remaining_budget < 6:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Video frame limit reached",
+                "This upload already contains 60 extracted video frames. Clear the current selection before importing another clip.",
+            )
+            return
+
+        self.btn_add_photos.setEnabled(False)
+        self.btn_add_video.setEnabled(False)
+        self.btn_clear_photos.setEnabled(False)
+        self.btn_start.setEnabled(False)
+        self.prog_bar.setValue(0)
+        self.lbl_status.setText("Preparing video frame extraction...")
+        self.lbl_status.setStyleSheet("font-size: 10px; color: #38bdf8;")
+
+        self.video_extraction_worker = VideoExtractionWorker(
+            video_paths=[Path(path) for path in files],
+            cache_root=self.video_cache_root,
+            max_total_frames=min(40, remaining_budget),
+            parent=self,
+        )
+        self.video_extraction_worker.progress.connect(self._on_video_extraction_progress)
+        self.video_extraction_worker.completed.connect(self._on_video_extraction_completed)
+        self.video_extraction_worker.failed.connect(self._on_video_extraction_failed)
+        self.video_extraction_worker.finished.connect(
+            self._on_video_extraction_thread_finished
+        )
+        self.video_extraction_worker.start()
+
+    @QtCore.Slot(int, str)
+    def _on_video_extraction_progress(self, percent: int, message: str):
+        self.prog_bar.setValue(percent)
+        self.lbl_status.setText(message)
+
+    @QtCore.Slot(dict)
+    def _on_video_extraction_completed(self, result: dict):
+        self.btn_add_photos.setEnabled(True)
+        self.btn_add_video.setEnabled(True)
+        self.btn_clear_photos.setEnabled(True)
+        self.btn_start.setEnabled(True)
+        self.prog_bar.setValue(100)
+
+        imported_videos = result.get("video_imports", [])
+        added_frames = 0
+        for video in imported_videos:
+            self.video_imports.append(video)
+            for frame in video.get("frames", []):
+                path = Path(frame.get("path", "")).expanduser()
+                if not path.is_file() or path in self.selected_image_paths:
+                    continue
+                self.selected_image_paths.append(path)
+                timestamp_ms = int(frame.get("timestamp_ms", 0) or 0)
+                self.list_photos.addItem(
+                    f"{path.name} · {video.get('original_filename', 'video')} "
+                    f"@ {timestamp_ms / 1000.0:.2f}s"
+                )
+                try:
+                    rgb, meta = ImageLoader.load_image(path)
+                    exif = ExifReader.get_camera_info(path, meta["width"], meta["height"])
+                    quality = frame.get("quality") or ImageQualityAssessor.evaluate(rgb)
+                    self.image_metadata[str(path.resolve())] = {
+                        "path": str(path.resolve()),
+                        "meta": meta,
+                        "exif": exif,
+                        "quality": quality,
+                        "source_kind": "video_frame",
+                        "source_video": video.get("original_filename"),
+                        "timestamp_ms": timestamp_ms,
+                    }
+                    del rgb
+                except Exception as exc:
+                    self.image_metadata[str(path.resolve())] = {
+                        "path": str(path.resolve()),
+                        "error": str(exc),
+                        "source_kind": "video_frame",
+                        "source_video": video.get("original_filename"),
+                        "timestamp_ms": timestamp_ms,
+                    }
+                added_frames += 1
+
+        count = len(self.selected_image_paths)
+        self.lbl_photo_count.setText(
+            f"{count} views selected · {added_frames} new video frames from "
+            f"{len(imported_videos)} clip(s) · max 60 video frames per selection"
+        )
+        if count and self.list_photos.currentRow() == -1:
+            self.list_photos.setCurrentRow(0)
+        self._refresh_photo_set_summary()
+
+        if added_frames:
+            self.lbl_status.setText(
+                f"Extracted {added_frames} usable frame(s). Review the photo-set check before reconstruction."
+            )
+        else:
+            self.lbl_status.setText("No new usable frames were added.")
+
+        errors = result.get("errors", [])
+        if errors:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Some videos could not be processed",
+                "\n".join(errors),
+            )
+
+        if imported_videos:
+            warnings = [
+                warning
+                for item in imported_videos
+                for warning in item.get("warnings", [])
+            ]
+            if warnings:
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "Video frames extracted",
+                    "\n".join(dict.fromkeys(warnings)),
+                )
+
+
+    @QtCore.Slot(str)
+    def _on_video_extraction_failed(self, error: str):
+        self.btn_add_photos.setEnabled(True)
+        self.btn_add_video.setEnabled(True)
+        self.btn_clear_photos.setEnabled(True)
+        self.btn_start.setEnabled(True)
+        self.prog_bar.setValue(0)
+        self.lbl_status.setText("Video import failed. Existing selected photographs were preserved.")
+        self.lbl_status.setStyleSheet("font-size: 10px; color: #ef4444;")
+        QtWidgets.QMessageBox.warning(
+            self,
+            "Video import failed",
+            error,
+        )
+
+    @QtCore.Slot()
+    def _on_video_extraction_thread_finished(self):
+        """Release the worker reference only after its QThread has stopped."""
+        self.video_extraction_worker = None
+
+    def _cleanup_video_import_cache(self):
+        """Remove only generated frame-cache folders owned by this panel."""
+        allowed_root = self.video_cache_root.expanduser().resolve()
+        cache_dirs = {
+            Path(item.get("cache_dir", "")).expanduser().resolve()
+            for item in self.video_imports
+            if item.get("cache_dir")
+        }
+        for cache_dir in cache_dirs:
+            try:
+                cache_dir.relative_to(allowed_root)
+            except ValueError:
+                continue
+            if cache_dir != allowed_root and cache_dir.is_dir():
+                shutil.rmtree(cache_dir, ignore_errors=True)
 
     def _refresh_photo_set_summary(self):
         """Show whole-upload diagnostics before users start expensive reconstruction."""
@@ -675,7 +1099,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         ]
         if len(self.selected_image_paths) < 20:
             lines.append(
-                f"Coverage note: {len(self.selected_image_paths)} photos is only the OpenMVS minimum "
+                f"Coverage note: {len(self.selected_image_paths)} views is only the OpenMVS minimum "
                 "of 6; use 20–40+ well-overlapped views for detailed object coverage."
             )
         warnings = report.get("warnings", [])
@@ -692,11 +1116,17 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         return report
 
     def _on_clear_photos_clicked(self):
-        """Clear selected images."""
+        """Clear selected images and only the generated video-frame cache."""
+        if self.video_extraction_worker and self.video_extraction_worker.isRunning():
+            return
+        self._cleanup_video_import_cache()
+        self.video_imports.clear()
         self.selected_image_paths.clear()
         self.image_metadata.clear()
         self.list_photos.clear()
-        self.lbl_photo_count.setText("0 photographs selected (min 2 native / 6 OpenMVS; 20–40+ recommended)")
+        self.lbl_photo_count.setText(
+            "0 views selected (min 2 native / 6 OpenMVS; 20–40+ recommended)"
+        )
         self._reset_meta_labels()
         self._refresh_photo_set_summary()
 
@@ -726,6 +1156,14 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             <li>Avoid digital zoom. Keep image dimensions and orientation consistent where practical.</li>
             <li>Use sharp focus, adequate light and a steady hand. Avoid motion blur, strong exposure changes and aggressive filters.</li>
             <li>Upload original-resolution photographs. CLEAR360 keeps original uploads and creates working copies where format conversion is needed.</li>
+        </ul>
+
+        <h4>Video walkaround option</h4>
+        <ul>
+            <li>Use <b>Add Walkaround Video</b> to select a steady MP4 or MOV clip. CLEAR360 samples up to 40 candidate frames and skips severely blurred or near-identical adjacent frames.</li>
+            <li>Walk physically around the subject in one connected orbit. Keep the subject visible, move slowly, and avoid sudden turns or zoom changes.</li>
+            <li>Video from one fixed position while panning is not enough: the camera must change position to create parallax. The extracted frame count is not proof of overlap; COLMAP checks camera registration later.</li>
+            <li>The original video is preserved with the reconstruction session, together with frame timestamps.</li>
         </ul>
 
         <h4>3. Choose a capture path for the subject</h4>
@@ -821,6 +1259,14 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
 
     def _on_start_clicked(self):
         """Run the best installed reconstruction engine with automatic settings."""
+        if self.video_extraction_worker and self.video_extraction_worker.isRunning():
+            QtWidgets.QMessageBox.information(
+                self,
+                "Video extraction is still running",
+                "Wait for video frame extraction to finish before starting reconstruction.",
+            )
+            return
+
         if len(self.selected_image_paths) < 2:
             QtWidgets.QMessageBox.warning(
                 self,
@@ -871,6 +1317,8 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
 
         self.btn_start.setEnabled(False)
         self.btn_add_photos.setEnabled(False)
+        self.btn_add_video.setEnabled(False)
+        self.btn_clear_photos.setEnabled(False)
         self.prog_bar.setValue(0)
         self.lbl_auto_engine.setText(f"Automatic engine: {backend_reason}")
         self.lbl_status.setText("Preparing automatic 3D reconstruction...")
@@ -898,6 +1346,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             backend=backend,
             parent=self,
             photo_set_report=photo_set_report,
+            video_imports=self.video_imports,
         )
         self.worker.progress.connect(self._update_progress_ui)
         self.worker.finished_success.connect(self._on_reconstruction_success)
@@ -923,6 +1372,8 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.lbl_elapsed.setText("")
         self.btn_start.setEnabled(True)
         self.btn_add_photos.setEnabled(True)
+        self.btn_add_video.setEnabled(True)
+        self.btn_clear_photos.setEnabled(True)
         self.prog_bar.setValue(100)
 
         session_id = str(res.get("session_id", ""))
@@ -1043,9 +1494,11 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.lbl_elapsed.setText("")
         self.btn_start.setEnabled(True)
         self.btn_add_photos.setEnabled(True)
+        self.btn_add_video.setEnabled(True)
+        self.btn_clear_photos.setEnabled(True)
         self.prog_bar.setValue(0)
 
-        # Uploaded images are preserved!
+        # Uploaded images and extracted video frames are preserved!
         self.lbl_status.setText(f"Reconstruction failed: {error_msg}")
         self.lbl_status.setStyleSheet("font-size: 10px; color: #ef4444;")
         self._refresh_session_list()
