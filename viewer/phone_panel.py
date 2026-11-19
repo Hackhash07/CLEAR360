@@ -541,9 +541,12 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.session_manager = SessionManager(data_root)
         self.pipeline = PhoneReconstructionPipeline(data_root)
         self.worker: Optional[ReconstructionWorker] = None
+        self.video_extraction_worker: Optional[VideoExtractionWorker] = None
 
         self.selected_image_paths: List[Path] = []
         self.image_metadata: Dict[str, Dict[str, Any]] = {}
+        self.video_imports: List[Dict[str, Any]] = []
+        self.video_cache_root = self.session_manager.root_dir / "video_frame_cache"
         self.current_session_id: Optional[str] = None
 
         self._init_ui()
@@ -594,6 +597,21 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         btn_row.addWidget(self.btn_add_photos)
         btn_row.addWidget(self.btn_clear_photos)
         grp_up_layout.addLayout(btn_row)
+
+        self.btn_add_video = QtWidgets.QPushButton("🎥 Add Walkaround Video...")
+        self.btn_add_video.setStyleSheet(
+            "background-color: #0e7490; color: #ffffff; font-weight: bold;"
+        )
+        self.btn_add_video.clicked.connect(self._on_add_video_clicked)
+        grp_up_layout.addWidget(self.btn_add_video)
+
+        self.lbl_video_hint = QtWidgets.QLabel(
+            "MP4 / MOV / AVI / MKV · extracts up to 40 sharp, spaced frames. "
+            "Walk around the subject; panning in place is not enough."
+        )
+        self.lbl_video_hint.setWordWrap(True)
+        self.lbl_video_hint.setStyleSheet("font-size: 10px; color: #94a3b8;")
+        grp_up_layout.addWidget(self.lbl_video_hint)
 
         self.list_photos = QtWidgets.QListWidget()
         self.list_photos.setFixedHeight(120)
