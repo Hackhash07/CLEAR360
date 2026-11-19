@@ -116,7 +116,7 @@ def test_video_extractor_never_overwrites_existing_frame_outputs(tmp_path: Path)
     output = tmp_path / "import_004"
     frames_dir = output / "frames"
     frames_dir.mkdir(parents=True)
-    sentinel = frames_dir / "keep.txt"
+    sentinel = output / "keep.txt"
     sentinel.write_text("preserve", encoding="utf-8")
 
     with pytest.raises(FileExistsError, match="refusing to overwrite"):
