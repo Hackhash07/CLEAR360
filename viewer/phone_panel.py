@@ -181,8 +181,13 @@ class ReconstructionWorker(QtCore.QThread):
                     videos_dir.mkdir(parents=True, exist_ok=True)
                     archive_name = f"{index:03d}_{original_name}"
                     archive_path = videos_dir / archive_name
-                    if archive_path.exists():
-                        archive_path = videos_dir / f"{index:03d}_{source_path.stem}_{source_path.suffix.lstrip('.')}{source_path.suffix}"
+                    duplicate_index = 1
+                    while archive_path.exists():
+                        archive_path = videos_dir / (
+                            f"{index:03d}_{source_path.stem}_{duplicate_index}"
+                            f"{source_path.suffix}"
+                        )
+                        duplicate_index += 1
                     copy2(source_path, archive_path)
                     archive_relative = archive_path.relative_to(Path(session_dir)).as_posix()
                 except Exception as exc:
@@ -461,7 +466,7 @@ class ReconstructionWorker(QtCore.QThread):
                     progress_cb=progress_callback,
                     photo_set_report=self.photo_set_report,
                 )
-                if res.get("success", False) and res.get("session_dir"):
+                if res.get("session_dir") and self.video_imports:
                     session_dir = Path(res["session_dir"])
                     video_manifest, frame_provenance, video_archive_errors = (
                         self._archive_video_sources(session_dir)
