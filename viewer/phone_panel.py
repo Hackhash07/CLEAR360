@@ -829,7 +829,14 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
                     }
 
         count = len(self.selected_image_paths)
-        self.lbl_photo_count.setText(f"{count} photographs selected (min 2, rec 4–40+)")
+        video_frame_count = sum(
+            int(item.get("saved_frame_count", 0) or 0)
+            for item in self.video_imports
+        )
+        self.lbl_photo_count.setText(
+            f"{count} views selected · {video_frame_count} extracted from video · "
+            "20–40+ well-spaced views recommended"
+        )
         if count > 0 and self.list_photos.currentRow() == -1:
             self.list_photos.setCurrentRow(0)
         self._refresh_photo_set_summary()
@@ -1064,7 +1071,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         ]
         if len(self.selected_image_paths) < 20:
             lines.append(
-                f"Coverage note: {len(self.selected_image_paths)} photos is only the OpenMVS minimum "
+                f"Coverage note: {len(self.selected_image_paths)} views is only the OpenMVS minimum "
                 "of 6; use 20–40+ well-overlapped views for detailed object coverage."
             )
         warnings = report.get("warnings", [])
@@ -1081,11 +1088,17 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         return report
 
     def _on_clear_photos_clicked(self):
-        """Clear selected images."""
+        """Clear selected images and only the generated video-frame cache."""
+        if self.video_extraction_worker and self.video_extraction_worker.isRunning():
+            return
+        self._cleanup_video_import_cache()
+        self.video_imports.clear()
         self.selected_image_paths.clear()
         self.image_metadata.clear()
         self.list_photos.clear()
-        self.lbl_photo_count.setText("0 photographs selected (min 2 native / 6 OpenMVS; 20–40+ recommended)")
+        self.lbl_photo_count.setText(
+            "0 views selected (min 2 native / 6 OpenMVS; 20–40+ recommended)"
+        )
         self._reset_meta_labels()
         self._refresh_photo_set_summary()
 
@@ -1210,6 +1223,14 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
 
     def _on_start_clicked(self):
         """Run the best installed reconstruction engine with automatic settings."""
+        if self.video_extraction_worker and self.video_extraction_worker.isRunning():
+            QtWidgets.QMessageBox.information(
+                self,
+                "Video extraction is still running",
+                "Wait for video frame extraction to finish before starting reconstruction.",
+            )
+            return
+
         if len(self.selected_image_paths) < 2:
             QtWidgets.QMessageBox.warning(
                 self,
@@ -1260,6 +1281,8 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
 
         self.btn_start.setEnabled(False)
         self.btn_add_photos.setEnabled(False)
+        self.btn_add_video.setEnabled(False)
+        self.btn_clear_photos.setEnabled(False)
         self.prog_bar.setValue(0)
         self.lbl_auto_engine.setText(f"Automatic engine: {backend_reason}")
         self.lbl_status.setText("Preparing automatic 3D reconstruction...")
@@ -1287,6 +1310,7 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             backend=backend,
             parent=self,
             photo_set_report=photo_set_report,
+            video_imports=self.video_imports,
         )
         self.worker.progress.connect(self._update_progress_ui)
         self.worker.finished_success.connect(self._on_reconstruction_success)
@@ -1312,6 +1336,8 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.lbl_elapsed.setText("")
         self.btn_start.setEnabled(True)
         self.btn_add_photos.setEnabled(True)
+        self.btn_add_video.setEnabled(True)
+        self.btn_clear_photos.setEnabled(True)
         self.prog_bar.setValue(100)
 
         session_id = str(res.get("session_id", ""))
@@ -1432,9 +1458,11 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.lbl_elapsed.setText("")
         self.btn_start.setEnabled(True)
         self.btn_add_photos.setEnabled(True)
+        self.btn_add_video.setEnabled(True)
+        self.btn_clear_photos.setEnabled(True)
         self.prog_bar.setValue(0)
 
-        # Uploaded images are preserved!
+        # Uploaded images and extracted video frames are preserved!
         self.lbl_status.setText(f"Reconstruction failed: {error_msg}")
         self.lbl_status.setStyleSheet("font-size: 10px; color: #ef4444;")
         self._refresh_session_list()
