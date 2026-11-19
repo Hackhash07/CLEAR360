@@ -210,9 +210,10 @@ class ReconstructionWorker(QtCore.QThread):
             manifest.append(video_record)
 
             for frame in video.get("frames", []):
-                frame_path = Path(frame.get("path", "")).expanduser()
-                if not frame_path:
+                frame_path_value = frame.get("path")
+                if not frame_path_value:
                     continue
+                frame_path = Path(frame_path_value).expanduser()
                 frame_provenance[str(frame_path.resolve())] = {
                     "source_kind": "video_frame",
                     "source_video": original_name,
