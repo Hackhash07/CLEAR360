@@ -117,12 +117,12 @@ class VideoFrameExtractor:
         if not isinstance(jpeg_quality, int) or not 70 <= jpeg_quality <= 100:
             raise ValueError("jpeg_quality must be an integer between 70 and 100.")
 
+        if output.exists() and any(output.iterdir()):
+            raise FileExistsError(
+                f"Video frame output already contains files; refusing to overwrite: {output}"
+            )
         output.mkdir(parents=True, exist_ok=True)
         frames_dir = output / "frames"
-        if frames_dir.exists() and any(frames_dir.iterdir()):
-            raise FileExistsError(
-                f"Video frame output already contains files; refusing to overwrite: {frames_dir}"
-            )
         frames_dir.mkdir(parents=True, exist_ok=True)
 
         capture = cv2.VideoCapture(str(source))
