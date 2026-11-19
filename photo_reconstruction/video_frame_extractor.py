@@ -70,8 +70,8 @@ def _near_duplicate(
     previous_gray: np.ndarray,
     previous_hash: int,
     *,
-    hash_distance_threshold: int = 2,
-    mean_difference_threshold: float = 3.0,
+    hash_distance_threshold: int = 1,
+    mean_difference_threshold: float = 1.5,
 ) -> bool:
     """Detect near-identical adjacent samples without discarding normal camera motion."""
     hash_distance = (current_hash ^ previous_hash).bit_count()
@@ -230,6 +230,11 @@ class VideoFrameExtractor:
                 round(duration / len(timestamps), 3) if timestamps else None
             )
             warnings: list[str] = []
+            if sampling_interval and sampling_interval > 1.5:
+                warnings.append(
+                    f"Sampling interval is {sampling_interval:.2f}s because the clip is long. "
+                    "Use a shorter continuous walkaround clip or add still photographs so adjacent views overlap."
+                )
             if len(saved_frames) < 6:
                 warnings.append(
                     "Fewer than six usable frames were extracted. Add more video coverage "
