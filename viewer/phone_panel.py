@@ -911,6 +911,9 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
         self.video_extraction_worker.progress.connect(self._on_video_extraction_progress)
         self.video_extraction_worker.completed.connect(self._on_video_extraction_completed)
         self.video_extraction_worker.failed.connect(self._on_video_extraction_failed)
+        self.video_extraction_worker.finished.connect(
+            self._on_video_extraction_thread_finished
+        )
         self.video_extraction_worker.start()
 
     @QtCore.Slot(int, str)
@@ -1001,7 +1004,6 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
                     "\n".join(dict.fromkeys(warnings)),
                 )
 
-        self.video_extraction_worker = None
 
     @QtCore.Slot(str)
     def _on_video_extraction_failed(self, error: str):
@@ -1017,6 +1019,10 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
             "Video import failed",
             error,
         )
+
+    @QtCore.Slot()
+    def _on_video_extraction_thread_finished(self):
+        """Release the worker reference only after its QThread has stopped."""
         self.video_extraction_worker = None
 
     def _cleanup_video_import_cache(self):
