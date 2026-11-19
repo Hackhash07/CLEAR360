@@ -217,6 +217,9 @@ class ReconstructionWorker(QtCore.QThread):
                 import os
 
                 session_dir = self.pipeline.session_manager.create_session()
+                video_manifest, frame_provenance, video_archive_errors = (
+                    self._archive_video_sources(session_dir)
+                )
                 copied = []
                 source_dir = session_dir / "source_uploads"
                 working_dir = session_dir / "original_images"
@@ -241,7 +244,7 @@ class ReconstructionWorker(QtCore.QThread):
                         # alive while decoding the next uploaded photograph.
                         del rgb
                         copied.append(Path(staged["sfm_image_path"]))
-                        input_manifest.append({
+                        manifest_item = {
                             "original_filename": source.name,
                             "source_archive": str(
                                 session_relative_path(
@@ -251,7 +254,12 @@ class ReconstructionWorker(QtCore.QThread):
                             "sfm_filename": staged["sfm_filename"],
                             "working_format": staged["working_format"],
                             "converted_for_sfm": staged["converted_for_sfm"],
-                        })
+                            "source_kind": "photo",
+                        }
+                        provenance = frame_provenance.get(str(Path(source).resolve()))
+                        if provenance:
+                            manifest_item.update(provenance)
+                        input_manifest.append(manifest_item)
                     except Exception as exc:
                         staging_errors.append({
                             "image": source.name,
@@ -261,9 +269,12 @@ class ReconstructionWorker(QtCore.QThread):
                 (session_dir / "input_manifest.json").write_text(
                     json.dumps({
                         "uploaded_count": len(self.image_paths),
+                        "uploaded_video_count": len(video_manifest),
                         "sfm_ready_count": len(copied),
                         "source_archive_directory": source_dir.name,
                         "sfm_working_directory": working_dir.name,
+                        "video_sources": video_manifest,
+                        "video_archive_errors": video_archive_errors,
                         "images": input_manifest,
                         "staging_errors": staging_errors,
                     }, indent=2),
@@ -367,6 +378,8 @@ class ReconstructionWorker(QtCore.QThread):
                     "visibility_filter": result.get("visibility_filter", {}),
                     "dense_ply_unfiltered": str(result.get("dense_ply_unfiltered", "")),
                     "input_manifest": input_manifest,
+                    "video_sources": video_manifest,
+                    "video_archive_errors": video_archive_errors,
                     "staging_errors": staging_errors,
                     "photo_set": actual_photo_set_report,
                     "geometric_metrics": {
@@ -422,6 +435,7 @@ class ReconstructionWorker(QtCore.QThread):
                     "dense_ply": result["dense_ply"],
                     "report": report,
                     "photo_set_report": actual_photo_set_report,
+                    "video_sources": video_manifest,
                 }
             else:
                 res = self.pipeline.run_pipeline(
@@ -431,6 +445,47 @@ class ReconstructionWorker(QtCore.QThread):
                     progress_cb=progress_callback,
                     photo_set_report=self.photo_set_report,
                 )
+                if res.get("success", False) and res.get("session_dir"):
+                    session_dir = Path(res["session_dir"])
+                    video_manifest, frame_provenance, video_archive_errors = (
+                        self._archive_video_sources(session_dir)
+                    )
+                    input_manifest_path = session_dir / "input_manifest.json"
+                    if input_manifest_path.is_file():
+                        try:
+                            input_manifest_data = json.loads(
+                                input_manifest_path.read_text(encoding="utf-8")
+                            )
+                        except (OSError, json.JSONDecodeError):
+                            input_manifest_data = {}
+                        for image_record in input_manifest_data.get("images", []):
+                            source_name = image_record.get("original_filename")
+                            matching = next(
+                                (
+                                    provenance
+                                    for frame_path, provenance in frame_provenance.items()
+                                    if Path(frame_path).name == source_name
+                                ),
+                                None,
+                            )
+                            if matching:
+                                image_record.update(matching)
+                        input_manifest_data["uploaded_video_count"] = len(video_manifest)
+                        input_manifest_data["video_sources"] = video_manifest
+                        input_manifest_data["video_archive_errors"] = video_archive_errors
+                        input_manifest_path.write_text(
+                            json.dumps(input_manifest_data, indent=2),
+                            encoding="utf-8",
+                        )
+                    report = dict(res.get("report") or {})
+                    report["video_sources"] = video_manifest
+                    report["video_archive_errors"] = video_archive_errors
+                    (session_dir / "report.json").write_text(
+                        json.dumps(report, indent=2),
+                        encoding="utf-8",
+                    )
+                    res["report"] = report
+                    res["video_sources"] = video_manifest
 
             if res.get("success", False):
                 if self.photo_set_report:
