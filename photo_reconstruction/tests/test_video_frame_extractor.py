@@ -28,9 +28,9 @@ def _write_test_video(path: Path, *, frame_count: int, fps: float, moving: bool)
     for index in range(frame_count):
         frame = base.copy()
         if moving:
-            x = 20 + (index * 17) % (width - 80)
-            y = 20 + (index * 11) % (height - 80)
-            cv2.rectangle(frame, (x, y), (x + 55, y + 55), (0, 255, 255), 4)
+            x = 20 + (index * 17) % (width - 180)
+            y = 20 + (index * 11) % (height - 180)
+            cv2.rectangle(frame, (x, y), (x + 150, y + 150), (0, 255, 255), -1)
             cv2.putText(
                 frame, str(index), (20, height - 20),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2,
