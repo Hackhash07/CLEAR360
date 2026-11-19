@@ -15,7 +15,9 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 import json
 import os
+import shutil
 import threading
+import uuid
 
 from PySide6 import QtWidgets, QtCore, QtGui
 
@@ -26,6 +28,7 @@ from photo_reconstruction.session_manager import SessionManager
 from photo_reconstruction.pipeline import PhoneReconstructionPipeline
 from photo_reconstruction.backend_selector import resolve_reconstruction_backend
 from photo_reconstruction.photo_set_auditor import PhotoSetQualityAuditor
+from photo_reconstruction.video_frame_extractor import VideoFrameExtractor
 
 
 def reconstruction_display_mode(mesh_path: str | Path) -> str:
@@ -36,6 +39,79 @@ def reconstruction_display_mode(mesh_path: str | Path) -> str:
     if output_path.suffix.lower() == ".obj":
         return "textured"
     return "mesh"
+
+
+class VideoExtractionWorker(QtCore.QThread):
+    """Extract a small, quality-screened image set without blocking the GUI."""
+
+    progress = QtCore.Signal(int, str)
+    completed = QtCore.Signal(dict)
+    failed = QtCore.Signal(str)
+
+    def __init__(
+        self,
+        video_paths: List[Path],
+        cache_root: Path,
+        max_total_frames: int = 40,
+        parent: Optional[QtCore.QObject] = None,
+    ):
+        super().__init__(parent)
+        self.video_paths = list(video_paths)
+        self.cache_root = Path(cache_root)
+        self.max_total_frames = max(1, min(int(max_total_frames), 60))
+
+    def run(self):
+        import traceback
+
+        try:
+            import_root = self.cache_root / uuid.uuid4().hex
+            import_root.mkdir(parents=True, exist_ok=False)
+            imports: list[dict[str, Any]] = []
+            errors: list[str] = []
+            remaining = self.max_total_frames
+            total_videos = len(self.video_paths)
+
+            for index, source in enumerate(self.video_paths, start=1):
+                if remaining <= 0:
+                    errors.append(
+                        f"{source.name}: skipped because the video-frame limit for this import was reached."
+                    )
+                    continue
+
+                videos_left = total_videos - index + 1
+                frame_budget = max(1, min(40, remaining // videos_left))
+                output_dir = import_root / f"video_{index:02d}"
+
+                self.progress.emit(
+                    int(5 + 85 * (index - 1) / max(1, total_videos)),
+                    f"Sampling video {index}/{total_videos}: {source.name}",
+                )
+                try:
+                    result = VideoFrameExtractor.extract(
+                        source,
+                        output_dir,
+                        max_frames=frame_budget,
+                    )
+                    result["source_path"] = str(source.expanduser().resolve())
+                    result["original_filename"] = source.name
+                    result["cache_dir"] = str(import_root)
+                    imports.append(result)
+                    remaining -= int(result.get("saved_frame_count", 0))
+                except Exception as exc:
+                    errors.append(f"{source.name}: {exc}")
+
+            if not imports:
+                details = "\n".join(errors) or "No video could be processed."
+                raise RuntimeError(details)
+
+            self.progress.emit(100, "Video frame extraction complete.")
+            self.completed.emit({
+                "video_imports": imports,
+                "errors": errors,
+                "cache_dir": str(import_root),
+            })
+        except Exception as exc:
+            self.failed.emit(f"{exc}\n\n{traceback.format_exc()}")
 
 
 class ReconstructionWorker(QtCore.QThread):
@@ -57,6 +133,7 @@ class ReconstructionWorker(QtCore.QThread):
         backend: str = "native",
         parent: Optional[QtCore.QObject] = None,
         photo_set_report: Optional[Dict[str, Any]] = None,
+        video_imports: Optional[List[Dict[str, Any]]] = None,
     ):
         super().__init__(parent)
         self.pipeline = pipeline
@@ -65,6 +142,70 @@ class ReconstructionWorker(QtCore.QThread):
         self.reference_distance_m = reference_distance_m
         self.backend = backend
         self.photo_set_report = photo_set_report or {}
+        self.video_imports = list(video_imports or [])
+
+    def _archive_video_sources(self, session_dir: Path):
+        """Copy original videos into the session and map frames to source timestamps."""
+        from shutil import copy2
+
+        videos_dir = Path(session_dir) / "source_uploads" / "videos"
+        manifest: list[dict[str, Any]] = []
+        frame_provenance: dict[str, dict[str, Any]] = {}
+        archive_errors: list[str] = []
+
+        for index, video in enumerate(self.video_imports, start=1):
+            source_path = Path(video.get("source_path", "")).expanduser()
+            original_name = Path(
+                str(video.get("original_filename") or source_path.name)
+            ).name
+            archive_relative = None
+            archive_error = None
+
+            if source_path.is_file():
+                try:
+                    videos_dir.mkdir(parents=True, exist_ok=True)
+                    archive_name = f"{index:03d}_{original_name}"
+                    archive_path = videos_dir / archive_name
+                    if archive_path.exists():
+                        archive_path = videos_dir / f"{index:03d}_{source_path.stem}_{source_path.suffix.lstrip('.')}{source_path.suffix}"
+                    copy2(source_path, archive_path)
+                    archive_relative = archive_path.relative_to(Path(session_dir)).as_posix()
+                except Exception as exc:
+                    archive_error = str(exc)
+                    archive_errors.append(f"{original_name}: {archive_error}")
+            else:
+                archive_error = f"Original video is no longer available: {source_path}"
+                archive_errors.append(f"{original_name}: {archive_error}")
+
+            video_record = {
+                "original_filename": original_name,
+                "source_video_archive": archive_relative,
+                "archived": bool(archive_relative),
+                "archive_error": archive_error,
+                "duration_seconds": video.get("duration_seconds"),
+                "fps": video.get("fps"),
+                "source_frame_count": video.get("source_frame_count"),
+                "candidate_frame_count": video.get("candidate_frame_count"),
+                "saved_frame_count": video.get("saved_frame_count"),
+                "skipped_blurry_count": video.get("skipped_blurry_count", 0),
+                "skipped_near_duplicate_count": video.get("skipped_near_duplicate_count", 0),
+                "skipped_unreadable_count": video.get("skipped_unreadable_count", 0),
+                "sampling_interval_seconds": video.get("sampling_interval_seconds"),
+            }
+            manifest.append(video_record)
+
+            for frame in video.get("frames", []):
+                frame_path = Path(frame.get("path", "")).expanduser()
+                if not frame_path:
+                    continue
+                frame_provenance[str(frame_path.resolve())] = {
+                    "source_kind": "video_frame",
+                    "source_video": original_name,
+                    "source_video_archive": archive_relative,
+                    "timestamp_ms": frame.get("timestamp_ms"),
+                }
+
+        return manifest, frame_provenance, archive_errors
 
     def run(self):
         try:
