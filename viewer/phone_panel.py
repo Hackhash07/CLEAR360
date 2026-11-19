@@ -838,6 +838,181 @@ class PhoneReconstructionPanel(QtWidgets.QWidget):
                 f"{count} photographs ready. CLEAR360 will select the reconstruction engine automatically."
             )
 
+    def _on_add_video_clicked(self):
+        """Import one or more walkaround clips and extract useful still frames."""
+        if self.video_extraction_worker and self.video_extraction_worker.isRunning():
+            return
+
+        files, _ = QtWidgets.QFileDialog.getOpenFileNames(
+            self,
+            "Select Walkaround Videos",
+            "",
+            "Videos (*.mp4 *.mov *.m4v *.avi *.mkv *.webm *.3gp);;All Files (*)",
+        )
+        if not files:
+            return
+        if len(files) > 6:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Too many videos",
+                "Select at most six clips per import. For one object, one continuous walkaround clip is usually best.",
+            )
+            return
+
+        existing_video_frames = sum(
+            int(item.get("saved_frame_count", 0) or 0)
+            for item in self.video_imports
+        )
+        remaining_budget = 60 - existing_video_frames
+        if remaining_budget < 6:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Video frame limit reached",
+                "This upload already contains 60 extracted video frames. Clear the current selection before importing another clip.",
+            )
+            return
+
+        self.btn_add_photos.setEnabled(False)
+        self.btn_add_video.setEnabled(False)
+        self.btn_clear_photos.setEnabled(False)
+        self.btn_start.setEnabled(False)
+        self.prog_bar.setValue(0)
+        self.lbl_status.setText("Preparing video frame extraction...")
+        self.lbl_status.setStyleSheet("font-size: 10px; color: #38bdf8;")
+
+        self.video_extraction_worker = VideoExtractionWorker(
+            video_paths=[Path(path) for path in files],
+            cache_root=self.video_cache_root,
+            max_total_frames=min(40, remaining_budget),
+            parent=self,
+        )
+        self.video_extraction_worker.progress.connect(self._on_video_extraction_progress)
+        self.video_extraction_worker.completed.connect(self._on_video_extraction_completed)
+        self.video_extraction_worker.failed.connect(self._on_video_extraction_failed)
+        self.video_extraction_worker.start()
+
+    @QtCore.Slot(int, str)
+    def _on_video_extraction_progress(self, percent: int, message: str):
+        self.prog_bar.setValue(percent)
+        self.lbl_status.setText(message)
+
+    @QtCore.Slot(dict)
+    def _on_video_extraction_completed(self, result: dict):
+        self.btn_add_photos.setEnabled(True)
+        self.btn_add_video.setEnabled(True)
+        self.btn_clear_photos.setEnabled(True)
+        self.btn_start.setEnabled(True)
+        self.prog_bar.setValue(100)
+
+        imported_videos = result.get("video_imports", [])
+        added_frames = 0
+        for video in imported_videos:
+            self.video_imports.append(video)
+            for frame in video.get("frames", []):
+                path = Path(frame.get("path", "")).expanduser()
+                if not path.is_file() or path in self.selected_image_paths:
+                    continue
+                self.selected_image_paths.append(path)
+                timestamp_ms = int(frame.get("timestamp_ms", 0) or 0)
+                self.list_photos.addItem(
+                    f"{path.name} · {video.get('original_filename', 'video')} "
+                    f"@ {timestamp_ms / 1000.0:.2f}s"
+                )
+                try:
+                    rgb, meta = ImageLoader.load_image(path)
+                    exif = ExifReader.get_camera_info(path, meta["width"], meta["height"])
+                    quality = frame.get("quality") or ImageQualityAssessor.evaluate(rgb)
+                    self.image_metadata[str(path.resolve())] = {
+                        "path": str(path.resolve()),
+                        "meta": meta,
+                        "exif": exif,
+                        "quality": quality,
+                        "source_kind": "video_frame",
+                        "source_video": video.get("original_filename"),
+                        "timestamp_ms": timestamp_ms,
+                    }
+                    del rgb
+                except Exception as exc:
+                    self.image_metadata[str(path.resolve())] = {
+                        "path": str(path.resolve()),
+                        "error": str(exc),
+                        "source_kind": "video_frame",
+                        "source_video": video.get("original_filename"),
+                        "timestamp_ms": timestamp_ms,
+                    }
+                added_frames += 1
+
+        count = len(self.selected_image_paths)
+        self.lbl_photo_count.setText(
+            f"{count} views selected · {added_frames} new video frames from "
+            f"{len(imported_videos)} clip(s) · max 60 video frames per selection"
+        )
+        if count and self.list_photos.currentRow() == -1:
+            self.list_photos.setCurrentRow(0)
+        self._refresh_photo_set_summary()
+
+        if added_frames:
+            self.lbl_status.setText(
+                f"Extracted {added_frames} usable frame(s). Review the photo-set check before reconstruction."
+            )
+        else:
+            self.lbl_status.setText("No new usable frames were added.")
+
+        errors = result.get("errors", [])
+        if errors:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Some videos could not be processed",
+                "\n".join(errors),
+            )
+
+        if imported_videos:
+            warnings = [
+                warning
+                for item in imported_videos
+                for warning in item.get("warnings", [])
+            ]
+            if warnings:
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "Video frames extracted",
+                    "\n".join(dict.fromkeys(warnings)),
+                )
+
+        self.video_extraction_worker = None
+
+    @QtCore.Slot(str)
+    def _on_video_extraction_failed(self, error: str):
+        self.btn_add_photos.setEnabled(True)
+        self.btn_add_video.setEnabled(True)
+        self.btn_clear_photos.setEnabled(True)
+        self.btn_start.setEnabled(True)
+        self.prog_bar.setValue(0)
+        self.lbl_status.setText("Video import failed. Existing selected photographs were preserved.")
+        self.lbl_status.setStyleSheet("font-size: 10px; color: #ef4444;")
+        QtWidgets.QMessageBox.warning(
+            self,
+            "Video import failed",
+            error,
+        )
+        self.video_extraction_worker = None
+
+    def _cleanup_video_import_cache(self):
+        """Remove only generated frame-cache folders owned by this panel."""
+        allowed_root = self.video_cache_root.expanduser().resolve()
+        cache_dirs = {
+            Path(item.get("cache_dir", "")).expanduser().resolve()
+            for item in self.video_imports
+            if item.get("cache_dir")
+        }
+        for cache_dir in cache_dirs:
+            try:
+                cache_dir.relative_to(allowed_root)
+            except ValueError:
+                continue
+            if cache_dir != allowed_root and cache_dir.is_dir():
+                shutil.rmtree(cache_dir, ignore_errors=True)
+
     def _refresh_photo_set_summary(self):
         """Show whole-upload diagnostics before users start expensive reconstruction."""
         if not self.selected_image_paths:
