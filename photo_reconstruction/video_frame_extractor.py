@@ -162,12 +162,15 @@ class VideoFrameExtractor:
             previous_gray: np.ndarray | None = None
             previous_hash: int | None = None
 
-            for sample_index, timestamp in enumerate(timestamps, start=1):
+            for timestamp in timestamps:
                 requested_frame = min(
                     source_frame_count - 1,
                     max(0, int(round(timestamp * fps))),
                 )
-                if not capture.set(cv2.CAP_PROP_POS_FRAMES, requested_frame):
+                seek_ok = capture.set(cv2.CAP_PROP_POS_FRAMES, requested_frame)
+                if not seek_ok:
+                    seek_ok = capture.set(cv2.CAP_PROP_POS_MSEC, timestamp * 1000.0)
+                if not seek_ok:
                     skipped_unreadable += 1
                     continue
 
